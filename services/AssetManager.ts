@@ -1,5 +1,5 @@
 
-import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh } from '../types';
+import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh, FolderAsset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
 import { engineInstance } from './engine';
@@ -83,6 +83,22 @@ class AssetManagerService {
         }
     }
 
+    renameAsset(id: string, newName: string) {
+        const asset = this.getAsset(id);
+        if (asset && !asset.isProtected) {
+            asset.name = newName;
+        }
+    }
+
+    createFolder(name: string, path: string): FolderAsset {
+        const id = crypto.randomUUID();
+        const folder: FolderAsset = {
+            id, name, type: 'FOLDER', path
+        };
+        this.registerAsset(folder);
+        return folder;
+    }
+
     saveMaterial(id: string, nodes: GraphNode[], connections: GraphConnection[], glsl: string) {
         const asset = this.getAsset(id);
         if (asset && asset.type === 'MATERIAL') {
@@ -145,6 +161,9 @@ class AssetManagerService {
     }
 
     registerAsset(asset: Asset, forcedIntId?: number): number {
+        // Ensure path defaults to /Content if missing (migration)
+        if (!asset.path) asset.path = '/Content';
+        
         this.assets.set(asset.id, asset);
         
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
@@ -199,7 +218,7 @@ class AssetManagerService {
         const id = crypto.randomUUID();
         const layerIndex = this.nextTextureLayerId;
         this.nextTextureLayerId = 4 + ((this.nextTextureLayerId - 3) % 12); 
-        const asset: TextureAsset = { id, name, type: 'TEXTURE', source, layerIndex };
+        const asset: TextureAsset = { id, name, type: 'TEXTURE', source, layerIndex, path: '/Content/Textures' };
         this.registerAsset(asset);
         const img = new Image();
         img.onload = () => { if (engineInstance?.renderer) engineInstance.renderer.uploadTexture(asset.layerIndex, img); };
@@ -207,25 +226,25 @@ class AssetManagerService {
         return asset;
     }
 
-    createMaterial(name: string, template?: MaterialTemplate): MaterialAsset {
+    createMaterial(name: string, template?: MaterialTemplate, path: string = '/Content/Materials'): MaterialAsset {
         const id = crypto.randomUUID();
         const base = template || MATERIAL_TEMPLATES[0];
         const mat: MaterialAsset = {
-            id, name, type: 'MATERIAL',
+            id, name, type: 'MATERIAL', path,
             data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)), glsl: '' }
         };
         this.registerAsset(mat);
         return mat;
     }
 
-    createPhysicsMaterial(name: string, data?: PhysicsMaterialAsset['data']): PhysicsMaterialAsset {
+    createPhysicsMaterial(name: string, data?: PhysicsMaterialAsset['data'], path: string = '/Content/Physics'): PhysicsMaterialAsset {
         const id = crypto.randomUUID();
-        const asset: PhysicsMaterialAsset = { id, name, type: 'PHYSICS_MATERIAL', data: data || { staticFriction: 0.6, dynamicFriction: 0.6, bounciness: 0.0, density: 1.0 } };
+        const asset: PhysicsMaterialAsset = { id, name, type: 'PHYSICS_MATERIAL', path, data: data || { staticFriction: 0.6, dynamicFriction: 0.6, bounciness: 0.0, density: 1.0 } };
         this.registerAsset(asset);
         return asset;
     }
 
-    createScript(name: string): ScriptAsset {
+    createScript(name: string, path: string = '/Content/Scripts'): ScriptAsset {
         const id = crypto.randomUUID();
         const nodes: GraphNode[] = [
             { id: 'time', type: 'Time', position: { x: 50, y: 150 } },
@@ -238,15 +257,15 @@ class AssetManagerService {
             { id: 'c2', fromNode: 'sin', fromPin: 'out', toNode: 'mul', toPin: 'a' },
             { id: 'c3', fromNode: 'val', fromPin: 'out', toNode: 'mul', toPin: 'b' }
         ];
-        const asset: ScriptAsset = { id, name, type: 'SCRIPT', data: { nodes, connections } };
+        const asset: ScriptAsset = { id, name, type: 'SCRIPT', path, data: { nodes, connections } };
         this.registerAsset(asset);
         return asset;
     }
 
-    createRig(name: string, template?: RigTemplate): RigAsset {
+    createRig(name: string, template?: RigTemplate, path: string = '/Content/Rigs'): RigAsset {
         const id = crypto.randomUUID();
         const base = template || RIG_TEMPLATES[0];
-        const asset: RigAsset = { id, name, type: 'RIG', data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)) } };
+        const asset: RigAsset = { id, name, type: 'RIG', path, data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)) } };
         this.registerAsset(asset);
         return asset;
     }
@@ -294,6 +313,7 @@ class AssetManagerService {
 
         const assetBase = {
             id, name, type,
+            path: '/Content/Meshes',
             geometry: {
                 vertices: new Float32Array(geometryData.v),
                 normals: new Float32Array(geometryData.n),
@@ -849,7 +869,7 @@ class AssetManagerService {
         const v2f = new Map<number, number[]>();
         data.faces?.forEach((f: number[], i: number) => f.forEach(v => { if(!v2f.has(v)) v2f.set(v, []); v2f.get(v)!.push(i); }));
         return { 
-            id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', isProtected: true,
+            id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', isProtected: true, path: '/Content/Meshes',
             geometry: { vertices: new Float32Array(data.v), normals: new Float32Array(data.n), uvs: new Float32Array(data.u), indices: new Uint16Array(data.idx) },
             topology: data.faces ? { faces: data.faces, triangleToFaceIndex: new Int32Array(data.triToFace), vertexToFaces: v2f } : undefined
         };
@@ -859,7 +879,7 @@ class AssetManagerService {
         this.registerAsset(this.createPrimitive('Cube', () => {
             const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
             const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
+            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
             const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
             const faces = [ [0,1,2,3], [4,5,6,7], [8,9,10,11], [12,13,14,15], [16,17,18,19], [20,21,22,23] ];
             const triToFace = [ 0,0, 1,1, 2,2, 3,3, 4,4, 5,5 ];
@@ -876,6 +896,15 @@ class AssetManagerService {
             faces: [[0, 1, 2, 3]],
             triToFace: [0, 0]
         })), MESH_TYPES['Plane']);
+        
+        // Register Root Folders
+        this.registerAsset({ id: 'root_content', name: 'Content', type: 'FOLDER', path: '/' });
+        this.registerAsset({ id: 'folder_mat', name: 'Materials', type: 'FOLDER', path: '/Content' });
+        this.registerAsset({ id: 'folder_mesh', name: 'Meshes', type: 'FOLDER', path: '/Content' });
+        this.registerAsset({ id: 'folder_tex', name: 'Textures', type: 'FOLDER', path: '/Content' });
+        this.registerAsset({ id: 'folder_rig', name: 'Rigs', type: 'FOLDER', path: '/Content' });
+        this.registerAsset({ id: 'folder_phys', name: 'Physics', type: 'FOLDER', path: '/Content' });
+        this.registerAsset({ id: 'folder_scr', name: 'Scripts', type: 'FOLDER', path: '/Content' });
     }
 }
 export const assetManager = new AssetManagerService();
