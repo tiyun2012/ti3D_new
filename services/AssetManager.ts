@@ -64,7 +64,6 @@ class AssetManagerService {
 
     constructor() {
         this.registerDefaultAssets();
-        // Set Standard material to Template 0 but we will update it below with better defaults
         this.createMaterial('Standard', MATERIAL_TEMPLATES[0]);
         this.createDefaultPhysicsMaterials();
         this.createScript('New Visual Script');
@@ -256,13 +255,16 @@ class AssetManagerService {
         const id = crypto.randomUUID();
         const name = fileName.split('.')[0] || 'Imported_Mesh';
         let geometryData: any = { v: [], n: [], u: [], idx: [], faces: [], triToFace: [] };
+        let skeletonData: any = null;
 
         const ext = fileName.toLowerCase();
 
         if (ext.endsWith('.obj')) {
             geometryData = this.parseOBJ(typeof content === 'string' ? content : new TextDecoder().decode(content), importScale);
         } else if (ext.endsWith('.fbx')) {
-            geometryData = await this.parseFBX(content, importScale);
+            const fbxData = await this.parseFBX(content, importScale);
+            geometryData = fbxData.geometry;
+            if (type === 'SKELETAL_MESH') skeletonData = fbxData.skeleton;
         } else {
             console.warn("Unsupported format. Using fallback cylinder.");
             geometryData = this.generateCylinder(24);
@@ -282,8 +284,16 @@ class AssetManagerService {
             vertexToFaces: v2f
         };
 
-        const asset: StaticMeshAsset = {
-            id, name, type: 'MESH',
+        // Create default skin weights if none exist or if it's a static mesh being imported as skeletal
+        const vertexCount = geometryData.v.length / 3;
+        if (!geometryData.jointIndices || geometryData.jointIndices.length === 0) {
+            geometryData.jointIndices = new Float32Array(vertexCount * 4).fill(0);
+            geometryData.jointWeights = new Float32Array(vertexCount * 4).fill(0);
+            for(let i=0; i<vertexCount; i++) geometryData.jointWeights[i*4] = 1.0; // Weight 1.0 to root (0)
+        }
+
+        const assetBase = {
+            id, name, type,
             geometry: {
                 vertices: new Float32Array(geometryData.v),
                 normals: new Float32Array(geometryData.n),
@@ -292,23 +302,25 @@ class AssetManagerService {
             },
             topology
         };
-        
+
         if (type === 'SKELETAL_MESH') {
-             const skel: SkeletalMeshAsset = {
-                 ...asset, type: 'SKELETAL_MESH',
+             const skelAsset: SkeletalMeshAsset = {
+                 ...assetBase,
+                 type: 'SKELETAL_MESH',
                  geometry: {
-                     ...asset.geometry,
-                     jointIndices: new Float32Array((geometryData.v.length / 3) * 4).fill(0),
-                     jointWeights: new Float32Array((geometryData.v.length / 3) * 4).fill(0).map((_, i) => i % 4 === 0 ? 1 : 0)
+                     ...assetBase.geometry,
+                     jointIndices: new Float32Array(geometryData.jointIndices),
+                     jointWeights: new Float32Array(geometryData.jointWeights)
                  },
-                 skeleton: { bones: [{ name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }] }
+                 skeleton: skeletonData || { bones: [{ name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }] }
              };
-             this.registerAsset(skel);
-             return skel;
+             this.registerAsset(skelAsset);
+             return skelAsset;
         }
 
-        this.registerAsset(asset);
-        return asset;
+        const staticAsset: StaticMeshAsset = { ...assetBase, type: 'MESH' };
+        this.registerAsset(staticAsset);
+        return staticAsset;
     }
 
     private parseOBJ(text: string, scale: number) {
@@ -379,31 +391,91 @@ class AssetManagerService {
             if (headerStr.includes("Kaydara FBX Binary")) {
                 return await this.parseFBXBinary(content, importScale);
             }
+            // Log for debugging corruption
+            console.warn("FBX Header Mismatch:", headerStr, Array.from(header).map(b => b.toString(16)).join(' '));
             return this.parseFBXASCII(new TextDecoder().decode(content), importScale);
         }
         return this.parseFBXASCII(content, importScale);
     }
 
-    private async inflate(data: Uint8Array): Promise<Uint8Array> {
-        const ds = new DecompressionStream('deflate');
-        const writer = ds.writable.getWriter();
-        writer.write(data as any); 
-        writer.close();
-        const reader = ds.readable.getReader();
-        const chunks = [];
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
+    private async inflate(data: Uint8Array, expectedSize: number): Promise<Uint8Array> {
+        // Safe Allocation Check to prevent OOM
+        const MAX_ALLOC_SIZE = 512 * 1024 * 1024; // 512 MB Limit
+        if (expectedSize > MAX_ALLOC_SIZE) {
+            console.error(`FBX Error: Attempted to allocate ${expectedSize} bytes, which exceeds safety limit.`);
+            return new Uint8Array(0);
         }
-        const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of chunks) {
-            result.set(chunk, offset);
-            offset += chunk.length;
+
+        // Robust inflate that attempts Zlib (default), Gzip, and raw deflate fallback strategies
+        const tryInflate = async (format: CompressionFormat, buffer: Uint8Array): Promise<Uint8Array | null> => {
+            try {
+                const ds = new DecompressionStream(format);
+                const writer = ds.writable.getWriter();
+                writer.write(buffer);
+                writer.close();
+                
+                const reader = ds.readable.getReader();
+                const chunks = [];
+                let size = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    size += value.length;
+                }
+                const res = new Uint8Array(size);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    res.set(chunk, offset);
+                    offset += chunk.length;
+                }
+                return res;
+            } catch (e: any) {
+                // Squelch individual strategy errors
+                return null;
+            }
+        };
+
+        // Strategy 1: Standard Zlib (RFC 1950)
+        let result = await tryInflate('deflate', data);
+        if (result && result.byteLength === expectedSize) return result;
+
+        // Strategy 2: Raw Deflate - Data Only (No Header, No Footer)
+        if (!result) result = await tryInflate('deflate-raw', data);
+        if (result && result.byteLength === expectedSize) return result;
+
+        // Strategy 3: Gzip (Magic 1f 8b) - Used by some custom exporters
+        if (!result && data.length > 2 && data[0] === 0x1f && data[1] === 0x8b) {
+             result = await tryInflate('gzip', data);
         }
-        return result;
+        if (result && result.byteLength === expectedSize) return result;
+
+        // Strategy 4: Raw Deflate skipping Zlib header (2 bytes)
+        // Useful if 'deflate' implementation fails header check but data is raw.
+        if (!result && data.length > 2) {
+            result = await tryInflate('deflate-raw', data.slice(2));
+        }
+        if (result && result.byteLength === expectedSize) return result;
+
+        // Strategy 5: Raw Deflate skipping Zlib header (2 bytes) AND Adler32 footer (4 bytes)
+        if (!result && data.length > 6) {
+             result = await tryInflate('deflate-raw', data.slice(2, data.length - 4));
+        }
+
+        // Return best effort result if available
+        if (result) return result;
+
+        // Fallback: Return empty buffer to prevent crash, creating a dummy array of correct size if possible and safe
+        // If expectedSize is very large, it likely means the header read was garbage, so return small buffer.
+        const safeFallbackSize = expectedSize < 1024 * 1024 ? expectedSize : 0;
+        const headerHex = Array.from(data.slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join(' ');
+        console.warn(`FBX Decompression Failed. Header: [${headerHex}]. Using fallback buffer size: ${safeFallbackSize}`);
+        
+        try {
+            return new Uint8Array(safeFallbackSize);
+        } catch(e) {
+            return new Uint8Array(0);
+        }
     }
 
     private async parseFBXBinary(buffer: ArrayBuffer, importScale: number) {
@@ -415,40 +487,93 @@ class AssetManagerService {
         let finalIdx: number[] = [];
         let finalUV: number[] = [];
         let finalUVIdx: number[] = [];
+        let modelNodes: any[] = [];
+
+        // YIELDING LOGIC
+        let lastYield = performance.now();
+        const yieldCpu = async () => {
+            const now = performance.now();
+            if (now - lastYield > 16) { // Yield every 16ms (1 frame)
+                await new Promise(r => setTimeout(r, 0));
+                lastYield = performance.now();
+            }
+        };
 
         const readArrayProp = async (typeCode: string) => {
+            if (offset + 12 > buffer.byteLength) return [];
+            
             const arrLen = view.getUint32(offset, true);
             const encoding = view.getUint32(offset + 4, true);
             const compLen = view.getUint32(offset + 8, true);
             offset += 12;
-            let data: Uint8Array;
-            if (encoding === 0) {
-                const byteLen = arrLen * (typeCode === 'd' || typeCode === 'l' ? 8 : (typeCode === 'i' || typeCode === 'f' ? 4 : 1));
-                data = new Uint8Array(buffer.slice(offset, offset + byteLen));
-                offset += byteLen;
-            } else {
-                const compressed = new Uint8Array(buffer.slice(offset, offset + compLen));
-                data = await this.inflate(compressed);
-                offset += compLen;
+            
+            // Calculate Expected Size
+            const typeSize = (typeCode === 'd' || typeCode === 'l' ? 8 : (typeCode === 'i' || typeCode === 'f' ? 4 : 1));
+            // Sanity check for huge arrays
+            if (arrLen > 50000000) { // Limit to ~50M elements to prevent crazy allocation
+                 console.warn(`FBX: Array length ${arrLen} implies corruption. Skipping.`);
+                 return [];
             }
-            if (typeCode === 'd') return Array.from(new Float64Array(data.buffer));
-            if (typeCode === 'f') return Array.from(new Float32Array(data.buffer));
-            if (typeCode === 'i') return Array.from(new Int32Array(data.buffer));
+            
+            const byteLen = arrLen * typeSize;
+
+            let data: Uint8Array;
+            
+            try {
+                // If encoding is 0 (raw) OR if compressed length matches raw length (flag is wrong), read as raw
+                if (encoding === 0 || (encoding === 1 && compLen === byteLen)) {
+                    if (offset + byteLen > buffer.byteLength) throw new Error("EOF");
+                    data = new Uint8Array(buffer.slice(offset, offset + byteLen));
+                    offset += byteLen;
+                } else {
+                    if (offset + compLen > buffer.byteLength) throw new Error("EOF");
+                    // Ensure we slice a COPY of the buffer so the inflate function doesn't interfere with the main buffer
+                    const compressed = new Uint8Array(buffer.slice(offset, offset + compLen));
+                    data = await this.inflate(compressed, byteLen);
+                    offset += compLen;
+                }
+                
+                if (data.byteLength !== byteLen) {
+                    // Mismatch, likely failed decompression fallback
+                    return [];
+                }
+
+                if (typeCode === 'd') return Array.from(new Float64Array(data.buffer, 0, arrLen));
+                if (typeCode === 'f') return Array.from(new Float32Array(data.buffer, 0, arrLen));
+                if (typeCode === 'i') return Array.from(new Int32Array(data.buffer, 0, arrLen));
+                
+            } catch (e) {
+                console.warn("FBX: Failed to read array property", e);
+                // Advance offset blindly if possible to try and recover
+                if (encoding === 0) offset += byteLen; else offset += compLen;
+                return [];
+            }
             return [];
         };
 
         const readNode = async (): Promise<any> => {
+            await yieldCpu(); // Yield check at start of node read
+
             if (offset >= buffer.byteLength) return null;
             const is75 = version >= 7500;
+            
+            // Bounds check for header read
+            const headerSize = (is75 ? 25 : 13);
+            if (offset + headerSize > buffer.byteLength) return null;
+
             const endOffset = is75 ? Number(view.getBigUint64(offset, true)) : view.getUint32(offset, true);
             const numProps = is75 ? Number(view.getBigUint64(offset + 8, true)) : view.getUint32(offset + 4, true);
             const nameLen = view.getUint8(offset + (is75 ? 24 : 12));
-            const headerSize = (is75 ? 25 : 13);
+            
             if (endOffset === 0) { offset += headerSize; return null; }
+            if (endOffset > buffer.byteLength || endOffset < offset) return null; // Corrupted offset
+
             const name = new TextDecoder().decode(new Uint8Array(buffer, offset + headerSize, nameLen));
             offset += headerSize + nameLen;
+            
             const props: any[] = [];
             for (let i = 0; i < numProps; i++) {
+                if (offset >= buffer.byteLength) break;
                 const typeCode = String.fromCharCode(view.getUint8(offset));
                 offset++;
                 if ('dfilb'.includes(typeCode)) props.push(await readArrayProp(typeCode));
@@ -460,34 +585,55 @@ class AssetManagerService {
                 else if (typeCode === 'C') { props.push(view.getUint8(offset) !== 0); offset += 1; }
                 else if (typeCode === 'S' || typeCode === 'R') {
                     const len = view.getUint32(offset, true); offset += 4;
+                    if (offset + len > buffer.byteLength) { offset = endOffset; break; }
                     const d = new Uint8Array(buffer, offset, len);
                     props.push(typeCode === 'S' ? new TextDecoder().decode(d) : d);
                     offset += len;
                 }
             }
+            
+            const children = [];
+            // Recursion limit safety not implemented, but loop checks offset
             while (offset < endOffset) {
+                const startOff = offset; // Safety check
                 const child = await readNode();
                 if (!child) break;
+                if (offset <= startOff) {
+                    console.warn("FBX Parser stuck: offset not advancing. Breaking node.");
+                    offset = endOffset;
+                    break;
+                }
+                children.push(child);
                 if (child.name === 'Vertices') finalV = child.props[0];
                 if (child.name === 'PolygonVertexIndex') finalIdx = child.props[0];
                 if (child.name === 'UV') finalUV = child.props[0];
                 if (child.name === 'UVIndex') finalUVIdx = child.props[0];
             }
-            offset = endOffset;
-            return { name, props };
+            offset = endOffset; // Ensure alignment
+            return { name, props, children };
         };
 
-        try { while (offset < buffer.byteLength - 160) { if(!await readNode()) break; } } catch (e) { }
+        try { while (offset < buffer.byteLength - 160) { await readNode(); } } catch (e) { console.error(e); }
 
-        if (finalV.length > 0) {
+        // Construct Geometry
+        let geometry: any = { v: [], n: [], u: [], idx: [], faces: [], triToFace: [], jointIndices: [], jointWeights: [] };
+        if (finalV && finalV.length > 0 && finalIdx && finalIdx.length > 0) {
             const outV: number[] = []; const outN: number[] = []; const outU: number[] = []; const outIdx: number[] = [];
             const logicalFaces: number[][] = []; const triToFace: number[] = [];
             const cache = new Map<string, number>();
             let nextIndex = 0; let polyVertIndex = 0; let polygon: number[] = [];
 
             for (let i = 0; i < finalIdx.length; i++) {
+                if (i % 1000 === 0) await yieldCpu(); // Yield during geometry processing
+
                 let rawIdx = finalIdx[i]; let isEnd = false;
                 if (rawIdx < 0) { rawIdx = (rawIdx ^ -1); isEnd = true; }
+                
+                // Safety check for indices out of bounds
+                if (rawIdx * 3 + 2 >= finalV.length) {
+                    continue; // Skip malformed vertex
+                }
+
                 let u = 0, v = 0;
                 if (finalUV.length > 0) {
                     let uvIdx = polyVertIndex;
@@ -505,22 +651,33 @@ class AssetManagerService {
                 }
                 polygon.push(newIdx); polyVertIndex++;
                 if (isEnd) {
-                    const faceIdx = logicalFaces.length;
-                    logicalFaces.push([...polygon]);
-                    for (let k = 1; k < polygon.length - 1; k++) {
-                        outIdx.push(polygon[0], polygon[k], polygon[k+1]);
-                        triToFace.push(faceIdx);
+                    if (polygon.length >= 3) {
+                        const faceIdx = logicalFaces.length;
+                        logicalFaces.push([...polygon]);
+                        for (let k = 1; k < polygon.length - 1; k++) {
+                            outIdx.push(polygon[0], polygon[k], polygon[k+1]);
+                            triToFace.push(faceIdx);
+                        }
                     }
                     polygon = [];
                 }
             }
             this.generateMissingNormals(outV, outN, outIdx);
-            return { v: outV, n: outN, u: outU, idx: outIdx, faces: logicalFaces, triToFace };
+            geometry = { v: outV, n: outN, u: outU, idx: outIdx, faces: logicalFaces, triToFace };
+        } else {
+            geometry = this.generateCylinder(24);
         }
-        return this.generateCylinder(24);
+
+        // Placeholder Skeleton (In a real implementation, we'd parse the 'Objects' -> 'Model' nodes)
+        // For now, return a single Root bone to enable skinning logic
+        return { 
+            geometry, 
+            skeleton: { bones: [{ name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }] }
+        };
     }
 
     private parseFBXASCII(text: string, importScale: number) {
+        // ... (Keep existing ASCII implementation, but wrap return to match binary structure)
         try {
             const vMatch = text.match(/Vertices:\s*\*(\d+)\s*{([^}]*)}/);
             const iMatch = text.match(/PolygonVertexIndex:\s*\*(\d+)\s*{([^}]*)}/);
@@ -567,10 +724,13 @@ class AssetManagerService {
                     }
                 }
                 this.generateMissingNormals(outV, outN, outIdx);
-                return { v: outV, n: outN, u: outU, idx: outIdx, faces: logicalFaces, triToFace };
+                return { 
+                    geometry: { v: outV, n: outN, u: outU, idx: outIdx, faces: logicalFaces, triToFace },
+                    skeleton: { bones: [{ name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }] }
+                };
             }
         } catch (e) { }
-        return this.generateCylinder(24);
+        return { geometry: this.generateCylinder(24), skeleton: null };
     }
 
     private generateMissingNormals(v: number[], n: number[], idx: number[]) {
@@ -699,7 +859,7 @@ class AssetManagerService {
         this.registerAsset(this.createPrimitive('Cube', () => {
             const v = [ -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,0.5,0.5, -0.5,0.5,0.5, 0.5,-0.5,-0.5, -0.5,-0.5,-0.5, -0.5,0.5,-0.5, 0.5,0.5,-0.5, -0.5,0.5,0.5, 0.5,0.5,0.5, 0.5,0.5,-0.5, -0.5,0.5,-0.5, -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5, -0.5,-0.5,0.5, 0.5,-0.5,0.5, 0.5,-0.5,-0.5, 0.5,0.5,-0.5, 0.5,0.5,0.5, -0.5,-0.5,-0.5, -0.5,-0.5,0.5, -0.5,0.5,0.5, -0.5,0.5,-0.5 ];
             const n = [ 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0 ];
-            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
+            const u = [ 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1 ];
             const idx = [ 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23 ];
             const faces = [ [0,1,2,3], [4,5,6,7], [8,9,10,11], [12,13,14,15], [16,17,18,19], [20,21,22,23] ];
             const triToFace = [ 0,0, 1,1, 2,2, 3,3, 4,4, 5,5 ];

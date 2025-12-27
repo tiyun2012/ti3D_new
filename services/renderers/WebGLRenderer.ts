@@ -24,16 +24,20 @@ precision highp sampler2DArray;
 
 layout(location=0) in vec3 a_position;
 layout(location=1) in vec3 a_normal;
-layout(location=8) in vec2 a_uv;
-layout(location=2) in mat4 a_model;
+layout(location=2) in mat4 a_model; // Occupies locations 2, 3, 4, 5
 layout(location=6) in vec3 a_color;
 layout(location=7) in float a_isSelected;
+layout(location=8) in vec2 a_uv;
 layout(location=9) in float a_texIndex;
 layout(location=10) in float a_effectIndex;
+layout(location=11) in vec4 a_joints;
+layout(location=12) in vec4 a_weights;
 
 uniform mat4 u_viewProjection;
 uniform highp float u_time;
 uniform sampler2DArray u_textures;
+uniform sampler2D u_boneTexture; 
+uniform int u_hasSkinning; 
 
 out vec3 v_normal;
 out vec3 v_worldPos;
@@ -46,13 +50,36 @@ out float v_effectIndex;
 
 // %VERTEX_LOGIC%
 
+mat4 getBoneMatrix(int jointIndex) {
+    int y = jointIndex / 256;
+    int x = jointIndex % 256;
+    // For simplicity in this demo, assumes bones are stored linearly
+    // In production, fetch 4 pixels from a float texture
+    // Returning identity for now if not implemented fully
+    return mat4(1.0); 
+}
+
 void main() {
     mat4 model = a_model;
     vec4 localPos = vec4(a_position, 1.0);
-    
-    vec3 v_pos_graph = a_position; 
+    vec3 localNormal = a_normal;
+
+    // --- Skinning Logic ---
+    // Note: To make this "Real", we need to fetch matrices from u_boneTexture based on a_joints
+    // For now, we'll keep the hooks but default to rigid body to prevent crashes if texture is missing.
+    if (u_hasSkinning == 1) {
+        // mat4 skinMatrix = 
+        //     a_weights.x * getBoneMatrix(int(a_joints.x)) +
+        //     a_weights.y * getBoneMatrix(int(a_joints.y)) +
+        //     a_weights.z * getBoneMatrix(int(a_joints.z)) +
+        //     a_weights.w * getBoneMatrix(int(a_joints.w));
+        // localPos = skinMatrix * localPos;
+        // localNormal = mat3(skinMatrix) * localNormal;
+    }
+
+    vec3 v_pos_graph = localPos.xyz; 
     v_worldPos = (model * localPos).xyz;
-    v_normal = normalize(mat3(model) * a_normal);
+    v_normal = normalize(mat3(model) * localNormal);
     v_objectPos = a_position;
     v_uv = a_uv;
     v_color = a_color;
@@ -66,7 +93,7 @@ void main() {
     localPos.xyz += vertexOffset;
     vec4 worldPos = model * localPos;
     gl_Position = u_viewProjection * worldPos;
-    v_normal = normalize(mat3(model) * a_normal); 
+    v_normal = normalize(mat3(model) * localNormal); 
     v_worldPos = worldPos.xyz;
 }`;
 
@@ -113,12 +140,17 @@ void main() {
     if (u_renderMode == 0) result = getStylizedLighting(normal, viewDir, albedo);
     else if (u_renderMode == 1) result = normal * 0.5 + 0.5;
     else if (u_renderMode == 2) result = albedo;
+    else if (u_renderMode == 5) { // Heatmap Mode (e.g. for Weights)
+       // Placeholder for heatmap visualization
+       result = vec3(v_uv.x, v_uv.y, 0.0);
+    }
     else result = albedo;
     
     outColor = vec4(result, 1.0);
     outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
 }`;
 
+// ... (Keep GRID_VS, GRID_FS, PP_VS, PP_FS as is)
 const GRID_VS = `#version 300 es
 layout(location=0) in vec2 a_position;
 uniform mat4 u_viewProjection;
@@ -248,6 +280,7 @@ interface MeshBatch {
     instanceBuffer: WebGLBuffer;
     cpuBuffer: Float32Array; 
     instanceCount: number; 
+    hasSkin: boolean;
 }
 
 export class WebGLRenderer {
@@ -257,6 +290,7 @@ export class WebGLRenderer {
     gridProgram: WebGLProgram | null = null;
     meshes: Map<number, MeshBatch> = new Map();
     textureArray: WebGLTexture | null = null;
+    boneTexture: WebGLTexture | null = null; // Store bone matrices
     
     depthRenderbuffer: WebGLRenderbuffer | null = null;
     fboIncluded: WebGLFramebuffer | null = null;
@@ -293,6 +327,7 @@ export class WebGLRenderer {
         const defaultVS = VS_TEMPLATE.replace('// %VERTEX_LOGIC%', '').replace('// %VERTEX_BODY%', '');
         this.defaultProgram = this.createProgram(gl, defaultVS, FS_DEFAULT_SOURCE);
         this.initTextureArray(gl);
+        this.initBoneTexture(gl);
         this.initPostProcess(gl);
         this.gridProgram = this.createProgram(gl, GRID_VS, GRID_FS);
     }
@@ -351,6 +386,23 @@ export class WebGLRenderer {
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     }
 
+    initBoneTexture(gl: WebGL2RenderingContext) {
+        this.boneTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this.boneTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        // Create 256x4 texture to hold 256 4x4 matrices (1 row = 1 matrix approx if encoded as RGBA32F)
+        // Initialize with Identity matrices
+        const data = new Float32Array(1024 * 4);
+        for(let i=0; i<256; i++) {
+            // Identity matrix for each bone: 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
+            // 4 pixels per matrix (16 floats)
+            const base = i * 16;
+            data[base] = 1; data[base+5] = 1; data[base+10] = 1; data[base+15] = 1;
+        }
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1024, 1, 0, gl.RGBA, gl.FLOAT, data);
+    }
+
     uploadTexture(layerIndex: number, image: HTMLImageElement) {
         if (!this.gl || !this.textureArray) return;
         const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 256;
@@ -399,16 +451,25 @@ export class WebGLRenderer {
         createBuf(geometry.vertices, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
         createBuf(geometry.normals, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
         createBuf(geometry.uvs, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 2, gl.FLOAT, false, 0, 0);
+        
+        // Skinning Attributes (Locations 11 & 12)
+        const hasSkin = !!(geometry.jointIndices && geometry.jointWeights);
+        if (hasSkin) {
+            createBuf(geometry.jointIndices, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(11); gl.vertexAttribPointer(11, 4, gl.FLOAT, false, 0, 0);
+            createBuf(geometry.jointWeights, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(12); gl.vertexAttribPointer(12, 4, gl.FLOAT, false, 0, 0);
+        }
+
         createBuf(geometry.indices, gl.ELEMENT_ARRAY_BUFFER);
         const stride = 22 * 4; const inst = gl.createBuffer()!; gl.bindBuffer(gl.ARRAY_BUFFER, inst);
         gl.bufferData(gl.ARRAY_BUFFER, INITIAL_CAPACITY * stride, gl.DYNAMIC_DRAW);
+        // Locations 2, 3, 4, 5 for Model Matrix
         for(let k=0; k<4; k++) { gl.enableVertexAttribArray(2+k); gl.vertexAttribPointer(2+k, 4, gl.FLOAT, false, stride, k*16); gl.vertexAttribDivisor(2+k, 1); }
         gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 3, gl.FLOAT, false, stride, 16*4); gl.vertexAttribDivisor(6, 1);
         gl.enableVertexAttribArray(7); gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 19*4); gl.vertexAttribDivisor(7, 1);
         gl.enableVertexAttribArray(9); gl.vertexAttribPointer(9, 1, gl.FLOAT, false, stride, 20*4); gl.vertexAttribDivisor(9, 1);
         gl.enableVertexAttribArray(10); gl.vertexAttribPointer(10, 1, gl.FLOAT, false, stride, 21*4); gl.vertexAttribDivisor(10, 1);
         gl.bindVertexArray(null);
-        this.meshes.set(id, { vao, count: geometry.indices.length, instanceBuffer: inst, cpuBuffer: new Float32Array(INITIAL_CAPACITY * 22), instanceCount: 0 });
+        this.meshes.set(id, { vao, count: geometry.indices.length, instanceBuffer: inst, cpuBuffer: new Float32Array(INITIAL_CAPACITY * 22), instanceCount: 0, hasSkin });
     }
 
     render(store: ComponentStorage, count: number, selectedIndices: Set<number>, vp: Float32Array, width: number, height: number, cam: any, debugRenderer?: DebugRenderer) {
@@ -441,10 +502,6 @@ export class WebGLRenderer {
         gl.clearColor(0.1, 0.1, 0.1, 1.0); 
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); 
         this.renderBuckets(this.buckets, store, selectedIndices, vp, cam, time, lightDir, lightColor, lightIntensity);
-        
-        // --- RENDER VIRTUAL PIVOTS (Now delegated to GizmoRenderer inside Module) ---
-        // Was previously here: this.renderVirtualPivots(...)
-        // Now handled by moduleManager.render() later in the cycle
         
         if (this.showGrid && !this.gridExcludePP) { 
             gl.drawBuffers([gl.COLOR_ATTACHMENT0]); 
@@ -524,7 +581,16 @@ export class WebGLRenderer {
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightDir'), lightDir);
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightColor'), lightColor);
             gl.uniform1f(gl.getUniformLocation(program, 'u_lightIntensity'), lightIntensity);
+            
+            // Bone Texture (Placeholder binding)
+            if (this.boneTexture) {
+                gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.boneTexture);
+                gl.uniform1i(gl.getUniformLocation(program, 'u_boneTexture'), 1);
+                gl.uniform1i(gl.getUniformLocation(program, 'u_hasSkinning'), mesh.hasSkin ? 1 : 0);
+            }
+
             if (this.textureArray) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray); gl.uniform1i(gl.getUniformLocation(program, 'u_textures'), 0); }
+            
             let instanceCount = 0; const stride = 22; const buf = mesh.cpuBuffer;
             for (const idx of indices) {
                 if (instanceCount >= INITIAL_CAPACITY) break;

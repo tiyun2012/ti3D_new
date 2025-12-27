@@ -17,6 +17,7 @@ import { MeshTopologyUtils, MeshPickingResult } from './MeshTopologyUtils';
 import { gizmoSystem } from './GizmoSystem';
 import { moduleManager } from './ModuleManager';
 import { registerCoreModules } from './modules/CoreModules';
+import { consoleService } from './Console';
 
 export class Engine {
     ecs: SoAEntitySystem;
@@ -112,9 +113,9 @@ export class Engine {
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }
-    start() { this.isPlaying = true; this.timeline.isPlaying = true; this.notifyUI(); }
-    pause() { this.isPlaying = false; this.timeline.isPlaying = false; this.notifyUI(); }
-    stop() { this.isPlaying = false; this.timeline.isPlaying = false; this.timeline.currentTime = 0; this.notifyUI(); }
+    start() { this.isPlaying = true; this.timeline.isPlaying = true; this.notifyUI(); consoleService.info('Simulation Started'); }
+    pause() { this.isPlaying = false; this.timeline.isPlaying = false; this.notifyUI(); consoleService.info('Simulation Paused'); }
+    stop() { this.isPlaying = false; this.timeline.isPlaying = false; this.timeline.currentTime = 0; this.notifyUI(); consoleService.info('Simulation Stopped'); }
     setTimelineTime(time: number) { this.timeline.currentTime = Math.max(0, Math.min(time, this.timeline.duration)); this.notifyUI(); }
 
     createVirtualPivot(name: string = 'Virtual Pivot') {
@@ -123,6 +124,7 @@ export class Engine {
         this.sceneGraph.registerEntity(id);
         this.pushUndoState();
         this.notifyUI();
+        consoleService.info(`Created helper: ${name}`);
         return id;
     }
 
@@ -276,7 +278,15 @@ export class Engine {
         this.subSelection.vertexIds.clear(); this.subSelection.edgeIds.clear(); this.subSelection.faceIds.clear();
     }
 
-    deleteEntity(id: string, sceneGraph: SceneGraph) { this.pushUndoState(); this.ecs.deleteEntity(id, sceneGraph); this.notifyUI(); }
+    deleteEntity(id: string, sceneGraph: SceneGraph) { 
+        const idx = this.ecs.idToIndex.get(id);
+        const name = idx !== undefined ? this.ecs.store.names[idx] : 'Unknown Object';
+        this.pushUndoState(); 
+        this.ecs.deleteEntity(id, sceneGraph); 
+        this.notifyUI();
+        consoleService.info(`Deleted object: ${name}`);
+    }
+    
     deleteAsset(id: string) { assetManager.deleteAsset(id); this.notifyUI(); }
     notifyUI() { this.listeners.forEach(l => l()); }
     subscribe(cb: () => void) { this.listeners.push(cb); return () => { this.listeners = this.listeners.filter(l => l !== cb); }; }
@@ -291,7 +301,10 @@ export class Engine {
     createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}): string | null {
         let asset = assetManager.getAsset(assetId);
         if (!asset) asset = assetManager.getAllAssets().find(a => a.name === assetId) || undefined;
-        if (!asset) return null;
+        if (!asset) {
+            consoleService.error(`Failed to create entity: Asset ${assetId} not found`);
+            return null;
+        }
         this.registerAssetWithGPU(asset);
         const id = this.ecs.createEntity(asset.name);
         this.sceneGraph.registerEntity(id);
@@ -302,6 +315,7 @@ export class Engine {
             this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
         }
         this.notifyUI(); this.pushUndoState();
+        consoleService.success(`Placed ${asset.name} in scene`);
         return id;
     }
 

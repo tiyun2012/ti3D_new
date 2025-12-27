@@ -18,6 +18,7 @@ import { WindowManager, WindowManagerContext } from './components/WindowManager'
 import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
 import { UVEditor } from './components/UVEditor';
 import { Timeline } from './components/Timeline';
+import { SkinningEditor } from './components/SkinningEditor';
 
 // --- Widget Wrappers ---
 
@@ -157,6 +158,10 @@ const EditorInterface: React.FC = () => {
             width: 500, height: 500, initialPosition: { x: 200, y: 200 }
         });
         wm.registerWindow({
+            id: 'skinning', title: 'Skinning Editor', icon: 'PersonStanding', content: <SkinningEditor />, 
+            width: 300, height: 400, initialPosition: { x: window.innerWidth - 650, y: 100 }
+        });
+        wm.registerWindow({
             id: 'timeline', title: 'Timeline', icon: 'Film', content: <Timeline />, 
             width: window.innerWidth - 450, height: 200, initialPosition: { x: 400, y: window.innerHeight - 220 }
         });
@@ -243,6 +248,10 @@ const EditorInterface: React.FC = () => {
                                     </div>
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('console'); setActiveMenu(null); }}>
                                         <Icon name="Terminal" size={12} /> Console
+                                    </div>
+                                    <div className="border-t border-white/5 my-1"></div>
+                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('skinning'); setActiveMenu(null); }}>
+                                        <Icon name="PersonStanding" size={12} /> Skinning Editor
                                     </div>
                                     <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('uveditor'); setActiveMenu(null); }}>
                                         <Icon name="LayoutGrid" size={12} /> UV Editor
