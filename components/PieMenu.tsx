@@ -182,7 +182,7 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
             window.removeEventListener('mouseup', handleMouseUp);
             window.removeEventListener('contextmenu', preventContext);
         };
-    }, [onClose, onSelectMode, onAction]);
+    }, [onClose, onSelectMode, onAction, hoverItem]); // Added hoverItem dependency for safety in closure
 
     // Helper to get coords
     const getPos = (deg: number, r: number) => {
@@ -193,10 +193,10 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
     return (
         <div 
             ref={menuRef}
-            className="fixed z-[9999] select-none pointer-events-none" 
+            className="fixed z-[9999] select-none pointer-events-auto" 
             style={{ left: x - 150, top: y - 150, width: 300, height: 300 }}
         >
-            <svg className="absolute inset-0 w-full h-full overflow-visible">
+            <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
                 <g transform="translate(150, 150)">
                     
                     {/* --- ROOT LEVEL --- */}
