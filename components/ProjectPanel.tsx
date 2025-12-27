@@ -107,6 +107,10 @@ export const ProjectPanel: React.FC = () => {
     const [renameValue, setRenameValue] = useState('');
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, assetId?: string, path?: string, type: 'ASSET'|'FOLDER'|'BG', visible: boolean } | null>(null);
     const [refresh, setRefresh] = useState(0); 
+    
+    // Resizable Sidebar State
+    const [sidebarWidth, setSidebarWidth] = useState(192);
+    const [isResizing, setIsResizing] = useState(false);
 
     const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -128,6 +132,10 @@ export const ProjectPanel: React.FC = () => {
         });
     };
 
+    const getSubFolders = (path: string) => {
+        return allAssets.filter(a => a.type === 'FOLDER' && a.path === path).sort((a,b) => a.name.localeCompare(b.name));
+    };
+
     useEffect(() => {
         const close = () => setContextMenu(null);
         window.addEventListener('click', close);
@@ -140,6 +148,28 @@ export const ProjectPanel: React.FC = () => {
             renameInputRef.current.select();
         }
     }, [renamingAssetId]);
+
+    // Resize Handler
+    useEffect(() => {
+        if (!isResizing) return;
+        
+        const handleMouseMove = (e: MouseEvent) => {
+            setSidebarWidth(prev => Math.max(150, Math.min(600, prev + e.movementX)));
+        };
+        const handleMouseUp = () => {
+            setIsResizing(false);
+            document.body.style.cursor = 'default';
+        };
+        
+        document.body.style.cursor = 'col-resize';
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+            document.body.style.cursor = 'default';
+        };
+    }, [isResizing]);
 
     // --- Actions ---
     const handleNavigate = (path: string) => setCurrentPath(path);
@@ -251,7 +281,7 @@ export const ProjectPanel: React.FC = () => {
             setContextMenu({ x: e.clientX, y: e.clientY, type: 'BG', visible: true });
         }}>
             {/* SIDEBAR */}
-            <div className="w-48 bg-[#151515] border-r border-black/20 flex flex-col shrink-0">
+            <div style={{ width: sidebarWidth }} className="bg-[#151515] border-r border-black/20 flex flex-col shrink-0 transition-none relative">
                 <div className="p-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider flex justify-between items-center group">
                     <span>Favorites</span>
                 </div>
@@ -273,6 +303,23 @@ export const ProjectPanel: React.FC = () => {
                         onNavigate={handleNavigate}
                         onContextMenu={(e, p) => setContextMenu({ x: e.clientX, y: e.clientY, path: p, type: 'FOLDER', visible: true })}
                     />
+                </div>
+            </div>
+
+            {/* RESIZER HANDLE */}
+            <div className="relative w-0 h-full z-50">
+                <div 
+                    className="absolute top-0 bottom-0 -left-2 w-4 cursor-col-resize flex flex-col items-center justify-center group"
+                    onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
+                >
+                    <div className={`
+                        w-1.5 h-1/3 min-h-[32px] rounded-full flex flex-col items-center justify-center gap-1 transition-all duration-200
+                        ${isResizing ? 'bg-accent' : 'bg-black border border-white/10 group-hover:border-white/30'}
+                    `}>
+                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white' : 'bg-zinc-500'}`} />
+                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white' : 'bg-zinc-500'}`} />
+                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white' : 'bg-zinc-500'}`} />
+                    </div>
                 </div>
             </div>
 
