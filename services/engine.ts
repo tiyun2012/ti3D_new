@@ -32,9 +32,6 @@ export class Engine {
     renderMode: number = 0;
     
     meshComponentMode: MeshComponentMode = 'OBJECT';
-    
-    manualBoneData: Float32Array | null = null;
-
     subSelection = {
         vertexIds: new Set<number>(),
         edgeIds: new Set<string>(), 
@@ -161,10 +158,6 @@ export class Engine {
             while (this.accumulator >= this.fixedTimeStep) {
                 this.fixedUpdate(this.fixedTimeStep);
                 this.accumulator -= this.fixedTimeStep;
-            }
-
-            if (this.manualBoneData) {
-                this.renderer.uploadBoneMatrices(this.manualBoneData);
             }
 
             this.sceneGraph.update();
@@ -317,6 +310,68 @@ export class Engine {
         this.notifyUI();
         consoleService.info(`Deleted object: ${name}`);
     }
+
+    duplicateEntity(id: string) {
+        const idx = this.ecs.idToIndex.get(id);
+        if (idx === undefined) return;
+        
+        const name = this.ecs.store.names[idx];
+        const newId = this.ecs.createEntity(name + ' (Copy)');
+        const newIdx = this.ecs.idToIndex.get(newId)!;
+        
+        const store = this.ecs.store;
+        
+        // Copy Transform
+        store.posX[newIdx] = store.posX[idx];
+        store.posY[newIdx] = store.posY[idx];
+        store.posZ[newIdx] = store.posZ[idx];
+        store.rotX[newIdx] = store.rotX[idx];
+        store.rotY[newIdx] = store.rotY[idx];
+        store.rotZ[newIdx] = store.rotZ[idx];
+        store.scaleX[newIdx] = store.scaleX[idx];
+        store.scaleY[newIdx] = store.scaleY[idx];
+        store.scaleZ[newIdx] = store.scaleZ[idx];
+        store.rotationOrder[newIdx] = store.rotationOrder[idx];
+        
+        // Copy Components mask
+        store.componentMask[newIdx] = store.componentMask[idx];
+        
+        // Copy Mesh Data
+        store.meshType[newIdx] = store.meshType[idx];
+        store.materialIndex[newIdx] = store.materialIndex[idx];
+        store.textureIndex[newIdx] = store.textureIndex[idx];
+        store.rigIndex[newIdx] = store.rigIndex[idx];
+        store.effectIndex[newIdx] = store.effectIndex[idx];
+        store.colorR[newIdx] = store.colorR[idx];
+        store.colorG[newIdx] = store.colorG[idx];
+        store.colorB[newIdx] = store.colorB[idx];
+        
+        // Copy Physics
+        store.mass[newIdx] = store.mass[idx];
+        store.useGravity[newIdx] = store.useGravity[idx];
+        store.physicsMaterialIndex[newIdx] = store.physicsMaterialIndex[idx];
+        
+        // Copy Light
+        store.lightType[newIdx] = store.lightType[idx];
+        store.lightIntensity[newIdx] = store.lightIntensity[idx];
+
+        // Copy Virtual Pivot
+        store.vpLength[newIdx] = store.vpLength[idx];
+        
+        // Register
+        this.sceneGraph.registerEntity(newId);
+        
+        // Parent check
+        const parent = this.sceneGraph.getParentId(id);
+        if (parent) {
+            this.sceneGraph.attach(newId, parent);
+        }
+        
+        this.setSelected([newId]);
+        this.pushUndoState();
+        this.notifyUI();
+        consoleService.success(`Duplicated: ${name}`);
+    }
     
     deleteAsset(id: string) { assetManager.deleteAsset(id); this.notifyUI(); }
     notifyUI() { this.listeners.forEach(l => l()); }
@@ -463,57 +518,6 @@ export class Engine {
         this.renderer.gridColor = [r, g, b]; this.renderer.gridExcludePP = config.excludeFromPostProcess;
     }
     setUiConfig(config: UIConfiguration) { this.uiConfig = config; }
-
-    getSelectionAABB() {
-        if (this.selectedIndices.size === 0) return null;
-        
-        const min = { x: Infinity, y: Infinity, z: Infinity };
-        const max = { x: -Infinity, y: -Infinity, z: -Infinity };
-        const store = this.ecs.store;
-
-        let hasActive = false;
-
-        this.selectedIndices.forEach(idx => {
-            if (!store.isActive[idx]) return;
-            hasActive = true;
-            
-            const base = idx * 16;
-            // Extract World Position
-            const x = store.worldMatrix[base + 12];
-            const y = store.worldMatrix[base + 13];
-            const z = store.worldMatrix[base + 14];
-            
-            // Extract World Scale magnitude from matrix columns
-            const m0 = store.worldMatrix[base];
-            const m1 = store.worldMatrix[base+1];
-            const m2 = store.worldMatrix[base+2];
-            const sx = Math.sqrt(m0*m0 + m1*m1 + m2*m2);
-            
-            const m4 = store.worldMatrix[base+4];
-            const m5 = store.worldMatrix[base+5];
-            const m6 = store.worldMatrix[base+6];
-            const sy = Math.sqrt(m4*m4 + m5*m5 + m6*m6);
-
-            const m8 = store.worldMatrix[base+8];
-            const m9 = store.worldMatrix[base+9];
-            const m10 = store.worldMatrix[base+10];
-            const sz = Math.sqrt(m8*m8 + m9*m9 + m10*m10);
-
-            // Radius estimate (sphere)
-            const r = Math.max(sx, Math.max(sy, sz)) * 0.5;
-
-            min.x = Math.min(min.x, x - r);
-            min.y = Math.min(min.y, y - r);
-            min.z = Math.min(min.z, z - r);
-            
-            max.x = Math.max(max.x, x + r);
-            max.y = Math.max(max.y, y + r);
-            max.z = Math.max(max.z, z + r);
-        });
-
-        if (!hasActive) return null;
-        return { min, max };
-    }
 }
 
 export const engineInstance = new Engine();

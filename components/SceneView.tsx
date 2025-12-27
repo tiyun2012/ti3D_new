@@ -1,5 +1,6 @@
 
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo, useContext } from 'react';
+import { createPortal } from 'react-dom';
 import { Entity, ToolType, PerformanceMetrics, MeshComponentMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import { Mat4Utils, Vec3Utils, RayUtils } from '../services/math';
@@ -8,6 +9,7 @@ import { Icon } from './Icon';
 import { VIEW_MODES } from '../services/constants';
 import { EditorContext } from '../contexts/EditorContext';
 import { gizmoSystem } from '../services/GizmoSystem'; 
+import { PieMenu } from './PieMenu';
 
 interface SceneViewProps {
   entities: Entity[];
@@ -45,6 +47,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
   const viewMenuRef = useRef<HTMLDivElement>(null);
   
+  // Pie Menu State
+  const [pieMenuPos, setPieMenuPos] = useState<{x:number, y:number} | null>(null);
+
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const [camera, setCamera] = useState({
     target: { x: 0, y: 0, z: 0 },
@@ -110,39 +115,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       gizmoSystem.setTool(tool);
   }, [tool]);
 
-  // Focus (F) Shortcut
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-        const active = document.activeElement;
-        const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
-        if (isInput) return;
-
-        if (e.key.toLowerCase() === 'f') {
-            const bounds = engineInstance.getSelectionAABB();
-            if (bounds) {
-                const center = {
-                    x: (bounds.min.x + bounds.max.x) / 2,
-                    y: (bounds.min.y + bounds.max.y) / 2,
-                    z: (bounds.min.z + bounds.max.z) / 2
-                };
-                const size = Math.sqrt(
-                    (bounds.max.x - bounds.min.x)**2 + 
-                    (bounds.max.y - bounds.min.y)**2 + 
-                    (bounds.max.z - bounds.min.z)**2
-                );
-                
-                setCamera(prev => ({
-                    ...prev,
-                    target: center,
-                    radius: Math.max(2, size * 1.5)
-                }));
-            }
-        }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
   // --- Camera Logic ---
   const { vpMatrix, eye } = useMemo(() => {
     const { width, height } = viewport;
@@ -165,6 +137,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   // --- Input Handling ---
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (pieMenuPos && e.button !== 2) setPieMenuPos(null); // Close pie menu if clicking elsewhere (except right click)
+    if (pieMenuPos) return;
+
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left; 
@@ -175,7 +150,21 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
     if (gizmoSystem.activeAxis) return; 
 
-    // 2. Standard Tools & Selection
+    // 2. Right Click (Pie Menu or Context)
+    if (e.button === 2 && !e.altKey) {
+        // Try to pick an object
+        const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
+        if (hitId) {
+            // Select the object and show Pie Menu
+            onSelect([hitId]);
+            setPieMenuPos({ x: e.clientX, y: e.clientY });
+            return; // Stop processing to prevent default context menu (handled in onContextMenu)
+        }
+        // If no hit, allow default context menu or show general menu (not implemented here)
+        return;
+    }
+
+    // 3. Standard Tools & Selection (Left Click)
     if (!e.altKey && e.button === 0) {
         if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
             const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
@@ -196,12 +185,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         }
     }
     
-    // 3. Camera Navigation
-    if (e.altKey || e.button === 1 || e.button === 2) {
+    // 4. Camera Navigation (Alt + Click or Middle/Right Drag)
+    if (e.altKey || e.button === 1) {
         e.preventDefault();
         let mode: 'ORBIT' | 'PAN' | 'ZOOM' = 'ORBIT';
         if (e.button === 1 || (e.altKey && e.button === 1)) mode = 'PAN';
         if (e.button === 2 || (e.altKey && e.button === 2)) mode = 'ZOOM';
+        // Note: Standard Right drag without Alt is usually Look Around or context, here we use it for PieMenu on object, or Orbit if Alt pressed
+        
         setDragState({ isDragging: true, startX: e.clientX, startY: e.clientY, mode, startCamera: { ...camera } });
     }
   };
@@ -253,9 +244,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const rect = containerRef.current.getBoundingClientRect();
             gizmoSystem.update(0, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, false, true);
         }
-        
-        // Note: Actual SelectionBox commit happens in the local handleMouseUp attached to div
-        // We just clear drag state here to be safe
         setDragState(null);
     };
 
@@ -276,7 +264,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const h = Math.abs(selectionBox.currentY - selectionBox.startY);
         
         if (w > 3 || h > 3) {
-            // Dragged > 3px: Perform Box Select
             const hitIds = engineInstance.selectEntitiesInRect(x, y, w, h);
             if (e.shiftKey) {
                 const nextSelection = new Set(selectedIds);
@@ -289,13 +276,19 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 onSelect(hitIds);
             }
         } else {
-            // Clicked (Drag < 3px) on Empty Space: Deselect
-            if (!e.shiftKey) {
+            if (!e.shiftKey && e.button === 0) {
                 onSelect([]);
             }
         }
         setSelectionBox(null);
     }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+      // If pie menu is active (meaning we right-clicked an object), prevent default
+      if (pieMenuPos) {
+          e.preventDefault();
+      }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -315,24 +308,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
           if (Mat4Utils.invert(vpMatrix, invVP)) {
               const ray = RayUtils.create();
               RayUtils.fromScreen(x, y, rect.width, rect.height, invVP, ray);
-              
-              // Raycast to Ground Plane (y=0)
-              // t = (targetY - originY) / dirY
-              // If dirY is close to 0, use camera distance fallback
               let pos = { x: 0, y: 0, z: 0 };
-              
               if (Math.abs(ray.direction.y) > 0.001) {
                   const t = -ray.origin.y / ray.direction.y;
-                  if (t > 0) {
-                      pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-                  } else {
-                      // Ray points away from ground, spawn in front of camera
-                      pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-                  }
+                  if (t > 0) pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                  else pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
               } else {
                   pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
               }
-              
               const id = engineInstance.createEntityFromAsset(assetId, pos);
               if (id) onSelect([id]);
           }
@@ -348,7 +331,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
          onDragOver={handleDragOver}
          onDrop={handleDrop}
          onWheel={(e) => setCamera(p => ({ ...p, radius: Math.max(2, p.radius + e.deltaY * 0.01) }))} 
-         onContextMenu={e => e.preventDefault()}
+         onContextMenu={handleContextMenu}
     >
         <canvas ref={canvasRef} className="block w-full h-full outline-none" />
         
@@ -384,6 +367,33 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             )}
         </div>
         <div className="absolute bottom-2 right-2 text-[10px] text-text-secondary bg-black/40 px-2 py-0.5 rounded backdrop-blur border border-white/5 z-20">Cam: {camera.target.x.toFixed(1)}, {camera.target.y.toFixed(1)}, {camera.target.z.toFixed(1)}</div>
+
+        {pieMenuPos && createPortal(
+            <PieMenu 
+                x={pieMenuPos.x} 
+                y={pieMenuPos.y}
+                currentMode={meshComponentMode}
+                onSelectMode={(m) => { setMeshComponentMode(m); setPieMenuPos(null); }}
+                onAction={(a) => {
+                    if(a === 'delete') {
+                        selectedIds.forEach(id => engineInstance.deleteEntity(id, sceneGraph));
+                        onSelect([]);
+                    }
+                    if(a === 'duplicate') {
+                        selectedIds.forEach(id => engineInstance.duplicateEntity(id));
+                    }
+                    if(a === 'focus') {
+                        if(selectedIds.length > 0) {
+                            const pos = engineInstance.sceneGraph.getWorldPosition(selectedIds[0]);
+                            setCamera(prev => ({...prev, target: pos, radius: 5}));
+                        }
+                    }
+                    setPieMenuPos(null);
+                }}
+                onClose={() => setPieMenuPos(null)}
+            />, 
+            document.body
+        )}
     </div>
   );
 };

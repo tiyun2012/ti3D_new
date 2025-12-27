@@ -52,6 +52,17 @@ const FolderTreeItem: React.FC<{
     // Identify the asset for this folder to allow renaming
     const myAsset = useMemo(() => {
         if (isRoot) return null; // Virtual root
+        // Find folder asset matching this path/name
+        // Note: For 'Content' (path="", name="Content"), path is empty string in logic
+        const p = path === '' ? '/' : path; 
+        // Special case: Initial call is path="" name="Content". The asset path for Content folder is "/"
+        // Wait, AssetManager registers Root folders with path '/'.
+        // Let's rely on finding an asset where a.path == path (or '/') and a.name == name.
+        
+        // Actually, for subfolders:
+        // Parent: "/Content", Name: "Materials" -> Asset Path: "/Content", Asset Name: "Materials"
+        // For Root "Content": Passed path="", Name="Content". Asset Path="/", Asset Name="Content"
+        
         const searchPath = path === '' ? '/' : path;
         return allAssets.find(a => a.type === 'FOLDER' && a.name === name && a.path === searchPath);
     }, [allAssets, path, name, isRoot]);
@@ -62,6 +73,7 @@ const FolderTreeItem: React.FC<{
     useEffect(() => {
         const checkPath = displayPath === '/' ? '/' : displayPath + '/';
         const curr = currentPath === '/' ? '/' : currentPath + '/';
+        // Expand if strictly contains or is the current path, otherwise collapse
         if (curr.startsWith(checkPath) || currentPath === displayPath) {
             setExpanded(true);
         } else {
@@ -114,11 +126,10 @@ const FolderTreeItem: React.FC<{
                         onChange={e => setRenameValue(e.target.value)}
                         onKeyDown={e => { 
                             if(e.key==='Enter') onRenameSubmit(); 
-                            if(e.key==='Escape') onRenameStart('', ''); 
+                            if(e.key==='Escape') onRenameStart('', ''); // Cancel
                         }}
                         onBlur={onRenameSubmit}
                         onClick={e => e.stopPropagation()}
-                        onDoubleClick={e => e.stopPropagation()}
                     />
                 ) : (
                     <span 
@@ -162,7 +173,7 @@ export const ProjectPanel: React.FC = () => {
     const [filterType, setFilterType] = useState<AssetType | 'ALL'>('ALL');
     const [searchQuery, setSearchQuery] = useState('');
     const [viewMode, setViewMode] = useState<ViewMode>('GRID');
-    const [scale, setScale] = useState(48); // Set default to 48px
+    const [scale, setScale] = useState(64);
     const [favorites, setFavorites] = useState<string[]>(['/Content', '/Content/Materials']);
     const [renamingAssetId, setRenamingAssetId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState('');
@@ -191,6 +202,10 @@ export const ProjectPanel: React.FC = () => {
             if (a.type !== 'FOLDER' && b.type === 'FOLDER') return 1;
             return a.name.localeCompare(b.name);
         });
+    };
+
+    const getSubFolders = (path: string) => {
+        return allAssets.filter(a => a.type === 'FOLDER' && a.path === path).sort((a,b) => a.name.localeCompare(b.name));
     };
 
     useEffect(() => {
@@ -261,11 +276,6 @@ export const ProjectPanel: React.FC = () => {
         setRefresh(r => r + 1);
     };
 
-    const handleCreateTestMesh = () => {
-        assetManager.createTestSkeletalMesh();
-        setRefresh(r => r + 1);
-    }
-
     const handleOpenAsset = (asset: Asset) => {
         if (asset.type === 'FOLDER') {
             setCurrentPath(`${asset.path === '/' ? '' : asset.path}/${asset.name}`);
@@ -316,6 +326,8 @@ export const ProjectPanel: React.FC = () => {
         wm?.registerWindow({
             id: winId, title: 'Import Asset', icon: 'Import',
             content: <ImportWizard onClose={() => wm.closeWindow(winId)} onImportSuccess={(id) => { 
+                // After import, move to current path if possible? ImportWizard puts in default locations currently.
+                // Future improvement: Allow path selection in Wizard.
                 setRefresh(r=>r+1); wm.closeWindow(winId); 
             }} />, width: 400, height: 500
         });
@@ -387,10 +399,11 @@ export const ProjectPanel: React.FC = () => {
                         w-1 h-[15%] min-h-[24px] rounded-full flex flex-col items-center justify-center gap-0.5 transition-all duration-200
                         bg-black border shadow-[0_0_10px_rgba(0,0,0,0.5)]
                         ${isResizing 
-                            ? 'scale-110 border-white/40' // Active
-                            : 'border-white/10 group-hover:border-white/30' // Idle
+                            ? 'scale-110 border-white/40' // Active: Larger, brighter border, pure black
+                            : 'border-white/10 group-hover:border-white/30' // Idle: Dim border, brighten on hover
                         }
                     `}>
+                        {/* Grip Dots */}
                         <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white/90' : 'bg-white/20'}`} />
                         <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white/90' : 'bg-white/20'}`} />
                         <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white/90' : 'bg-white/20'}`} />
@@ -401,33 +414,20 @@ export const ProjectPanel: React.FC = () => {
             {/* MAIN CONTENT */}
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Toolbar */}
-                <div className="h-10 bg-panel-header border-b border-black/20 flex items-center justify-between px-2 shrink-0 gap-2">
-                    <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
+                <div className="h-10 bg-panel-header border-b border-black/20 flex items-center justify-between px-2 shrink-0">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
                         <button className={`p-1 rounded ${viewMode==='GRID'?'bg-white/10 text-white':'text-text-secondary'}`} onClick={()=>setViewMode('GRID')}><Icon name="LayoutGrid" size={14}/></button>
                         <button className={`p-1 rounded ${viewMode==='LIST'?'bg-white/10 text-white':'text-text-secondary'}`} onClick={()=>setViewMode('LIST')}><Icon name="List" size={14}/></button>
                         <div className="h-4 w-px bg-white/10 mx-1"></div>
                         <Breadcrumbs />
                     </div>
                     
-                    <div className="flex items-center gap-3 shrink-0">
-                        {/* Scale Slider */}
-                        <div className="flex items-center gap-2 group" title="Icon Size">
-                            <Icon name="Image" size={12} className="text-text-secondary" />
-                            <input 
-                                type="range" 
-                                min={32} 
-                                max={128} 
-                                value={scale} 
-                                onChange={(e) => setScale(parseInt(e.target.value))}
-                                className="w-16 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-accent"
-                            />
-                        </div>
-
+                    <div className="flex items-center gap-2">
                         <div className="relative">
                             <Icon name="Search" size={12} className="absolute left-2 top-1.5 text-text-secondary" />
                             <input 
-                                className="bg-black/20 border border-white/5 rounded-full pl-7 pr-2 py-0.5 text-xs w-24 focus:w-40 transition-all focus:border-accent outline-none" 
-                                placeholder="Search..." 
+                                className="bg-black/20 border border-white/5 rounded-full pl-7 pr-2 py-0.5 text-xs w-32 focus:w-48 transition-all focus:border-accent outline-none" 
+                                placeholder="Search assets..." 
                                 value={searchQuery}
                                 onChange={e => setSearchQuery(e.target.value)}
                             />
@@ -451,10 +451,7 @@ export const ProjectPanel: React.FC = () => {
 
                 {/* Grid */}
                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar" onClick={() => setSelectedAssetIds([])}>
-                    <div 
-                        className={`grid gap-4 ${viewMode === 'GRID' ? '' : 'grid-cols-1'}`}
-                        style={viewMode === 'GRID' ? { gridTemplateColumns: `repeat(auto-fill, minmax(${scale + 16}px, 1fr))` } : {}}
-                    >
+                    <div className={`grid gap-4 ${viewMode === 'GRID' ? 'grid-cols-[repeat(auto-fill,minmax(90px,1fr))]' : 'grid-cols-1'}`}>
                         {getFolderContents(currentPath).map(asset => {
                             const isSelected = selectedAssetIds.includes(asset.id);
                             const isRenaming = renamingAssetId === asset.id;
@@ -483,7 +480,7 @@ export const ProjectPanel: React.FC = () => {
                                     >
                                         <Icon 
                                             name={getIcon(asset.type) as any} 
-                                            size={viewMode === 'GRID' ? scale * 0.7 : 20} 
+                                            size={viewMode === 'GRID' ? scale * 0.6 : 16} 
                                             className={`drop-shadow-lg transition-colors ${isSelected ? 'text-accent' : `${asset.type === 'FOLDER' ? 'text-[#a8b3b1]' : 'text-text-secondary'} group-hover:text-white`}`}
                                         />
                                         {/* Color Bar for Assets */}
@@ -503,7 +500,6 @@ export const ProjectPanel: React.FC = () => {
                                                 onKeyDown={e => { if(e.key==='Enter') handleRenameSubmit(); if(e.key==='Escape') setRenamingAssetId(null); }}
                                                 onBlur={handleRenameSubmit}
                                                 onClick={e => e.stopPropagation()}
-                                                onDoubleClick={e => e.stopPropagation()}
                                             />
                                         ) : (
                                             <div 
@@ -546,7 +542,6 @@ export const ProjectPanel: React.FC = () => {
                             </div>
                             <div className="border-t border-white/10 my-1"></div>
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('MATERIAL'); setContextMenu(null); }}>Material</div>
-                            <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateTestMesh(); setContextMenu(null); }}>Test Skeletal Mesh</div>
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('SCRIPT'); setContextMenu(null); }}>Script</div>
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('RIG'); setContextMenu(null); }}>Rig</div>
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('PHYSICS_MATERIAL'); setContextMenu(null); }}>Physics Material</div>
