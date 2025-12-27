@@ -61,6 +61,11 @@ const InspectorWrapper = () => {
           target = assetManager.getAsset(ctx.selectedAssetIds[0]) || null;
           count = ctx.selectedAssetIds.length;
       }
+  } else if (['VERTEX', 'EDGE', 'FACE'].includes(ctx.selectionType)) {
+      if (ctx.selectedIds.length > 0) {
+          // For component modes, we still target the Entity, but the Inspector will read engineInstance.subSelection
+          target = ctx.entities.find(e => e.id === ctx.selectedIds[0]) || null;
+      }
   }
 
   return <InspectorPanel object={target} selectionCount={count} type={ctx.selectionType} />;

@@ -97,7 +97,7 @@ export interface GraphConnection {
 // Editor Types
 export type EditorMode = 'SCENE' | 'GAME' | 'SCRIPT';
 export type ToolType = 'SELECT' | 'MOVE' | 'ROTATE' | 'SCALE';
-export type SelectionType = 'ENTITY' | 'ASSET';
+export type SelectionType = 'ENTITY' | 'ASSET' | 'NODE' | 'VERTEX' | 'EDGE' | 'FACE';
 
 export interface PerformanceMetrics {
   fps: number;

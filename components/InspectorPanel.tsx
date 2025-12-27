@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useContext } from 'react';
-import { Entity, Asset, PhysicsMaterialAsset, GraphNode, ComponentType } from '../types';
+import { Entity, Asset, PhysicsMaterialAsset, GraphNode, ComponentType, SelectionType } from '../types';
 import { engineInstance } from '../services/engine';
 import { assetManager } from '../services/AssetManager';
 import { Icon } from './Icon';
@@ -13,7 +13,7 @@ import { moduleManager } from '../services/ModuleManager';
 interface InspectorPanelProps {
   object: Entity | Asset | GraphNode | null;
   selectionCount?: number;
-  type?: 'ENTITY' | 'ASSET' | 'NODE';
+  type?: SelectionType;
   isClone?: boolean;
 }
 
@@ -86,7 +86,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
     }
   }, [initialObject, initialType, isLocked]);
 
-  useEffect(() => { if (activeObject) setName(activeObject.name); }, [activeObject]);
+  useEffect(() => { if (activeObject && activeType === 'ENTITY') setName(activeObject.name); }, [activeObject, activeType]);
 
   const toggleLock = (e: React.MouseEvent) => {
     e.stopPropagation(); setIsLocked(!isLocked);
@@ -189,6 +189,39 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                 )}
              </div>
           </div>
+        </div>
+      );
+  }
+
+  // --- SUB-COMPONENT INSPECTOR ---
+  if (['VERTEX', 'EDGE', 'FACE'].includes(activeType as string)) {
+      const subSel = engineInstance.subSelection;
+      let count = 0;
+      let label = '';
+      if (activeType === 'VERTEX') { count = subSel.vertexIds.size; label = 'Vertices'; }
+      if (activeType === 'EDGE') { count = subSel.edgeIds.size; label = 'Edges'; }
+      if (activeType === 'FACE') { count = subSel.faceIds.size; label = 'Faces'; }
+
+      return (
+        <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20">
+            <div className="p-4 border-b border-black/20 bg-panel-header flex items-center gap-3">
+                 <div className="w-8 h-8 bg-orange-500 rounded flex items-center justify-center text-white"><Icon name="Target" size={16} /></div>
+                 <div className="flex-1 min-w-0 font-bold">{label} Selection</div>
+                 {renderHeaderControls()}
+            </div>
+            <div className="p-4 space-y-4 text-xs">
+                <div className="bg-black/20 p-3 rounded border border-white/5">
+                    <div className="text-2xl font-mono text-white mb-1">{count}</div>
+                    <div className="text-text-secondary uppercase text-[10px] font-bold">{label} Selected</div>
+                </div>
+                {/* Placeholder for tools like Weld, Split, Extrude */}
+                <div className="grid grid-cols-2 gap-2">
+                    <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Extrude</button>
+                    <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Bevel</button>
+                    <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Weld</button>
+                    <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Split</button>
+                </div>
+            </div>
         </div>
       );
   }

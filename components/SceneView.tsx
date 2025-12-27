@@ -43,7 +43,7 @@ const StatsOverlay: React.FC = () => {
 export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedIds, tool }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { meshComponentMode, setMeshComponentMode } = useContext(EditorContext)!;
+  const { meshComponentMode, setMeshComponentMode, setSelectionType } = useContext(EditorContext)!;
   const [renderMode, setRenderMode] = useState(engineInstance.renderMode);
   const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
   const viewMenuRef = useRef<HTMLDivElement>(null);
@@ -264,7 +264,39 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     if (!e.altKey && e.button === 0) {
         if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
             const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
-            // ... (Component picking logic omitted) ...
+            
+            if (result) {
+                // Clear previous if not shift
+                if (!e.shiftKey) {
+                    engineInstance.subSelection.vertexIds.clear();
+                    engineInstance.subSelection.edgeIds.clear();
+                    engineInstance.subSelection.faceIds.clear();
+                }
+
+                if (meshComponentMode === 'VERTEX') {
+                    const id = result.vertexId;
+                    if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
+                    else engineInstance.subSelection.vertexIds.add(id);
+                    setSelectionType('VERTEX');
+                } else if (meshComponentMode === 'EDGE') {
+                    const id = result.edgeId.sort().join('-'); // "v1-v2"
+                    if (engineInstance.subSelection.edgeIds.has(id)) engineInstance.subSelection.edgeIds.delete(id);
+                    else engineInstance.subSelection.edgeIds.add(id);
+                    setSelectionType('EDGE');
+                } else if (meshComponentMode === 'FACE') {
+                    const id = result.faceId;
+                    if (engineInstance.subSelection.faceIds.has(id)) engineInstance.subSelection.faceIds.delete(id);
+                    else engineInstance.subSelection.faceIds.add(id);
+                    setSelectionType('FACE');
+                }
+                engineInstance.notifyUI(); // Force redraw debug overlay
+            } else if (!e.shiftKey) {
+                // Clicked empty space in component mode -> clear subselection
+                engineInstance.subSelection.vertexIds.clear();
+                engineInstance.subSelection.edgeIds.clear();
+                engineInstance.subSelection.faceIds.clear();
+                engineInstance.notifyUI();
+            }
             return; 
         }
 
@@ -275,6 +307,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         if (hitId) {
              // Hit an object: Select it directly
              onSelect(e.shiftKey ? [...selectedIds, hitId] : [hitId]);
+             setSelectionType('ENTITY');
         } else {
              // Clicked Empty Space: Start Box Selection (Fallback for ALL tools)
              setSelectionBox({ startX: mx, startY: my, currentX: mx, currentY: my, isSelecting: true });
@@ -370,6 +403,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             } else {
                 onSelect(hitIds);
             }
+            setSelectionType('ENTITY');
         } else {
             if (!e.shiftKey && e.button === 0) {
                 onSelect([]);
