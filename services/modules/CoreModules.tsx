@@ -71,6 +71,15 @@ export const TransformModule: EngineModule = {
 };
 
 // --- MESH MODULE ---
+const EFFECTS = [
+    { label: 'None', value: 0 },
+    { label: 'Pixelate', value: 1 },
+    { label: 'Glitch', value: 2 },
+    { label: 'Invert', value: 3 },
+    { label: 'Grayscale', value: 4 },
+    { label: 'Overlay', value: 100 }
+];
+
 const MeshInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
     const materials = assetManager.getAssetsByType('MATERIAL');
     const rigs = assetManager.getAssetsByType('RIG');
@@ -93,6 +102,12 @@ const MeshInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartU
                 <span className="w-24 text-text-secondary text-[10px]">Rig Graph</span>
                 <div className="flex-1">
                    <Select icon="GitBranch" value={component.rigId || ""} options={[{ label: 'None', value: "" }, ...rigs.map(r => ({ label: r.name, value: r.id }))]} onChange={(v) => { onStartUpdate(); onUpdate('rigId', v); onCommit(); }} />
+                </div>
+             </div>
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Post Effect</span>
+                <div className="flex-1">
+                   <Select icon="Sparkles" value={component.effectIndex || 0} options={EFFECTS} onChange={(v) => { onStartUpdate(); onUpdate('effectIndex', v); onCommit(); }} />
                 </div>
              </div>
              <div className="border-t border-white/5 my-1"></div>
