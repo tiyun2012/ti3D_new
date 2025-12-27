@@ -247,10 +247,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         // Try to pick an object
         const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
         if (hitId) {
-            // Select the object and show Pie Menu
-            onSelect([hitId]);
+            // Logic: If already selected, keep selection. If not, select it exclusively.
+            if (!selectedIds.includes(hitId)) {
+                onSelect([hitId]);
+            }
+            
+            // Show Pie Menu
             setPieMenuState({ x: e.clientX, y: e.clientY, entityId: hitId });
-            return; // Stop processing to prevent default context menu (handled in onContextMenu)
+            return; 
         }
         // If no hit, allow default context menu or show general menu (not implemented here)
         return;
@@ -469,14 +473,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 onAction={(a) => {
                     const targetId = pieMenuState.entityId;
                     if(a === 'delete') {
-                        engineInstance.deleteEntity(targetId, sceneGraph);
+                        // Action applies to ALL selected items if multiple are selected
+                        selectedIds.forEach(id => engineInstance.deleteEntity(id, sceneGraph));
                         onSelect([]);
                     }
                     if(a === 'duplicate') {
-                        engineInstance.duplicateEntity(targetId);
+                        // Action applies to ALL selected items
+                        selectedIds.forEach(id => engineInstance.duplicateEntity(id));
                     }
                     if(a === 'focus') {
-                        handleFocus(targetId);
+                        // Focus on the SELECTION group, not just the clicked item (unless it's the only one)
+                        handleFocus();
                     }
                     setPieMenuState(null);
                 }}
