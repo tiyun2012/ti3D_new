@@ -460,8 +460,7 @@ export const ProjectPanel: React.FC = () => {
                                 <div 
                                     key={asset.id} 
                                     className={`group relative flex ${viewMode === 'GRID' ? 'flex-col' : 'flex-row items-center gap-3'} 
-                                        p-1 rounded border transition-all cursor-pointer
-                                        ${isSelected ? 'bg-white/10 border-accent/50' : 'border-transparent hover:bg-white/5'}
+                                        p-1 rounded border border-transparent transition-all cursor-pointer
                                     `}
                                     onClick={(e) => { e.stopPropagation(); setSelectedAssetIds([asset.id]); setSelectionType('ASSET'); }}
                                     onDoubleClick={() => handleOpenAsset(asset)}
@@ -482,7 +481,7 @@ export const ProjectPanel: React.FC = () => {
                                         <Icon 
                                             name={getIcon(asset.type) as any} 
                                             size={viewMode === 'GRID' ? scale * 0.6 : 16} 
-                                            className={`${asset.type === 'FOLDER' ? 'text-[#a8b3b1]' : 'text-text-secondary'} drop-shadow-lg`} 
+                                            className={`drop-shadow-lg transition-colors ${isSelected ? 'text-accent' : `${asset.type === 'FOLDER' ? 'text-[#a8b3b1]' : 'text-text-secondary'} group-hover:text-white`}`}
                                         />
                                         {/* Color Bar for Assets */}
                                         {asset.type !== 'FOLDER' && (
@@ -504,7 +503,7 @@ export const ProjectPanel: React.FC = () => {
                                             />
                                         ) : (
                                             <div 
-                                                className="text-[10px] text-gray-300 font-medium truncate leading-tight group-hover:text-white break-words whitespace-normal line-clamp-2"
+                                                className={`text-[10px] font-medium truncate leading-tight break-words whitespace-normal line-clamp-2 ${isSelected ? 'text-accent' : 'text-gray-300 group-hover:text-white'}`}
                                                 onDoubleClick={(e) => {
                                                     e.stopPropagation();
                                                     handleRenameStart(asset.id, asset.name);
