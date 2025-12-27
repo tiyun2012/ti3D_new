@@ -134,6 +134,27 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     if (viewport.width > 1) engineInstance.updateCamera(vpMatrix, eye, viewport.width, viewport.height);
   }, [vpMatrix, eye, viewport.width, viewport.height]);
 
+  // --- Focus Shortcut (F Key) ---
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          const active = document.activeElement;
+          if (active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA') return;
+
+          if (e.key === 'f' || e.key === 'F') {
+              if (selectedIds.length > 0) {
+                  const pos = engineInstance.sceneGraph.getWorldPosition(selectedIds[0]);
+                  setCamera(prev => ({
+                      ...prev,
+                      target: pos,
+                      radius: 5
+                  }));
+              }
+          }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedIds]);
+
   // --- Input Handling ---
 
   const handleMouseDown = (e: React.MouseEvent) => {

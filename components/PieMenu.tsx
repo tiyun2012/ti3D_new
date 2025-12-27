@@ -50,7 +50,11 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
     const R2 = 85; // Distance to branch nodes
     const NODE_R = 16; // Radius of the node circles
     const SPREAD = 80; // Degrees spread for sub-items (Fit within 90deg sector)
-    const LOCK_RADIUS = 25; // Radius beyond which the sector is locked
+    
+    // LOCK_RADIUS: Distance from center where sector switching is disabled.
+    // Set to ~60px (midpoint between Root R1 and Leaf R2) to allow 
+    // switching when scrubbing between Root nodes (R=40).
+    const LOCK_RADIUS = 60; 
 
     useEffect(() => {
         const handleGlobalClick = () => onClose();
@@ -83,11 +87,12 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
                 // Deadzone center - Reset everything
                 effectiveBranch = null;
             } else if (dist < LOCK_RADIUS) {
-                // Inside Hub - Free switching based on angle
+                // Inside Hub/Root Ring - Free switching based on angle
+                // This allows moving from "Selection" Root Node to "Actions" Root Node freely
                 effectiveBranch = angleBranch;
             } else {
-                // Outside Hub - Locked to previous branch
-                // If we somehow jumped here without a branch, fallback to angle
+                // Outside Hub (reaching for leaves) - Locked to previous branch
+                // Prevents accidental switching when aiming for sub-items
                 if (!effectiveBranch) effectiveBranch = angleBranch;
             }
 
