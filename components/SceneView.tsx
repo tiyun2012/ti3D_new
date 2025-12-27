@@ -5,6 +5,7 @@ import { Entity, ToolType, PerformanceMetrics, MeshComponentMode } from '../type
 import { SceneGraph } from '../services/SceneGraph';
 import { Mat4Utils, Vec3Utils, RayUtils } from '../services/math';
 import { engineInstance } from '../services/engine';
+import { assetManager } from '../services/AssetManager';
 import { Icon } from './Icon';
 import { VIEW_MODES } from '../services/constants';
 import { EditorContext } from '../contexts/EditorContext';
@@ -137,26 +138,76 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   // --- Focus Functionality ---
   const handleFocus = useCallback((targetId?: string) => {
       const idsToFocus = targetId ? [targetId] : selectedIds;
-      
-      if (idsToFocus.length > 0) {
-          const id = idsToFocus[0];
-          const pos = engineInstance.sceneGraph.getWorldPosition(id);
-          
-          // Estimate object size/scale for better framing
-          let dist = 5;
-          const idx = engineInstance.ecs.idToIndex.get(id);
-          if (idx !== undefined) {
-              const sx = Math.abs(engineInstance.ecs.store.scaleX[idx]);
-              const sy = Math.abs(engineInstance.ecs.store.scaleY[idx]);
-              const sz = Math.abs(engineInstance.ecs.store.scaleZ[idx]);
-              const maxScale = Math.max(sx, Math.max(sy, sz));
-              dist = maxScale * 4.0;
-          }
+      if (idsToFocus.length === 0) return;
 
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+      let hasBounds = false;
+
+      idsToFocus.forEach(id => {
+          const idx = engineInstance.ecs.idToIndex.get(id);
+          if (idx === undefined) return;
+
+          // Get World Matrix
+          const store = engineInstance.ecs.store;
+          const wm = store.worldMatrix.subarray(idx * 16, idx * 16 + 16);
+
+          // Check for Mesh
+          const meshIntId = store.meshType[idx];
+          const assetId = assetManager.meshIntToUuid.get(meshIntId);
+          const asset = assetId ? assetManager.getAsset(assetId) : null;
+
+          if (asset && (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH')) {
+              // Calculate Local Bounds (Simple scan)
+              const verts = (asset as any).geometry.vertices;
+              let lMinX=Infinity, lMinY=Infinity, lMinZ=Infinity;
+              let lMaxX=-Infinity, lMaxY=-Infinity, lMaxZ=-Infinity;
+              
+              // Only sample vertices to calculate OBB roughly if too many, but full scan for accuracy
+              const step = verts.length > 3000 ? 30 : 3; // Optimization for large meshes
+              for(let i=0; i<verts.length; i+=step) {
+                  lMinX = Math.min(lMinX, verts[i]); lMaxX = Math.max(lMaxX, verts[i]);
+                  lMinY = Math.min(lMinY, verts[i+1]); lMaxY = Math.max(lMaxY, verts[i+1]);
+                  lMinZ = Math.min(lMinZ, verts[i+2]); lMaxZ = Math.max(lMaxZ, verts[i+2]);
+              }
+
+              // Transform 8 corners of the AABB to find world AABB
+              const corners = [
+                  {x:lMinX, y:lMinY, z:lMinZ}, {x:lMaxX, y:lMinY, z:lMinZ},
+                  {x:lMinX, y:lMaxY, z:lMinZ}, {x:lMaxX, y:lMaxY, z:lMinZ},
+                  {x:lMinX, y:lMinY, z:lMaxZ}, {x:lMaxX, y:lMinY, z:lMaxZ},
+                  {x:lMinX, y:lMaxY, z:lMaxZ}, {x:lMaxX, y:lMaxY, z:lMaxZ}
+              ];
+
+              corners.forEach(c => {
+                  const wx = wm[0]*c.x + wm[4]*c.y + wm[8]*c.z + wm[12];
+                  const wy = wm[1]*c.x + wm[5]*c.y + wm[9]*c.z + wm[13];
+                  const wz = wm[2]*c.x + wm[6]*c.y + wm[10]*c.z + wm[14];
+                  minX = Math.min(minX, wx); maxX = Math.max(maxX, wx);
+                  minY = Math.min(minY, wy); maxY = Math.max(maxY, wy);
+                  minZ = Math.min(minZ, wz); maxZ = Math.max(maxZ, wz);
+              });
+              hasBounds = true;
+          } else {
+              // Just use position if no mesh
+              const x = wm[12], y = wm[13], z = wm[14];
+              minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+              minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+              minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+              hasBounds = true;
+          }
+      });
+
+      if (hasBounds) {
+          const cx = (minX + maxX) / 2;
+          const cy = (minY + maxY) / 2;
+          const cz = (minZ + maxZ) / 2;
+          const size = Math.sqrt(Math.pow(maxX - minX, 2) + Math.pow(maxY - minY, 2) + Math.pow(maxZ - minZ, 2));
+          
           setCamera(prev => ({
               ...prev,
-              target: pos,
-              radius: Math.max(2, dist)
+              target: { x: cx, y: cy, z: cz },
+              radius: Math.max(2, size * 1.5) // Fit multiplier
           }));
       }
   }, [selectedIds]);
