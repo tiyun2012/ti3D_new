@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Icon } from './Icon';
 import { MeshComponentMode } from '../types';
 
@@ -41,10 +41,16 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
     const [hoverItem, setHoverItem] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     
+    // To handle "sticky" sectors, we track the last valid branch in a ref
+    // This allows us to lock the branch when the mouse moves outside the center hub
+    const activeBranchRef = useRef<string | null>(null);
+    
     // Radii configuration
     const R1 = 40; // Distance to root nodes
     const R2 = 85; // Distance to branch nodes
     const NODE_R = 16; // Radius of the node circles
+    const SPREAD = 80; // Degrees spread for sub-items (Fit within 90deg sector)
+    const LOCK_RADIUS = 25; // Radius beyond which the sector is locked
 
     useEffect(() => {
         const handleGlobalClick = () => onClose();
@@ -63,56 +69,69 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
             let angle = Math.atan2(dy, dx) * (180 / Math.PI);
             if (angle < 0) angle += 360;
 
-            // 1. Determine which Root Sector we are in
-            let branch = null;
+            // 1. Determine which Root Sector we are in based on Angle
+            let angleBranch = null;
             // 4 sectors of 90 degrees, offset by 45
-            if (angle >= 315 || angle < 45) branch = 'ACTIONS';
-            else if (angle >= 225 && angle < 315) branch = 'SELECTION';
+            if (angle >= 315 || angle < 45) angleBranch = 'ACTIONS';
+            else if (angle >= 225 && angle < 315) angleBranch = 'SELECTION';
             // We ignore Bottom and Left for now as they are placeholders
             
+            // 2. Logic for Sticky/Locked Branch
+            let effectiveBranch = activeBranchRef.current;
+
             if (dist < 10) {
-                // Deadzone center
-                setActiveBranch(null);
-                setHoverItem(null);
-                return;
+                // Deadzone center - Reset everything
+                effectiveBranch = null;
+            } else if (dist < LOCK_RADIUS) {
+                // Inside Hub - Free switching based on angle
+                effectiveBranch = angleBranch;
+            } else {
+                // Outside Hub - Locked to previous branch
+                // If we somehow jumped here without a branch, fallback to angle
+                if (!effectiveBranch) effectiveBranch = angleBranch;
             }
 
-            setActiveBranch(branch);
+            // Sync State and Ref
+            if (activeBranchRef.current !== effectiveBranch) {
+                activeBranchRef.current = effectiveBranch;
+                setActiveBranch(effectiveBranch);
+            }
 
-            // 2. Check for item hover
+            // 3. Check for item hover using Euclidean Distance
+            // CRITICAL: Only check children of the EFFECTIVE locked branch
             let itemHit = null;
 
-            // Check Root Nodes collision
-            // Note: simple angle check implies we are "aiming" at it
-            if (dist < (R1 + R2) / 2) {
-                // We are closer to root ring
-                if (branch) itemHit = branch; // The root node ID matches the branch key
-            } 
-            // Check Branch Nodes collision
-            else if (branch && BRANCHES[branch]) {
-                const subItems = BRANCHES[branch];
-                // Calculate angles for sub items
-                const rootAngle = ROOT_NODES.find(n => n.id === branch)?.angle || 0;
-                const totalSpread = 100; 
-                const startAngle = rootAngle - totalSpread / 2;
-                const step = totalSpread / (subItems.length - 1 || 1);
-
-                let bestSubDist = 999;
+            if (effectiveBranch && BRANCHES[effectiveBranch]) {
+                const subItems = BRANCHES[effectiveBranch];
+                const rootNode = ROOT_NODES.find(n => n.id === effectiveBranch);
+                const rootAngle = rootNode?.angle || 0;
                 
-                // Find closest sub-node based on angle difference
-                subItems.forEach((item, idx) => {
-                    let itemAngle = startAngle + (idx * step);
-                    // Normalize itemAngle
-                    if (itemAngle < 0) itemAngle += 360;
+                const startAngle = rootAngle - SPREAD / 2;
+                const step = SPREAD / (subItems.length - 1 || 1);
+
+                for (let i = 0; i < subItems.length; i++) {
+                    const itemAngle = startAngle + (i * step);
+                    const rad = itemAngle * (Math.PI / 180);
                     
-                    let diff = Math.abs(angle - itemAngle);
-                    if (diff > 180) diff = 360 - diff;
+                    // Calculate expected position of this item
+                    const ix = Math.cos(rad) * R2;
+                    const iy = Math.sin(rad) * R2;
                     
-                    if (diff < 15) { // 15 degree tolerance
-                        itemHit = item.id;
+                    // Distance from mouse to item center
+                    const distToItem = Math.sqrt((dx - ix) ** 2 + (dy - iy) ** 2);
+                    
+                    // Hit radius slightly larger than visual radius (20 vs 14-18)
+                    if (distToItem < 22) {
+                        itemHit = subItems[i].id;
+                        break;
                     }
-                });
+                }
             }
+
+            // 4. Fallback to Root Node detection (only if in valid distance range)
+            if (!itemHit && dist < (R1 + R2) / 2 && dist > 15) {
+                if (effectiveBranch) itemHit = effectiveBranch; 
+            } 
 
             setHoverItem(itemHit);
         };
@@ -122,31 +141,37 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
                  // Check if it is a sub-item action/mode
                  let found = false;
                  
-                 // Search in Selection Branch
-                 const selItem = BRANCHES['SELECTION'].find(i => i.id === hoverItem);
-                 if (selItem) {
-                     onSelectMode(selItem.id as MeshComponentMode);
-                     found = true;
+                 // Check SELECTION items
+                 if (BRANCHES['SELECTION']) {
+                     const selItem = BRANCHES['SELECTION'].find(i => i.id === hoverItem);
+                     if (selItem) {
+                         onSelectMode(selItem.id as MeshComponentMode);
+                         found = true;
+                     }
                  }
                  
-                 // Search in Actions Branch
-                 const actItem = BRANCHES['ACTIONS'].find(i => i.id === hoverItem);
-                 if (actItem) {
-                     onAction(actItem.id);
-                     found = true;
+                 // Check ACTIONS items
+                 if (!found && BRANCHES['ACTIONS']) {
+                     const actItem = BRANCHES['ACTIONS'].find(i => i.id === hoverItem);
+                     if (actItem) {
+                         onAction(actItem.id);
+                         found = true;
+                     }
                  }
                  
                  if (found) onClose();
              }
         };
         
-        setTimeout(() => window.addEventListener('click', handleGlobalClick), 10);
+        // Delay global click to prevent immediate close if spawned by click
+        const t = setTimeout(() => window.addEventListener('click', handleGlobalClick), 50);
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
         const preventContext = (e: Event) => e.preventDefault();
         window.addEventListener('contextmenu', preventContext);
 
         return () => {
+            clearTimeout(t);
             window.removeEventListener('click', handleGlobalClick);
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
@@ -224,7 +249,7 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
                     {activeBranch && BRANCHES[activeBranch] && BRANCHES[activeBranch].map((item, i) => {
                         const rootAngle = ROOT_NODES.find(n => n.id === activeBranch)?.angle || 0;
                         const count = BRANCHES[activeBranch].length;
-                        const spread = 100; // Total arc spread in degrees
+                        const spread = SPREAD; 
                         const startAngle = rootAngle - spread / 2;
                         const step = spread / (count - 1 || 1);
                         const angle = startAngle + (i * step);
