@@ -49,7 +49,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   const viewMenuRef = useRef<HTMLDivElement>(null);
   
   // Pie Menu State - Now tracks entityId to ensure actions target the correct object
-  const [pieMenuState, setPieMenuState] = useState<{x: number, y: number, entityId: string} | null>(null);
+  const [pieMenuState, setPieMenuState] = useState<{x: number, y: number, entityId?: string} | null>(null);
 
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const [camera, setCamera] = useState({
@@ -238,25 +238,25 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const my = e.clientY - rect.top;
 
     // 1. GIZMO CHECK (Priority)
-    // If gizmo is active and clicked, it consumes the event.
-    gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
-    if (gizmoSystem.activeAxis) return; 
+    // Ensure we only interact with Gizmo on Left Click
+    if (e.button === 0) {
+        gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
+        if (gizmoSystem.activeAxis) return; 
+    }
 
-    // 2. Right Click (Pie Menu or Context)
+    // 2. Right Click (Pie Menu - Context Sensitive)
     if (e.button === 2 && !e.altKey) {
         // Try to pick an object
         const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
         if (hitId) {
-            // Logic: If already selected, keep selection. If not, select it exclusively.
+            // If already selected, keep selection. If not, select it exclusively.
             if (!selectedIds.includes(hitId)) {
                 onSelect([hitId]);
             }
-            
-            // Show Pie Menu
+            // Only open Pie Menu if we hit an object
             setPieMenuState({ x: e.clientX, y: e.clientY, entityId: hitId });
-            return; 
         }
-        // If no hit, allow default context menu or show general menu (not implemented here)
+        // If we hit nothing, we do NOT open the Pie Menu (viewport context menu reserved for future)
         return;
     }
 
@@ -264,7 +264,36 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     if (!e.altKey && e.button === 0) {
         if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
             const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
-            // ... (Component picking logic omitted) ...
+            
+            if (result) {
+                // Clear previous if not shift
+                if (!e.shiftKey) {
+                    engineInstance.subSelection.vertexIds.clear();
+                    engineInstance.subSelection.edgeIds.clear();
+                    engineInstance.subSelection.faceIds.clear();
+                }
+
+                if (meshComponentMode === 'VERTEX') {
+                    const id = result.vertexId;
+                    if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
+                    else engineInstance.subSelection.vertexIds.add(id);
+                } else if (meshComponentMode === 'EDGE') {
+                    const id = result.edgeId.sort().join('-'); // "v1-v2"
+                    if (engineInstance.subSelection.edgeIds.has(id)) engineInstance.subSelection.edgeIds.delete(id);
+                    else engineInstance.subSelection.edgeIds.add(id);
+                } else if (meshComponentMode === 'FACE') {
+                    const id = result.faceId;
+                    if (engineInstance.subSelection.faceIds.has(id)) engineInstance.subSelection.faceIds.delete(id);
+                    else engineInstance.subSelection.faceIds.add(id);
+                }
+                engineInstance.notifyUI(); // Force redraw debug overlay
+            } else if (!e.shiftKey) {
+                // Clicked empty space in component mode -> clear subselection
+                engineInstance.subSelection.vertexIds.clear();
+                engineInstance.subSelection.edgeIds.clear();
+                engineInstance.subSelection.faceIds.clear();
+                engineInstance.notifyUI();
+            }
             return; 
         }
 
@@ -300,6 +329,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
+      // Update Gizmo Hover State
       gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
 
       if (dragState && dragState.isDragging) {
@@ -337,6 +367,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const handleWindowMouseUp = (e: MouseEvent) => {
         if (containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
+            // Pass isUp=true to finish Gizmo drag
             gizmoSystem.update(0, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, false, true);
         }
         setDragState(null);
@@ -371,6 +402,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 onSelect(hitIds);
             }
         } else {
+            // Single Click on Empty Space (Left Button) -> Deselect
             if (!e.shiftKey && e.button === 0) {
                 onSelect([]);
             }
@@ -380,10 +412,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
-      // If pie menu is active (meaning we right-clicked an object), prevent default
-      if (pieMenuState) {
-          e.preventDefault();
-      }
+      // Always prevent default context menu in viewport
+      e.preventDefault();
   };
 
   const handleDragOver = (e: React.DragEvent) => {
