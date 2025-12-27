@@ -150,7 +150,6 @@ void main() {
     outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
 }`;
 
-// ... (Keep GRID_VS, GRID_FS, PP_VS, PP_FS as is)
 const GRID_VS = `#version 300 es
 layout(location=0) in vec2 a_position;
 uniform mat4 u_viewProjection;
@@ -268,7 +267,11 @@ void main() {
         vec3 exclColor = exclSample.rgb;
         float exclEffectId = floor(mod(texture(u_excludedData, v_uv).r * 255.0 + 0.5, 100.0));
         exclColor = processPerObjectEffects(exclColor, exclEffectId, v_uv, u_excluded);
-        baseColor = mix(baseColor, pow(exclColor, vec3(1.0 / 2.2)), exclSample.a);
+        
+        // Correct composite for premultiplied alpha inputs (exclColor is C*A) over Gamma space base
+        vec3 straightColor = exclColor / exclSample.a;
+        vec3 gammaColor = pow(straightColor, vec3(1.0 / 2.2));
+        baseColor = baseColor * (1.0 - exclSample.a) + gammaColor * exclSample.a;
     }
 
     outColor = vec4(baseColor, 1.0);

@@ -177,6 +177,15 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                                 <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Color</span>
                                 <input type="color" className="w-6 h-6 rounded cursor-pointer bg-transparent" value={gridConfig.color} onChange={(e) => updateGrid('color', e.target.value)} aria-label="Grid Color" />
                             </div>
+                            <div className="flex items-center justify-between bg-input-bg p-3 rounded border border-white/5 col-span-2">
+                                <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Exclude from Post-Process (Crisp Lines)</span>
+                                <input 
+                                    type="checkbox" 
+                                    checked={gridConfig.excludeFromPostProcess} 
+                                    onChange={(e) => updateGrid('excludeFromPostProcess', e.target.checked)} 
+                                    aria-label="Exclude Grid from Post Process" 
+                                />
+                            </div>
                         </div>
                     )}
                 </div>
