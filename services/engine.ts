@@ -247,18 +247,19 @@ export class Engine {
                 const b = parseInt(hex.substring(5, 7), 16) / 255;
                 return { r, g, b };
             };
-            const colComp = { r: 0.1, g: 0.8, b: 1.0 };
-            const colSel = { r: 1.0, g: 1.0, b: 0.0 };
+            const colComp = { r: 0.2, g: 0.6, b: 1.0 }; // Wireframe Color
+            const colSel = { r: 1.0, g: 0.8, b: 0.0 }; // Selected Gold
             const colVertex = hexToRgb(this.uiConfig.vertexColor);
-            const colNeutral = { r: 0.3, g: 0.3, b: 0.3 };
+            const colNeutral = { r: 0.5, g: 0.5, b: 0.5 }; // Unselected Vert Dot
             const colObjectSelection = hexToRgb(this.uiConfig.selectionEdgeColor || '#4f80f8');
 
+            // Draw Wireframe
             topo.faces.forEach((face) => {
                 for(let k=0; k<face.length; k++) {
                     const vA = face[k], vB = face[(k+1)%face.length];
                     const pA = Vec3Utils.transformMat4({ x:verts[vA*3], y:verts[vA*3+1], z:verts[vA*3+2] }, worldMat, {x:0,y:0,z:0});
                     const pB = Vec3Utils.transformMat4({ x:verts[vB*3], y:verts[vB*3+1], z:verts[vB*3+2] }, worldMat, {x:0,y:0,z:0});
-                    let color = isObjectMode ? colObjectSelection : (isVertexMode ? colNeutral : colComp);
+                    let color = isObjectMode ? colObjectSelection : (isVertexMode ? colComp : colComp);
                     if (!isObjectMode && !isVertexMode) {
                         const edgeKey = [vA, vB].sort().join('-');
                         if (this.subSelection.edgeIds.has(edgeKey)) color = colSel;
@@ -267,19 +268,28 @@ export class Engine {
                 }
             });
 
+            // Draw Vertices
             if (isVertexMode) {
                 const camPos = this.currentCameraPos;
                 const baseSize = 0.008 * this.uiConfig.vertexSize; 
+                
                 for(let i=0; i<verts.length/3; i++) {
                     const p = Vec3Utils.transformMat4({ x:verts[i*3], y:verts[i*3+1], z:verts[i*3+2] }, worldMat, {x:0,y:0,z:0});
-                    const d = Vec3Utils.distance(p, camPos); const s = baseSize * d; 
-                    const c = this.subSelection.vertexIds.has(i) ? colSel : colVertex;
-                    if (this.uiConfig.vertexShape === 'CUBE') {
+                    const d = Vec3Utils.distance(p, camPos); 
+                    
+                    const isSelected = this.subSelection.vertexIds.has(i);
+                    const s = baseSize * d * (isSelected ? 1.5 : 1.0); // Selected are bigger
+                    const c = isSelected ? colSel : colVertex;
+
+                    // Draw Dot/Cube based on preference, but ensure they are visible
+                    if (this.uiConfig.vertexShape === 'CUBE' || isSelected) {
+                        // Draw Cube/Diamond shape for selected/active
                         const v = [{x:p.x-s, y:p.y-s, z:p.z-s}, {x:p.x+s, y:p.y-s, z:p.z-s}, {x:p.x+s, y:p.y+s, z:p.z-s}, {x:p.x-s, y:p.y+s, z:p.z-s}, {x:p.x-s, y:p.y-s, z:p.z+s}, {x:p.x+s, y:p.y-s, z:p.z+s}, {x:p.x+s, y:p.y+s, z:p.z+s}, {x:p.x-s, y:p.y+s, z:p.z+s}];
                         this.debugRenderer.drawLine(v[0], v[1], c); this.debugRenderer.drawLine(v[1], v[2], c); this.debugRenderer.drawLine(v[2], v[3], c); this.debugRenderer.drawLine(v[3], v[0], c);
                         this.debugRenderer.drawLine(v[4], v[5], c); this.debugRenderer.drawLine(v[5], v[6], c); this.debugRenderer.drawLine(v[6], v[7], c); this.debugRenderer.drawLine(v[7], v[4], c);
                         this.debugRenderer.drawLine(v[0], v[4], c); this.debugRenderer.drawLine(v[1], v[5], c); this.debugRenderer.drawLine(v[2], v[6], c); this.debugRenderer.drawLine(v[3], v[7], c);
                     } else {
+                        // Draw Simple Crosshair/Dot for unselected (Performance/Clarity)
                         this.debugRenderer.drawLine({x:p.x-s, y:p.y, z:p.z}, {x:p.x+s, y:p.y, z:p.z}, c);
                         this.debugRenderer.drawLine({x:p.x, y:p.y-s, z:p.z}, {x:p.x, y:p.y+s, z:p.z}, c);
                         this.debugRenderer.drawLine({x:p.x, y:p.y, z:p.z-s}, {x:p.x, y:p.y, z:p.z+s}, c);

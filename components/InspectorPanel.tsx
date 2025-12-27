@@ -1,13 +1,10 @@
 
 import React, { useState, useRef, useEffect, useContext } from 'react';
-import { Entity, Asset, PhysicsMaterialAsset, GraphNode, ComponentType, SelectionType } from '../types';
+import { Entity, Asset, GraphNode, ComponentType, SelectionType, StaticMeshAsset } from '../types';
 import { engineInstance } from '../services/engine';
 import { assetManager } from '../services/AssetManager';
 import { Icon } from './Icon';
 import { EditorContext } from '../contexts/EditorContext';
-import { Select } from './ui/Select';
-import { NodeRegistry } from '../services/NodeRegistry';
-import { WindowManagerContext } from './WindowManager';
 import { moduleManager } from '../services/ModuleManager';
 
 interface InspectorPanelProps {
@@ -17,30 +14,35 @@ interface InspectorPanelProps {
   isClone?: boolean;
 }
 
-// --- Reusable UI Control (Moved DraggableNumber local here for non-module usage if needed, or keeping for asset inspector) ---
+// --- Reusable UI Control ---
 const DraggableNumber: React.FC<{ 
-  label: string; value: number; onChange: (val: number) => void; step?: number; 
-}> = ({ label, value, onChange, step = 0.1 }) => {
-  // Simplified for Asset Inspector usage
+  label: string; value: number; onChange: (val: number) => void; step?: number; color?: string; disabled?: boolean;
+}> = ({ label, value, onChange, step = 0.01, color, disabled }) => {
   return (
-    <div className="flex items-center bg-input-bg rounded overflow-hidden border border-transparent focus-within:border-accent">
-      <div className="w-24 px-2 text-[10px] text-text-secondary font-semibold">{label}</div>
-      <input type="number" className="flex-1 bg-transparent text-xs p-1 outline-none text-white text-right" value={value} onChange={(e) => onChange(parseFloat(e.target.value))} step={step} />
+    <div className={`flex items-center bg-black/20 rounded overflow-hidden border border-transparent ${disabled ? 'opacity-50' : 'focus-within:border-accent'} group`}>
+      <div className={`w-6 flex items-center justify-center text-[10px] font-bold h-6 ${color || 'text-text-secondary'}`}>{label}</div>
+      <input 
+        type="number" 
+        className={`flex-1 bg-transparent text-xs p-1 outline-none text-white min-w-0 text-right pr-2 ${disabled ? 'cursor-not-allowed' : ''}`} 
+        value={value === undefined ? 0 : Number(value).toFixed(3)} 
+        onChange={e => !disabled && onChange(parseFloat(e.target.value))} 
+        step={step}
+        disabled={disabled}
+      />
     </div>
   );
 };
 
-const DebouncedColorPicker: React.FC<{ value: string; onChange: (val: string) => void; label?: string; disabled?: boolean; }> = ({ value, onChange, label, disabled }) => {
-    const [localValue, setLocalValue] = useState(value);
-    const timeoutRef = useRef<number | null>(null);
-    useEffect(() => { setLocalValue(value); }, [value]);
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const newVal = e.target.value; setLocalValue(newVal);
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        timeoutRef.current = window.setTimeout(() => { onChange(newVal); }, 100);
-    };
-    return <input type="color" value={localValue} onChange={handleChange} disabled={disabled} className={`w-full h-8 rounded bg-transparent cursor-pointer border border-white/10 ${disabled?'opacity-30 pointer-events-none':''}`} aria-label={label} />;
-};
+const Vector3Input: React.FC<{ label: string; value: {x:number, y:number, z:number}; onChange: (v: {x:number, y:number, z:number}) => void; disabled?: boolean }> = ({ label, value, onChange, disabled }) => (
+    <div className="flex flex-col gap-1 mb-2">
+        <div className="text-[9px] uppercase text-text-secondary font-bold tracking-wider ml-1 opacity-70">{label}</div>
+        <div className="grid grid-cols-3 gap-1">
+            <DraggableNumber label="X" value={value.x} onChange={v => onChange({...value, x: v})} color="text-red-500" disabled={disabled} />
+            <DraggableNumber label="Y" value={value.y} onChange={v => onChange({...value, y: v})} color="text-green-500" disabled={disabled} />
+            <DraggableNumber label="Z" value={value.z} onChange={v => onChange({...value, z: v})} color="text-blue-500" disabled={disabled} />
+        </div>
+    </div>
+);
 
 const ComponentCard: React.FC<{ 
   component: any; 
@@ -69,10 +71,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
   const [isLocked, setIsLocked] = useState(isClone);
   const [snapshot, setSnapshot] = useState<{ object: any, type: any } | null>(null);
   const [name, setName] = useState('');
-  const [refresh, setRefresh] = useState(0);
+  const [refresh, setRefresh] = useState(0); // Force re-render for nested data
   const [showAddComponent, setShowAddComponent] = useState(false);
   const editorCtx = useContext(EditorContext)!;
-  const wm = useContext(WindowManagerContext);
 
   const activeObject = isLocked ? (snapshot?.object ?? initialObject) : initialObject;
   const activeType = isLocked ? (snapshot?.type ?? initialType) : initialType;
@@ -130,11 +131,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
     </div>
   );
 
-  // --- ENTITY INSPECTOR (DYNAMIC MODULES) ---
+  // --- ENTITY INSPECTOR ---
   if (activeType === 'ENTITY') {
       const entity = activeObject as Entity;
       const modules = moduleManager.getAllModules();
-      
       const availableModules = modules.filter(m => !entity.components[m.id]);
 
       return (
@@ -193,14 +193,64 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
       );
   }
 
-  // --- SUB-COMPONENT INSPECTOR ---
+  // --- VERTEX / EDGE / FACE INSPECTOR ---
   if (['VERTEX', 'EDGE', 'FACE'].includes(activeType as string)) {
       const subSel = engineInstance.subSelection;
+      
+      // Determine Selected Count
       let count = 0;
       let label = '';
       if (activeType === 'VERTEX') { count = subSel.vertexIds.size; label = 'Vertices'; }
       if (activeType === 'EDGE') { count = subSel.edgeIds.size; label = 'Edges'; }
       if (activeType === 'FACE') { count = subSel.faceIds.size; label = 'Faces'; }
+
+      // Get Geometry Data if 1 item selected
+      let vertexPos = { x: 0, y: 0, z: 0 };
+      let vertexNorm = { x: 0, y: 0, z: 0 };
+      let vertexId = -1;
+      let asset: StaticMeshAsset | null = null;
+
+      if (count === 1 && activeType === 'VERTEX' && activeObject) {
+          const entity = activeObject as Entity;
+          // Find the Mesh Component's asset
+          const meshComp = entity.components['Mesh'];
+          if (meshComp) {
+             const assetId = assetManager.getMeshID(meshComp.meshType) === 0 ? null : meshComp.meshType; // Actually this is INT id
+             // Need UUID. 
+             // Reverse lookup in assetManager
+             const uuid = assetManager.meshIntToUuid.get(assetManager.getMeshID(meshComp.materialId) || 0); // Logic flaw in prop access, fixing below
+             
+             // Correct way:
+             const idx = engineInstance.ecs.idToIndex.get(entity.id);
+             if (idx !== undefined) {
+                 const meshInt = engineInstance.ecs.store.meshType[idx];
+                 const meshUuid = assetManager.meshIntToUuid.get(meshInt);
+                 if (meshUuid) {
+                     asset = assetManager.getAsset(meshUuid) as StaticMeshAsset;
+                 }
+             }
+          }
+
+          if (asset) {
+              vertexId = Array.from(subSel.vertexIds)[0];
+              const v = asset.geometry.vertices;
+              const n = asset.geometry.normals;
+              vertexPos = { x: v[vertexId*3], y: v[vertexId*3+1], z: v[vertexId*3+2] };
+              vertexNorm = { x: n[vertexId*3], y: n[vertexId*3+1], z: n[vertexId*3+2] };
+          }
+      }
+
+      const updateVertexPos = (newPos: {x:number, y:number, z:number}) => {
+          if (asset && vertexId !== -1) {
+              asset.geometry.vertices[vertexId*3] = newPos.x;
+              asset.geometry.vertices[vertexId*3+1] = newPos.y;
+              asset.geometry.vertices[vertexId*3+2] = newPos.z;
+              
+              // Re-upload to GPU
+              engineInstance.registerAssetWithGPU(asset);
+              setRefresh(r => r + 1); // Force UI update
+          }
+      };
 
       return (
         <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20">
@@ -209,24 +259,46 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                  <div className="flex-1 min-w-0 font-bold">{label} Selection</div>
                  {renderHeaderControls()}
             </div>
-            <div className="p-4 space-y-4 text-xs">
-                <div className="bg-black/20 p-3 rounded border border-white/5">
-                    <div className="text-2xl font-mono text-white mb-1">{count}</div>
-                    <div className="text-text-secondary uppercase text-[10px] font-bold">{label} Selected</div>
+            
+            <div className="p-4 space-y-4 text-xs overflow-y-auto custom-scrollbar">
+                {/* Summary Box */}
+                <div className="bg-black/20 p-3 rounded border border-white/5 flex justify-between items-center">
+                    <div>
+                        <div className="text-2xl font-mono text-white mb-1">{count}</div>
+                        <div className="text-text-secondary uppercase text-[10px] font-bold">{label} Selected</div>
+                    </div>
+                    {count === 1 && activeType === 'VERTEX' && <div className="text-right text-[10px] font-mono text-text-secondary">ID: {vertexId}</div>}
                 </div>
-                {/* Placeholder for tools like Weld, Split, Extrude */}
-                <div className="grid grid-cols-2 gap-2">
-                    <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Extrude</button>
-                    <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Bevel</button>
-                    <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Weld</button>
-                    <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Split</button>
+
+                {/* Vertex Data Editor */}
+                {count === 1 && activeType === 'VERTEX' && asset && (
+                    <div className="space-y-3 pt-2 border-t border-white/5">
+                        <div className="flex items-center gap-2 text-white font-bold"><Icon name="Move" size={12} /> Vertex Data</div>
+                        
+                        <Vector3Input label="Local Position" value={vertexPos} onChange={updateVertexPos} />
+                        
+                        <div className="opacity-70 pointer-events-none">
+                            <Vector3Input label="Normal (Read Only)" value={vertexNorm} onChange={()=>{}} disabled />
+                        </div>
+                    </div>
+                )}
+
+                {/* Tools */}
+                <div className="pt-2 border-t border-white/5">
+                    <div className="text-[10px] text-text-secondary uppercase font-bold tracking-wider mb-2">Operations</div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Extrude</button>
+                        <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Bevel</button>
+                        <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Weld</button>
+                        <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Split</button>
+                    </div>
                 </div>
             </div>
         </div>
       );
   }
 
-  // --- ASSET & NODE INSPECTORS (Keep simplified for this refactor) ---
+  // --- ASSET INSPECTOR ---
   if (activeType === 'ASSET') {
       const asset = activeObject as Asset;
       return (
@@ -249,6 +321,5 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
       );
   }
 
-  // Fallback for nodes
   return <div className="p-4">Node Inspector</div>;
 };
