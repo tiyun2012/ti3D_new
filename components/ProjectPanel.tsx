@@ -28,8 +28,17 @@ const FolderTreeItem: React.FC<{
     currentPath: string,
     allAssets: Asset[],
     onNavigate: (path: string) => void,
-    onContextMenu: (e: React.MouseEvent, path: string) => void
-}> = ({ path, name, depth, currentPath, allAssets, onNavigate, onContextMenu }) => {
+    onContextMenu: (e: React.MouseEvent, path: string) => void,
+    // Renaming Props
+    renamingAssetId: string | null,
+    onRenameStart: (id: string, name: string) => void,
+    renameValue: string,
+    setRenameValue: (val: string) => void,
+    onRenameSubmit: () => void
+}> = ({ 
+    path, name, depth, currentPath, allAssets, onNavigate, onContextMenu,
+    renamingAssetId, onRenameStart, renameValue, setRenameValue, onRenameSubmit
+}) => {
     const fullPath = path === '/' ? `/${name}` : `${path}/${name}`;
     const isRoot = path === '' && name === ''; // Root case "/"
     
@@ -38,6 +47,27 @@ const FolderTreeItem: React.FC<{
     const displayName = isRoot ? 'Root' : name;
     
     const [expanded, setExpanded] = useState(false);
+    const renameInputRef = useRef<HTMLInputElement>(null);
+
+    // Identify the asset for this folder to allow renaming
+    const myAsset = useMemo(() => {
+        if (isRoot) return null; // Virtual root
+        // Find folder asset matching this path/name
+        // Note: For 'Content' (path="", name="Content"), path is empty string in logic
+        const p = path === '' ? '/' : path; 
+        // Special case: Initial call is path="" name="Content". The asset path for Content folder is "/"
+        // Wait, AssetManager registers Root folders with path '/'.
+        // Let's rely on finding an asset where a.path == path (or '/') and a.name == name.
+        
+        // Actually, for subfolders:
+        // Parent: "/Content", Name: "Materials" -> Asset Path: "/Content", Asset Name: "Materials"
+        // For Root "Content": Passed path="", Name="Content". Asset Path="/", Asset Name="Content"
+        
+        const searchPath = path === '' ? '/' : path;
+        return allAssets.find(a => a.type === 'FOLDER' && a.name === name && a.path === searchPath);
+    }, [allAssets, path, name, isRoot]);
+
+    const isRenaming = myAsset && renamingAssetId === myAsset.id;
 
     // Auto-expand/collapse logic based on current path
     useEffect(() => {
@@ -50,6 +80,13 @@ const FolderTreeItem: React.FC<{
             setExpanded(false);
         }
     }, [currentPath, displayPath]);
+
+    useEffect(() => {
+        if (isRenaming && renameInputRef.current) {
+            renameInputRef.current.focus();
+            renameInputRef.current.select();
+        }
+    }, [isRenaming]);
 
     // Memoize children for performance
     const subFolders = useMemo(() => getSubFolders(allAssets, displayPath), [allAssets, displayPath]);
@@ -80,7 +117,31 @@ const FolderTreeItem: React.FC<{
                     size={12} 
                     className={isSelected ? 'text-accent' : (expanded ? 'text-white' : 'text-[#a8b3b1] group-hover:text-white')} 
                 />
-                <span className={`text-xs truncate ${isSelected ? 'font-bold' : ''}`}>{displayName}</span>
+                
+                {isRenaming ? (
+                    <input 
+                        ref={renameInputRef}
+                        className="bg-black/50 border border-accent text-white text-xs px-1 rounded outline-none min-w-[50px] flex-1"
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => { 
+                            if(e.key==='Enter') onRenameSubmit(); 
+                            if(e.key==='Escape') onRenameStart('', ''); // Cancel
+                        }}
+                        onBlur={onRenameSubmit}
+                        onClick={e => e.stopPropagation()}
+                    />
+                ) : (
+                    <span 
+                        className={`text-xs truncate ${isSelected ? 'font-bold' : ''}`}
+                        onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            if (myAsset) onRenameStart(myAsset.id, myAsset.name);
+                        }}
+                    >
+                        {displayName}
+                    </span>
+                )}
             </div>
             {expanded && subFolders.map(f => (
                 <FolderTreeItem 
@@ -92,6 +153,11 @@ const FolderTreeItem: React.FC<{
                     allAssets={allAssets}
                     onNavigate={onNavigate}
                     onContextMenu={onContextMenu}
+                    renamingAssetId={renamingAssetId}
+                    onRenameStart={onRenameStart}
+                    renameValue={renameValue}
+                    setRenameValue={setRenameValue}
+                    onRenameSubmit={onRenameSubmit}
                 />
             ))}
         </div>
@@ -149,6 +215,7 @@ export const ProjectPanel: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        // Focus for Grid/List items
         if (renamingAssetId && renameInputRef.current) {
             renameInputRef.current.focus();
             renameInputRef.current.select();
@@ -179,6 +246,11 @@ export const ProjectPanel: React.FC = () => {
 
     // --- Actions ---
     const handleNavigate = (path: string) => setCurrentPath(path);
+
+    const handleRenameStart = (id: string, currentName: string) => {
+        setRenamingAssetId(id);
+        setRenameValue(currentName);
+    };
 
     const handleRenameSubmit = () => {
         if (renamingAssetId && renameValue.trim()) {
@@ -308,6 +380,11 @@ export const ProjectPanel: React.FC = () => {
                         allAssets={allAssets}
                         onNavigate={handleNavigate}
                         onContextMenu={(e, p) => setContextMenu({ x: e.clientX, y: e.clientY, path: p, type: 'FOLDER', visible: true })}
+                        renamingAssetId={renamingAssetId}
+                        onRenameStart={handleRenameStart}
+                        renameValue={renameValue}
+                        setRenameValue={setRenameValue}
+                        onRenameSubmit={handleRenameSubmit}
                     />
                 </div>
             </div>
@@ -426,7 +503,13 @@ export const ProjectPanel: React.FC = () => {
                                                 onClick={e => e.stopPropagation()}
                                             />
                                         ) : (
-                                            <div className="text-[10px] text-gray-300 font-medium truncate leading-tight group-hover:text-white break-words whitespace-normal line-clamp-2">
+                                            <div 
+                                                className="text-[10px] text-gray-300 font-medium truncate leading-tight group-hover:text-white break-words whitespace-normal line-clamp-2"
+                                                onDoubleClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleRenameStart(asset.id, asset.name);
+                                                }}
+                                            >
                                                 {asset.name}
                                             </div>
                                         )}
@@ -470,8 +553,7 @@ export const ProjectPanel: React.FC = () => {
                         <>
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { 
                                 if (contextMenu.assetId) {
-                                    setRenamingAssetId(contextMenu.assetId);
-                                    setRenameValue(assetManager.getAsset(contextMenu.assetId)?.name || '');
+                                    handleRenameStart(contextMenu.assetId, assetManager.getAsset(contextMenu.assetId)?.name || '');
                                 }
                                 setContextMenu(null);
                             }}>
