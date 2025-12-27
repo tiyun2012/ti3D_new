@@ -1,7 +1,8 @@
+
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo, useContext } from 'react';
 import { Entity, ToolType, PerformanceMetrics, MeshComponentMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
-import { Mat4Utils, Vec3Utils } from '../services/math';
+import { Mat4Utils, Vec3Utils, RayUtils } from '../services/math';
 import { engineInstance } from '../services/engine';
 import { Icon } from './Icon';
 import { VIEW_MODES } from '../services/constants';
@@ -264,12 +265,55 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+      e.preventDefault();
+      const assetId = e.dataTransfer.getData('application/ti3d-asset');
+      if (assetId && containerRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          
+          const invVP = new Float32Array(16);
+          if (Mat4Utils.invert(vpMatrix, invVP)) {
+              const ray = RayUtils.create();
+              RayUtils.fromScreen(x, y, rect.width, rect.height, invVP, ray);
+              
+              // Raycast to Ground Plane (y=0)
+              // t = (targetY - originY) / dirY
+              // If dirY is close to 0, use camera distance fallback
+              let pos = { x: 0, y: 0, z: 0 };
+              
+              if (Math.abs(ray.direction.y) > 0.001) {
+                  const t = -ray.origin.y / ray.direction.y;
+                  if (t > 0) {
+                      pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                  } else {
+                      // Ray points away from ground, spawn in front of camera
+                      pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                  }
+              } else {
+                  pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+              }
+              
+              const id = engineInstance.createEntityFromAsset(assetId, pos);
+              if (id) onSelect([id]);
+          }
+      }
+  };
+
   const handleModeSelect = (modeId: number) => { engineInstance.setRenderMode(modeId); setRenderMode(modeId); setIsViewMenuOpen(false); };
 
   return (
     <div ref={containerRef} className={`w-full h-full bg-[#151515] relative overflow-hidden select-none group ${dragState ? (dragState.mode === 'PAN' ? 'cursor-move' : 'cursor-grabbing') : 'cursor-default'}`} 
          onMouseDown={handleMouseDown} 
          onMouseUp={handleMouseUp} 
+         onDragOver={handleDragOver}
+         onDrop={handleDrop}
          onWheel={(e) => setCamera(p => ({ ...p, radius: Math.max(2, p.radius + e.deltaY * 0.01) }))} 
          onContextMenu={e => e.preventDefault()}
     >
