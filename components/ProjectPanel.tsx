@@ -59,8 +59,8 @@ const FolderTreeItem: React.FC<{
     return (
         <div>
             <div 
-                className={`flex items-center gap-1 py-1 px-2 cursor-pointer select-none transition-colors border-l-2
-                    ${isSelected ? 'bg-accent/20 border-accent text-white' : 'border-transparent text-text-secondary hover:text-white hover:bg-white/5'}
+                className={`group flex items-center gap-1 py-1 px-2 cursor-pointer select-none transition-colors border-l-2
+                    ${isSelected ? 'border-transparent text-accent' : 'border-transparent text-text-secondary hover:text-white'}
                 `}
                 style={{ paddingLeft: `${depth * 12 + 8}px` }}
                 onClick={() => onNavigate(displayPath)}
@@ -78,9 +78,9 @@ const FolderTreeItem: React.FC<{
                 <Icon 
                     name={expanded ? 'FolderOpen' : 'Folder'} 
                     size={12} 
-                    className={isSelected ? 'text-accent' : (expanded ? 'text-white' : 'text-[#a8b3b1]')} 
+                    className={isSelected ? 'text-accent' : (expanded ? 'text-white' : 'text-[#a8b3b1] group-hover:text-white')} 
                 />
-                <span className="text-xs truncate">{displayName}</span>
+                <span className={`text-xs truncate ${isSelected ? 'font-bold' : ''}`}>{displayName}</span>
             </div>
             {expanded && subFolders.map(f => (
                 <FolderTreeItem 
@@ -293,7 +293,7 @@ export const ProjectPanel: React.FC = () => {
                 </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar pb-2">
                     {favorites.map(path => (
-                        <div key={path} className={`flex items-center gap-2 px-3 py-1 text-xs cursor-pointer ${currentPath === path ? 'bg-accent/20 text-white' : 'text-text-secondary hover:text-white'}`} onClick={() => handleNavigate(path)}>
+                        <div key={path} className={`flex items-center gap-2 px-3 py-1 text-xs cursor-pointer ${currentPath === path ? 'text-accent font-bold' : 'text-text-secondary hover:text-white'}`} onClick={() => handleNavigate(path)}>
                             <Icon name="Star" size={10} className="text-yellow-500 fill-current" />
                             <span className="truncate">{path.split('/').pop() || 'Root'}</span>
                         </div>
