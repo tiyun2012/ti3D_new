@@ -11,6 +11,7 @@ export interface Vector3 {
 export type RotationOrder = 'XYZ' | 'XZY' | 'YXZ' | 'YZX' | 'ZXY' | 'ZYX';
 export type TransformSpace = 'World' | 'Local' | 'Gimbal';
 export type MeshComponentMode = 'OBJECT' | 'VERTEX' | 'EDGE' | 'FACE';
+export type SimulationMode = 'STOPPED' | 'GAME' | 'SIMULATE';
 
 export enum ComponentType {
   TRANSFORM = 'Transform',

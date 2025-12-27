@@ -8,7 +8,7 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset } from '../types';
+import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode } from '../types';
 import { Mat4Utils, RayUtils, Vec3Utils, Ray } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
@@ -28,6 +28,7 @@ export class Engine {
     debugRenderer: DebugRenderer;
     metrics: PerformanceMetrics;
     isPlaying: boolean = false;
+    simulationMode: SimulationMode = 'STOPPED';
     renderMode: number = 0;
     
     meshComponentMode: MeshComponentMode = 'OBJECT';
@@ -113,9 +114,30 @@ export class Engine {
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }
-    start() { this.isPlaying = true; this.timeline.isPlaying = true; this.notifyUI(); consoleService.info('Simulation Started'); }
-    pause() { this.isPlaying = false; this.timeline.isPlaying = false; this.notifyUI(); consoleService.info('Simulation Paused'); }
-    stop() { this.isPlaying = false; this.timeline.isPlaying = false; this.timeline.currentTime = 0; this.notifyUI(); consoleService.info('Simulation Stopped'); }
+    
+    start(mode: SimulationMode = 'GAME') { 
+        this.isPlaying = true; 
+        this.simulationMode = mode;
+        this.timeline.isPlaying = true; 
+        this.notifyUI(); 
+        consoleService.info(mode === 'GAME' ? 'Game Started' : 'Simulation Started'); 
+    }
+    
+    pause() { 
+        this.timeline.isPlaying = false; 
+        this.notifyUI(); 
+        consoleService.info('Paused'); 
+    }
+    
+    stop() { 
+        this.isPlaying = false; 
+        this.simulationMode = 'STOPPED';
+        this.timeline.isPlaying = false; 
+        this.timeline.currentTime = 0; 
+        this.notifyUI(); 
+        consoleService.info('Stopped'); 
+    }
+    
     setTimelineTime(time: number) { this.timeline.currentTime = Math.max(0, Math.min(time, this.timeline.duration)); this.notifyUI(); }
 
     createVirtualPivot(name: string = 'Virtual Pivot') {
@@ -157,7 +179,7 @@ export class Engine {
                     this.currentWidth, 
                     this.currentHeight, 
                     this.currentCameraPos,
-                    this.isPlaying ? undefined : this.debugRenderer
+                    this.isPlaying && this.simulationMode === 'GAME' ? undefined : this.debugRenderer
                 );
             }
 
@@ -179,6 +201,8 @@ export class Engine {
                         this.timeline.currentTime = this.timeline.duration; 
                         this.timeline.isPlaying = false; 
                         this.isPlaying = false; 
+                        this.simulationMode = 'STOPPED';
+                        this.notifyUI();
                     }
                 }
             }

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance } from './services/engine';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode } from './types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from './types';
 import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
 import { consoleService } from './services/Console';
@@ -120,7 +120,6 @@ const StatsContent = () => {
 const EditorInterface: React.FC = () => {
     const wm = useContext(WindowManagerContext);
     const editor = useContext(EditorContext);
-    const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const initialized = useRef(false);
 
     useEffect(() => {
@@ -171,7 +170,7 @@ const EditorInterface: React.FC = () => {
             wm.openWindow('hierarchy');
             wm.openWindow('inspector');
             wm.openWindow('project');
-            wm.openWindow('timeline');
+            // wm.openWindow('timeline'); // Disabled by default to save space
             consoleService.init(); // Initialize global error catching
             initialized.current = true;
         }
@@ -196,11 +195,6 @@ const EditorInterface: React.FC = () => {
 
     if (!editor) return <div className="flex h-screen items-center justify-center text-white">Initializing...</div>;
 
-    const toggleMenu = (e: React.MouseEvent, menu: string) => {
-        e.stopPropagation();
-        setActiveMenu(activeMenu === menu ? null : menu);
-    };
-
     const handleLoad = () => {
         const json = localStorage.getItem('ti3d_scene');
         if (json) {
@@ -218,78 +212,17 @@ const EditorInterface: React.FC = () => {
     };
 
     return (
-        <div className="flex flex-col h-screen bg-[#101010] text-text-primary overflow-hidden font-sans relative" onClick={() => setActiveMenu(null)}>
-            <div className="flex flex-col z-50 pointer-events-auto shadow-xl">
-                <div className="h-8 bg-panel-header flex items-center px-3 text-[11px] select-none border-b border-white/5 gap-4">
-                    <div className="font-bold text-white tracking-wide flex items-center gap-2 pr-4 border-r border-white/5">
-                        <div className="w-4 h-4 bg-accent rounded-sm shadow-[0_0_8px_rgba(79,128,248,0.6)]"></div>
-                        Ti3D <span className="font-light text-white/40">PRO</span>
-                    </div>
-                    <div className="flex gap-2 text-text-primary relative">
-                        <span className="hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors" onClick={(e) => toggleMenu(e, 'File')}>File</span>
-                        {activeMenu === 'File' && (
-                            <div className="absolute top-7 left-0 bg-[#252525] border border-white/10 shadow-2xl rounded-md py-1 min-w-[160px] text-text-primary z-[100]">
-                                <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex justify-between" onClick={handleSave}><span>Save Scene</span><span className="text-white/30 text-[9px]">Ctrl+S</span></div>
-                                <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={handleLoad}>Load Scene</div>
-                            </div>
-                        )}
-                        <span className="hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors" onClick={(e) => toggleMenu(e, 'Edit')}>Edit</span>
-                        <div className="relative">
-                            <span className={`hover:bg-white/10 px-2 py-1 rounded cursor-pointer transition-colors ${activeMenu === 'Window' ? 'bg-white/10' : ''}`} onClick={(e) => toggleMenu(e, 'Window')}>Window</span>
-                            {activeMenu === 'Window' && (
-                                <div className="absolute top-7 left-0 bg-[#252525] border border-white/10 shadow-2xl rounded-md py-1 min-w-[180px] text-text-primary z-[100]">
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('hierarchy'); setActiveMenu(null); }}>
-                                        <Icon name="ListTree" size={12} /> Hierarchy
-                                    </div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('inspector'); setActiveMenu(null); }}>
-                                        <Icon name="Settings2" size={12} /> Inspector
-                                    </div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('project'); setActiveMenu(null); }}>
-                                        <Icon name="FolderOpen" size={12} /> Project
-                                    </div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('console'); setActiveMenu(null); }}>
-                                        <Icon name="Terminal" size={12} /> Console
-                                    </div>
-                                    <div className="border-t border-white/5 my-1"></div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('skinning'); setActiveMenu(null); }}>
-                                        <Icon name="PersonStanding" size={12} /> Skinning Editor
-                                    </div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('uveditor'); setActiveMenu(null); }}>
-                                        <Icon name="LayoutGrid" size={12} /> UV Editor
-                                    </div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('spreadsheet'); setActiveMenu(null); }}>
-                                        <Icon name="Table" size={12} /> Spreadsheet
-                                    </div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { wm?.toggleWindow('timeline'); setActiveMenu(null); }}>
-                                        <Icon name="Film" size={12} /> Timeline
-                                    </div>
-                                    <div className="border-t border-white/5 my-1"></div>
-                                    <div className="px-4 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { wm?.toggleWindow('preferences'); setActiveMenu(null); }}>Preferences...</div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
+        <div className="flex flex-col h-screen bg-[#101010] text-text-primary overflow-hidden font-sans relative">
+            {/* Unified Top Toolbar (Menus + Tools + Transport) */}
+            <Toolbar onSave={handleSave} onLoad={handleLoad} />
 
-                <Toolbar 
-                    isPlaying={editor.isPlaying}
-                    onPlay={() => { engineInstance.start(); }}
-                    onPause={() => { engineInstance.pause(); }}
-                    onStop={() => { engineInstance.stop(); }}
-                    currentTool={editor.tool}
-                    setTool={editor.setTool}
-                    transformSpace={editor.transformSpace}
-                    setTransformSpace={editor.setTransformSpace}
-                />
-            </div>
-
-            <div className="absolute inset-0 top-[64px] bottom-[24px] z-0">
+            <div className="absolute inset-0 top-[40px] bottom-[24px] z-0">
                 <SceneWrapper />
             </div>
 
             <div className="absolute bottom-0 w-full h-6 bg-panel-header/90 backdrop-blur flex items-center px-4 justify-between text-[10px] text-text-secondary shrink-0 select-none z-50 border-t border-white/5">
                 <div className="flex items-center gap-4">
-                    {editor.isPlaying ? <span className="text-emerald-500 animate-pulse font-bold">● PLAYING</span> : <span>Ready</span>}
+                    {editor.simulationMode === 'GAME' ? <span className="text-emerald-500 animate-pulse font-bold">● GAME MODE</span> : (editor.simulationMode === 'SIMULATE' ? <span className="text-indigo-400 animate-pulse font-bold">● SIMULATING</span> : <span>Ready</span>)}
                 </div>
                 <div className="flex items-center gap-4 font-mono opacity-60">
                     <span>{engineInstance.metrics.entityCount} Objects</span>
@@ -309,6 +242,9 @@ const App: React.FC = () => {
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
     const [meshComponentMode, setMeshComponentMode] = useState<MeshComponentMode>('OBJECT');
     
+    // New State for Simulation
+    const [simulationMode, setSimulationMode] = useState<SimulationMode>('STOPPED');
+
     // Graph
     const [inspectedNode, setInspectedNode] = useState<GraphNode | null>(null);
     const [activeGraphConnections, setActiveGraphConnections] = useState<GraphConnection[]>([]);
@@ -323,6 +259,7 @@ const App: React.FC = () => {
     useEffect(() => {
         const update = () => {
             setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
+            setSimulationMode(engineInstance.simulationMode); // Sync engine mode to UI
         };
         update();
         return engineInstance.subscribe(update);
@@ -360,6 +297,7 @@ const App: React.FC = () => {
         transformSpace,
         setTransformSpace,
         isPlaying: engineInstance.isPlaying,
+        simulationMode, // Pass to context
         uiConfig,
         setUiConfig,
         gridConfig,
@@ -369,7 +307,7 @@ const App: React.FC = () => {
     }), [
         entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
         selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
-        snapSettings, engineInstance.isPlaying
+        snapSettings, engineInstance.isPlaying, simulationMode
     ]);
 
     return (

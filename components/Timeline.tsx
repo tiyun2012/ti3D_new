@@ -82,30 +82,6 @@ export const Timeline: React.FC = () => {
             {/* Header / Transport */}
             <div className="h-10 bg-panel-header flex items-center px-4 justify-between border-b border-white/5">
                 <div className="flex items-center gap-4">
-                    <div className="flex items-center bg-black/40 rounded p-0.5 gap-0.5 border border-white/5">
-                        <button 
-                            onClick={() => engineInstance.setTimelineTime(0)} 
-                            className="p-1 hover:bg-white/10 rounded text-text-secondary hover:text-white transition-colors"
-                            title="Rewind to Start"
-                        >
-                            <Icon name="SkipBack" size={14} />
-                        </button>
-                        <button 
-                            onClick={() => timeline.isPlaying ? engineInstance.pause() : engineInstance.start()} 
-                            className={`p-1 px-3 rounded transition-all ${timeline.isPlaying ? 'text-amber-500 bg-amber-500/10' : 'text-emerald-500 hover:bg-emerald-500/10'}`}
-                            title={timeline.isPlaying ? "Pause" : "Play"}
-                        >
-                            <Icon name={timeline.isPlaying ? "Pause" : "Play"} size={16} className="fill-current" />
-                        </button>
-                        <button 
-                            onClick={() => engineInstance.stop()} 
-                            className="p-1 hover:bg-rose-500/10 rounded text-rose-500 transition-colors"
-                            title="Stop & Reset"
-                        >
-                            <Icon name="Square" size={14} className="fill-current" />
-                        </button>
-                    </div>
-
                     <div className="flex items-center gap-2 bg-black/30 px-3 py-1 rounded border border-white/5 font-mono text-accent">
                         <Icon name="Clock" size={12} className="opacity-50" />
                         <span className="text-[11px] font-bold">{formatTime(timeline.currentTime)}</span>
@@ -162,7 +138,6 @@ export const Timeline: React.FC = () => {
                 <div 
                     className="absolute top-4 bottom-4 w-px bg-white z-10 pointer-events-none shadow-[0_0_8px_rgba(255,255,255,0.8)]"
                     style={{ 
-                        // Fix: Replaced missing viewportSize with rulerWidth tracking
                         left: `calc(1rem + ${(timeline.currentTime / timeline.duration) * rulerWidth}px)`, 
                         transform: 'translateX(-50%)' 
                     }}

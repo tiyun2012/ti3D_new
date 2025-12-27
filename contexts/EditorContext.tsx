@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode } from '../types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 
 export type VertexShape = 'DOT' | 'CUBE';
@@ -100,8 +100,10 @@ export interface EditorContextType {
   setTool: (tool: ToolType) => void;
   transformSpace: TransformSpace;
   setTransformSpace: (space: TransformSpace) => void;
-  isPlaying: boolean;
   
+  // Engine State
+  isPlaying: boolean;
+  simulationMode: SimulationMode; // New
 
   uiConfig: UIConfiguration;
   setUiConfig: (config: UIConfiguration) => void;
