@@ -27,95 +27,6 @@ const toVec3 = (v: string | null, def = "vec3(1.0)") => {
     return v;
 };
 
-// Standard Vertex Shader Template matching WebGLRenderer expectations
-const VS_TEMPLATE = `#version 300 es
-precision highp float;
-precision highp int;
-precision highp sampler2DArray;
-
-layout(location=0) in vec3 a_position;
-layout(location=1) in vec3 a_normal;
-layout(location=2) in mat4 a_model;
-layout(location=6) in vec3 a_color;
-layout(location=7) in float a_isSelected;
-layout(location=8) in vec2 a_uv;
-layout(location=9) in float a_texIndex;
-layout(location=10) in float a_effectIndex;
-layout(location=11) in vec4 a_joints;
-layout(location=12) in vec4 a_weights;
-
-uniform mat4 u_viewProjection;
-uniform highp float u_time;
-uniform sampler2DArray u_textures;
-uniform sampler2D u_boneTexture; 
-uniform int u_hasSkinning; 
-
-out vec3 v_normal;
-out vec3 v_worldPos;
-out vec3 v_objectPos; 
-out vec3 v_color;
-out float v_isSelected;
-out vec2 v_uv;
-out float v_texIndex;
-out float v_effectIndex;
-out vec4 v_weights;
-out vec4 v_joints;
-
-// --- Global Functions (Graph) ---
-%FUNCTIONS%
-
-mat4 getBoneMatrix(int jointIndex) {
-    if (jointIndex < 0) return mat4(1.0);
-    int base = jointIndex * 4;
-    vec4 c0 = texelFetch(u_boneTexture, ivec2(base, 0), 0);
-    vec4 c1 = texelFetch(u_boneTexture, ivec2(base + 1, 0), 0);
-    vec4 c2 = texelFetch(u_boneTexture, ivec2(base + 2, 0), 0);
-    vec4 c3 = texelFetch(u_boneTexture, ivec2(base + 3, 0), 0);
-    return mat4(c0, c1, c2, c3);
-}
-
-void main() {
-    mat4 model = a_model;
-    vec4 localPos = vec4(a_position, 1.0);
-    vec3 localNormal = a_normal;
-
-    if (u_hasSkinning == 1) {
-        mat4 skinMatrix = 
-            a_weights.x * getBoneMatrix(int(a_joints.x)) +
-            a_weights.y * getBoneMatrix(int(a_joints.y)) +
-            a_weights.z * getBoneMatrix(int(a_joints.z)) +
-            a_weights.w * getBoneMatrix(int(a_joints.w));
-        
-        if (dot(a_weights, vec4(1.0)) < 0.01) skinMatrix = mat4(1.0);
-
-        localPos = skinMatrix * localPos;
-        localNormal = mat3(skinMatrix) * localNormal;
-    }
-
-    vec3 v_pos_graph = localPos.xyz; 
-    v_worldPos = (model * localPos).xyz;
-    v_normal = normalize(mat3(model) * localNormal);
-    v_objectPos = a_position;
-    v_uv = a_uv;
-    v_color = a_color;
-    v_isSelected = a_isSelected;
-    v_texIndex = a_texIndex;
-    v_effectIndex = a_effectIndex;
-    v_weights = a_weights;
-    v_joints = a_joints;
-    
-    vec3 vertexOffset = vec3(0.0);
-    
-    // --- Graph Body ---
-    %BODY%
-    
-    localPos.xyz += vertexOffset;
-    vec4 worldPos = model * localPos;
-    gl_Position = u_viewProjection * worldPos;
-    v_normal = normalize(mat3(model) * localNormal); 
-    v_worldPos = worldPos.xyz;
-}`;
-
 export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]): CompileResult | string => {
     const outNode = nodes.find(n => n.type === 'StandardMaterial' || n.type === 'ShaderOutput');
     if (!outNode) return '';
@@ -250,12 +161,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
         const rgbVar = rgb.finalVar ? toVec3(rgb.finalVar) : 'vec3(1.0, 0.0, 1.0)';
         fsSource = `void main() { ${rgb.body} vec3 finalColor = ${rgbVar}; if (u_renderMode == 1) finalColor = normalize(v_normal) * 0.5 + 0.5; outColor = vec4(finalColor, 1.0); outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0); }`;
     }
-
-    const vsSource = VS_TEMPLATE
-        .replace('%FUNCTIONS%', vsData.functions.join('\n'))
-        .replace('%BODY%', `${vsData.body}\n${vsFinalAssignment}`);
-
+    const vsSource = `// --- Global Functions (VS) ---\n${vsData.functions.join('\n')}\n// --- Graph Body (VS) ---\n${vsData.body}\n${vsFinalAssignment}`;
     const fullFs = `#version 300 es\nprecision highp float; precision highp sampler2DArray; uniform float u_time; uniform vec3 u_cameraPos; uniform sampler2DArray u_textures; uniform int u_renderMode; uniform vec3 u_lightDir; uniform vec3 u_lightColor; uniform float u_lightIntensity; in vec3 v_normal, v_worldPos, v_objectPos, v_color; in float v_isSelected, v_texIndex, v_effectIndex; in vec2 v_uv; layout(location=0) out vec4 outColor; layout(location=1) out vec4 outData; ${[...new Set(fsGlobals)].join('\n')} ${fsSource}`;
-    
     return { vs: vsSource, fs: fullFs };
 };

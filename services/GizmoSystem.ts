@@ -1,3 +1,4 @@
+
 import { engineInstance } from './engine';
 import { Mat4Utils, Vec3Utils } from './math';
 import { Vector3, ToolType } from '../types';
@@ -88,15 +89,32 @@ export class GizmoSystem {
             z: engineInstance.ecs.store.worldMatrix[idx*16 + 14]
         };
         
-        if (engineInstance.currentViewProj) {
-            engineInstance.renderer.renderGizmos(
-                engineInstance.currentViewProj, 
-                pos, 
-                this.gizmoScale, 
-                this.hoverAxis as string, 
-                this.activeAxis as string
-            );
-        }
+        const debug = engineInstance.debugRenderer;
+        if (!debug) return;
+
+        const scale = this.gizmoScale;
+        const len = scale * 0.8;
+        
+        // Colors
+        const colX = this.hoverAxis === 'X' || this.activeAxis === 'X' ? {r:1,g:1,b:0} : {r:1,g:0,b:0};
+        const colY = this.hoverAxis === 'Y' || this.activeAxis === 'Y' ? {r:1,g:1,b:0} : {r:0,g:1,b:0};
+        const colZ = this.hoverAxis === 'Z' || this.activeAxis === 'Z' ? {r:1,g:1,b:0} : {r:0,g:0,b:1};
+
+        // Draw Axes using DebugRenderer
+        debug.drawLine(pos, {x: pos.x + len, y: pos.y, z: pos.z}, colX);
+        debug.drawLine(pos, {x: pos.x, y: pos.y + len, z: pos.z}, colY);
+        debug.drawLine(pos, {x: pos.x, y: pos.y, z: pos.z + len}, colZ);
+        
+        // Draw Tips (Approximate with small cross lines)
+        const tipLen = scale * 0.1;
+        debug.drawLine({x: pos.x + len, y: pos.y, z: pos.z}, {x: pos.x + len - tipLen, y: pos.y + tipLen, z: pos.z}, colX);
+        debug.drawLine({x: pos.x + len, y: pos.y, z: pos.z}, {x: pos.x + len - tipLen, y: pos.y - tipLen, z: pos.z}, colX);
+        
+        debug.drawLine({x: pos.x, y: pos.y + len, z: pos.z}, {x: pos.x + tipLen, y: pos.y + len - tipLen, z: pos.z}, colY);
+        debug.drawLine({x: pos.x, y: pos.y + len, z: pos.z}, {x: pos.x - tipLen, y: pos.y + len - tipLen, z: pos.z}, colY);
+        
+        debug.drawLine({x: pos.x, y: pos.y, z: pos.z + len}, {x: pos.x, y: pos.y + tipLen, z: pos.z + len - tipLen}, colZ);
+        debug.drawLine({x: pos.x, y: pos.y, z: pos.z + len}, {x: pos.x, y: pos.y - tipLen, z: pos.z + len - tipLen}, colZ);
     }
 
     private startDrag(ray: any, pos: Vector3) {
@@ -166,7 +184,7 @@ export class GizmoSystem {
 
         // 1. Axes
         const len = scale * 0.67;  
-        const rad = scale * 0.00625; 
+        const rad = scale * 0.05; // Increased hit radius for easier selection with lines
         const distToAxis = (axisVec: Vector3) => {
             const end = Vec3Utils.add(pos, Vec3Utils.scale(axisVec, len, {x:0,y:0,z:0}), {x:0,y:0,z:0});
             return this.distRaySegment(ray, pos, end);
@@ -210,23 +228,39 @@ export class GizmoSystem {
     
     private distRaySegment(ray: any, v0: Vector3, v1: Vector3): number {
         const rOrigin = ray.origin; const rDir = ray.direction;
-        const v10 = Vec3Utils.subtract(v1, v0, {x:0,y:0,z:0});
-        const v0r = Vec3Utils.subtract(v0, rOrigin, {x:0,y:0,z:0});
-        const dotA = Vec3Utils.dot(v10, v10);
-        const dotB = Vec3Utils.dot(v10, rDir);
-        const dotC = Vec3Utils.dot(v10, v0r);
-        const dotD = Vec3Utils.dot(rDir, rDir);
-        const dotE = Vec3Utils.dot(rDir, v0r);
+        const v10x = v1.x - v0.x;
+        const v10y = v1.y - v0.y;
+        const v10z = v1.z - v0.z;
+        
+        const v0rx = v0.x - rOrigin.x;
+        const v0ry = v0.y - rOrigin.y;
+        const v0rz = v0.z - rOrigin.z;
+        
+        const dotA = v10x*v10x + v10y*v10y + v10z*v10z;
+        const dotB = v10x*rDir.x + v10y*rDir.y + v10z*rDir.z;
+        const dotC = v10x*v0rx + v10y*v0ry + v10z*v0rz;
+        const dotD = rDir.x*rDir.x + rDir.y*rDir.y + rDir.z*rDir.z;
+        const dotE = rDir.x*v0rx + rDir.y*v0ry + rDir.z*v0rz;
+        
         const denom = dotA*dotD - dotB*dotB;
+        
         let sc, tc;
-        if (denom < 0.000001) { sc = 0; tc = (dotB > dotC ? dotE/dotB : 0); }
-        else { sc = (dotB*dotE - dotC*dotD) / denom; tc = (dotA*dotE - dotB*dotC) / denom; }
+        if (denom < 0.000001) {
+            sc = 0.0;
+            tc = (dotB > dotC ? dotE / dotB : 0.0);
+        } else {
+            sc = (dotB*dotE - dotC*dotD) / denom;
+            tc = (dotA*dotE - dotB*dotC) / denom;
+        }
+        
         sc = Math.max(0, Math.min(1, sc));
         tc = (dotB*sc + dotE) / dotD;
-        const pSeg = Vec3Utils.add(v0, Vec3Utils.scale(v10, sc, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-        const pRay = Vec3Utils.add(rOrigin, Vec3Utils.scale(rDir, tc, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-        const diff = Vec3Utils.subtract(pSeg, pRay, {x:0,y:0,z:0});
-        return Math.sqrt(Vec3Utils.dot(diff, diff));
+        
+        const diffX = (v0.x + v10x * sc) - (rOrigin.x + rDir.x * tc);
+        const diffY = (v0.y + v10y * sc) - (rOrigin.y + rDir.y * tc);
+        const diffZ = (v0.z + v10z * sc) - (rOrigin.z + rDir.z * tc);
+        
+        return Math.sqrt(diffX*diffX + diffY*diffY + diffZ*diffZ);
     }
 
     private rayPlaneIntersect(ray: any, planePoint: Vector3, planeNormal: Vector3): Vector3 | null {

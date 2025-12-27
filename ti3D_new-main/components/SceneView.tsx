@@ -110,39 +110,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       gizmoSystem.setTool(tool);
   }, [tool]);
 
-  // Focus (F) Shortcut
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-        const active = document.activeElement;
-        const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
-        if (isInput) return;
-
-        if (e.key.toLowerCase() === 'f') {
-            const bounds = engineInstance.getSelectionAABB();
-            if (bounds) {
-                const center = {
-                    x: (bounds.min.x + bounds.max.x) / 2,
-                    y: (bounds.min.y + bounds.max.y) / 2,
-                    z: (bounds.min.z + bounds.max.z) / 2
-                };
-                const size = Math.sqrt(
-                    (bounds.max.x - bounds.min.x)**2 + 
-                    (bounds.max.y - bounds.min.y)**2 + 
-                    (bounds.max.z - bounds.min.z)**2
-                );
-                
-                setCamera(prev => ({
-                    ...prev,
-                    target: center,
-                    radius: Math.max(2, size * 1.5)
-                }));
-            }
-        }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
   // --- Camera Logic ---
   const { vpMatrix, eye } = useMemo(() => {
     const { width, height } = viewport;
