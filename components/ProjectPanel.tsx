@@ -39,13 +39,15 @@ const FolderTreeItem: React.FC<{
     
     const [expanded, setExpanded] = useState(false);
 
-    // Auto-expand if current path is inside this folder
+    // Auto-expand/collapse logic based on current path
     useEffect(() => {
         const checkPath = displayPath === '/' ? '/' : displayPath + '/';
         const curr = currentPath === '/' ? '/' : currentPath + '/';
-        // Expand if strictly contains or is the current path
+        // Expand if strictly contains or is the current path, otherwise collapse
         if (curr.startsWith(checkPath) || currentPath === displayPath) {
             setExpanded(true);
+        } else {
+            setExpanded(false);
         }
     }, [currentPath, displayPath]);
 
@@ -281,7 +283,7 @@ export const ProjectPanel: React.FC = () => {
             setContextMenu({ x: e.clientX, y: e.clientY, type: 'BG', visible: true });
         }}>
             {/* SIDEBAR */}
-            <div style={{ width: sidebarWidth }} className="bg-[#151515] border-r border-black/20 flex flex-col shrink-0 transition-none relative">
+            <div style={{ width: sidebarWidth }} className="bg-[#151515] border-r border-black flex flex-col shrink-0 transition-none relative">
                 <div className="p-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider flex justify-between items-center group">
                     <span>Favorites</span>
                 </div>
@@ -313,12 +315,17 @@ export const ProjectPanel: React.FC = () => {
                     onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
                 >
                     <div className={`
-                        w-1.5 h-1/3 min-h-[32px] rounded-full flex flex-col items-center justify-center gap-1 transition-all duration-200
-                        ${isResizing ? 'bg-accent' : 'bg-black border border-white/10 group-hover:border-white/30'}
+                        w-1 h-[15%] min-h-[24px] rounded-full flex flex-col items-center justify-center gap-0.5 transition-all duration-200
+                        bg-black border shadow-[0_0_10px_rgba(0,0,0,0.5)]
+                        ${isResizing 
+                            ? 'scale-110 border-white/40' // Active: Larger, brighter border, pure black
+                            : 'border-white/10 group-hover:border-white/30' // Idle: Dim border, brighten on hover
+                        }
                     `}>
-                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white' : 'bg-zinc-500'}`} />
-                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white' : 'bg-zinc-500'}`} />
-                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white' : 'bg-zinc-500'}`} />
+                        {/* Grip Dots */}
+                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white/90' : 'bg-white/20'}`} />
+                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white/90' : 'bg-white/20'}`} />
+                        <div className={`w-0.5 h-0.5 rounded-full ${isResizing ? 'bg-white/90' : 'bg-white/20'}`} />
                     </div>
                 </div>
             </div>
