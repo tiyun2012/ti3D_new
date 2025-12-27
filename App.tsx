@@ -12,6 +12,7 @@ import { HierarchyPanel } from './components/HierarchyPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { SceneView } from './components/SceneView';
 import { ProjectPanel } from './components/ProjectPanel';
+import { ConsolePanel } from './components/ConsolePanel'; // New Import
 import { Icon } from './components/Icon';
 import { PreferencesModal } from './components/PreferencesModal';
 import { WindowManager, WindowManagerContext } from './components/WindowManager';
@@ -83,7 +84,7 @@ const SceneWrapper = () => {
 };
 
 const ProjectWrapper = () => <ProjectPanel />;
-const ConsoleWrapper = () => <ProjectPanel initialTab="CONSOLE" />;
+const ConsoleWrapper = () => <ConsolePanel />;
 
 const StatsContent = () => {
     const [metrics, setMetrics] = useState(engineInstance.metrics);
@@ -303,14 +304,16 @@ const App: React.FC = () => {
     const [entities, setEntities] = useState<Entity[]>([]);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-    const [inspectedNode, setInspectedNode] = useState<GraphNode | null>(null);
-    const [activeGraphConnections, setActiveGraphConnections] = useState<GraphConnection[]>([]);
     const [selectionType, setSelectionType] = useState<SelectionType>('ENTITY');
     const [tool, setTool] = useState<ToolType>('SELECT');
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
     const [meshComponentMode, setMeshComponentMode] = useState<MeshComponentMode>('OBJECT');
-    const [isPlaying, setIsPlaying] = useState(false);
     
+    // Graph
+    const [inspectedNode, setInspectedNode] = useState<GraphNode | null>(null);
+    const [activeGraphConnections, setActiveGraphConnections] = useState<GraphConnection[]>([]);
+    
+    // Configs
     const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
     const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
     const [snapSettings, setSnapSettings] = useState<SnapSettings>(DEFAULT_SNAP_CONFIG);
@@ -318,55 +321,56 @@ const App: React.FC = () => {
     const onNodeDataChangeRef = useRef<((nodeId: string, key: string, value: any) => void) | null>(null);
 
     useEffect(() => {
-        const updateState = () => {
+        const update = () => {
             setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
-            setIsPlaying(engineInstance.isPlaying);
         };
-        const unsubscribe = engineInstance.subscribe(updateState);
-        updateState();
-        return unsubscribe;
+        update();
+        return engineInstance.subscribe(update);
     }, []);
 
-    // Sync UI Configuration to Engine Instance for high performance render logic
-    useEffect(() => {
-        engineInstance.setUiConfig(uiConfig);
-    }, [uiConfig]);
-
-    const updateInspectedNodeData = useCallback((key: string, value: any) => {
-        setInspectedNode(prev => {
-            if (!prev) return null;
-            if (prev.data?.[key] === value) return prev;
-            const updated = { ...prev, data: { ...prev.data, [key]: value } };
-            if (onNodeDataChangeRef.current) {
-                onNodeDataChangeRef.current(updated.id, key, value);
-            }
-            return updated;
-        });
-    }, []);
-
-    const setOnNodeDataChange = useCallback((cb: (nodeId: string, key: string, value: any) => void) => {
-        onNodeDataChangeRef.current = cb;
-    }, []);
+    useEffect(() => { engineInstance.setGridConfig(gridConfig); }, [gridConfig]);
+    useEffect(() => { engineInstance.setUiConfig(uiConfig); }, [uiConfig]);
 
     const contextValue = useMemo<EditorContextType>(() => ({
         entities,
         sceneGraph: engineInstance.sceneGraph,
-        selectedIds, setSelectedIds,
-        selectedAssetIds, setSelectedAssetIds,
-        inspectedNode, setInspectedNode,
-        activeGraphConnections, setActiveGraphConnections,
-        updateInspectedNodeData,
-        onNodeDataChange: (id, k, v) => onNodeDataChangeRef.current?.(id, k, v),
-        setOnNodeDataChange,
-        selectionType, setSelectionType,
-        meshComponentMode, setMeshComponentMode,
-        tool, setTool,
-        transformSpace, setTransformSpace,
-        isPlaying,
-        uiConfig, setUiConfig,
-        gridConfig, setGridConfig,
-        snapSettings, setSnapSettings
-    }), [entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, updateInspectedNodeData, setOnNodeDataChange, selectionType, meshComponentMode, tool, transformSpace, isPlaying, uiConfig, gridConfig, snapSettings]);
+        selectedIds,
+        setSelectedIds: (ids) => { setSelectedIds(ids); engineInstance.setSelected(ids); },
+        selectedAssetIds,
+        setSelectedAssetIds,
+        inspectedNode,
+        setInspectedNode,
+        activeGraphConnections,
+        setActiveGraphConnections,
+        updateInspectedNodeData: (key, value) => {
+            if (inspectedNode) {
+                setInspectedNode(prev => prev ? { ...prev, data: { ...prev.data, [key]: value } } : null);
+            }
+        },
+        onNodeDataChange: (nodeId, key, value) => {
+            if (onNodeDataChangeRef.current) onNodeDataChangeRef.current(nodeId, key, value);
+        },
+        setOnNodeDataChange: (cb) => { onNodeDataChangeRef.current = cb; },
+        selectionType,
+        setSelectionType,
+        meshComponentMode,
+        setMeshComponentMode,
+        tool,
+        setTool,
+        transformSpace,
+        setTransformSpace,
+        isPlaying: engineInstance.isPlaying,
+        uiConfig,
+        setUiConfig,
+        gridConfig,
+        setGridConfig,
+        snapSettings,
+        setSnapSettings
+    }), [
+        entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
+        selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
+        snapSettings, engineInstance.isPlaying
+    ]);
 
     return (
         <EditorContext.Provider value={contextValue}>
