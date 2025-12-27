@@ -75,7 +75,11 @@ const FolderTreeItem: React.FC<{
                 >
                     <Icon name={expanded ? 'ChevronDown' : 'ChevronRight'} size={10} />
                 </div>
-                <Icon name={expanded ? 'FolderOpen' : 'Folder'} size={12} className={isSelected ? 'text-accent' : 'text-yellow-500'} />
+                <Icon 
+                    name={expanded ? 'FolderOpen' : 'Folder'} 
+                    size={12} 
+                    className={isSelected ? 'text-accent' : (expanded ? 'text-white' : 'text-[#a8b3b1]')} 
+                />
                 <span className="text-xs truncate">{displayName}</span>
             </div>
             {expanded && subFolders.map(f => (
@@ -219,7 +223,7 @@ export const ProjectPanel: React.FC = () => {
 
     const getTypeColor = (type: AssetType) => {
         switch(type) {
-            case 'FOLDER': return 'text-yellow-500';
+            case 'FOLDER': return 'text-[#a8b3b1]';
             case 'MATERIAL': return 'bg-emerald-500';
             case 'MESH': return 'bg-cyan-500';
             case 'SKELETAL_MESH': return 'bg-purple-500';
@@ -401,7 +405,7 @@ export const ProjectPanel: React.FC = () => {
                                         <Icon 
                                             name={getIcon(asset.type) as any} 
                                             size={viewMode === 'GRID' ? scale * 0.6 : 16} 
-                                            className={`${asset.type === 'FOLDER' ? 'text-yellow-500' : 'text-text-secondary'} drop-shadow-lg`} 
+                                            className={`${asset.type === 'FOLDER' ? 'text-[#a8b3b1]' : 'text-text-secondary'} drop-shadow-lg`} 
                                         />
                                         {/* Color Bar for Assets */}
                                         {asset.type !== 'FOLDER' && (
