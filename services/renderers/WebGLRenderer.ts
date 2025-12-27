@@ -260,18 +260,27 @@ void main() {
         if (u_toneMapping > 0.5) baseColor = aces(baseColor);
     }
     
+    // Convert Base Scene to Gamma Space
     baseColor = pow(baseColor, vec3(1.0 / 2.2));
 
+    // Composite Excluded Layer (e.g. Grid/Gizmos)
     vec4 exclSample = texture(u_excluded, v_uv);
     if (exclSample.a > 0.0) {
         vec3 exclColor = exclSample.rgb;
         float exclEffectId = floor(mod(texture(u_excludedData, v_uv).r * 255.0 + 0.5, 100.0));
-        exclColor = processPerObjectEffects(exclColor, exclEffectId, v_uv, u_excluded);
         
-        // Correct composite for premultiplied alpha inputs (exclColor is C*A) over Gamma space base
+        // 1. Un-premultiply to get straight color for processing
         vec3 straightColor = exclColor / exclSample.a;
-        vec3 gammaColor = pow(straightColor, vec3(1.0 / 2.2));
-        baseColor = baseColor * (1.0 - exclSample.a) + gammaColor * exclSample.a;
+        
+        // 2. Apply effects
+        straightColor = processPerObjectEffects(straightColor, exclEffectId, v_uv, u_excluded);
+        
+        // 3. Gamma Correct the overlay to match the destination buffer
+        vec3 gammaOverlay = pow(straightColor, vec3(1.0 / 2.2));
+        
+        // 4. Standard Mix (OneMinusSrcAlpha composition)
+        // base * (1-a) + overlay * a
+        baseColor = baseColor * (1.0 - exclSample.a) + gammaOverlay * exclSample.a;
     }
 
     outColor = vec4(baseColor, 1.0);
