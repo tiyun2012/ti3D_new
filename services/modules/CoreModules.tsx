@@ -230,7 +230,10 @@ export const VirtualPivotModule: EngineModule = {
         for (let i = 0; i < ctx.ecs.count; i++) {
             if (store.isActive[i] && (store.componentMask[i] & COMPONENT_MASKS.VIRTUAL_PIVOT)) {
                 const idx = i;
-                const length = store.vpLength[idx];
+                
+                // ✅ RESTORED: Apply 0.3 Scale Factor here
+                const length = store.vpLength[idx] * 0.3; 
+                
                 const wm = store.worldMatrix.subarray(idx * 16, idx * 16 + 16);
                 
                 const pos = { x: wm[12], y: wm[13], z: wm[14] };
