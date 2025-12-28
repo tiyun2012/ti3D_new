@@ -3,8 +3,6 @@ import React from 'react';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 
-export type VertexShape = 'DOT' | 'CUBE';
-
 export interface UIConfiguration {
     windowBorderRadius: number;
     resizeHandleThickness: number;
@@ -16,7 +14,6 @@ export interface UIConfiguration {
     selectionEdgeColor: string;
     vertexSize: number;
     vertexColor: string;
-    vertexShape: VertexShape;
 }
 
 export interface GridConfiguration {
@@ -46,7 +43,6 @@ export const DEFAULT_UI_CONFIG: UIConfiguration = {
     selectionEdgeColor: '#4f80f8', // Unity Blue
     vertexSize: 1.0,
     vertexColor: '#a855f7', // Purple
-    vertexShape: 'DOT'
 };
 
 export const DEFAULT_GRID_CONFIG: GridConfiguration = {

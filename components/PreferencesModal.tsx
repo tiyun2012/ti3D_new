@@ -1,6 +1,6 @@
 
 import React, { useContext, useState, useMemo } from 'react';
-import { EditorContext, VertexShape } from '../contexts/EditorContext';
+import { EditorContext } from '../contexts/EditorContext';
 import { Icon } from './Icon';
 import { Slider } from './ui/Slider';
 import { Select } from './ui/Select';
@@ -9,30 +9,6 @@ import { engineInstance } from '../services/engine';
 interface Props {
   onClose: () => void;
 }
-
-const SelectionCard: React.FC<{ 
-    label: string; 
-    selected: boolean;
-    onClick: () => void; 
-    iconName?: any;
-    shapePreview?: React.ReactNode;
-}> = ({ label, selected, onClick, iconName, shapePreview }) => {
-    return (
-        <button 
-            onClick={onClick}
-            className={`flex flex-col items-center justify-center p-2 rounded border transition-all h-20
-                ${selected 
-                    ? 'bg-accent text-white border-accent shadow-md' 
-                    : 'bg-input-bg text-text-secondary border-transparent hover:bg-white/10 hover:border-white/20'
-                }`}
-        >
-            <div className="mb-2">
-                {shapePreview ? shapePreview : (iconName && <Icon name={iconName} size={20} />)}
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
-        </button>
-    );
-};
 
 export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
   const {   uiConfig, setUiConfig, gridConfig, setGridConfig } = useContext(EditorContext)!;
@@ -115,19 +91,8 @@ export const PreferencesModal: React.FC<Props> = ({ onClose }) => {
                             />
                         </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                            <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider px-1">Vertex Shape</span>
-                            <Select 
-                                value={uiConfig.vertexShape}
-                                options={[
-                                    { label: 'Dot (Crosshair)', value: 'DOT' },
-                                    { label: 'Cube-Dot (Volumetric)', value: 'CUBE' }
-                                ]}
-                                onChange={(v) => updateUiConfig('vertexShape', v as VertexShape)}
-                            />
-                        </div>
-                        <div className="bg-input-bg p-3 rounded border border-white/5 flex items-center justify-between self-end h-[38px]">
+                    <div className="grid grid-cols-1 gap-4">
+                        <div className="bg-input-bg p-3 rounded border border-white/5 flex items-center justify-between h-[38px]">
                             <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Vertex Color</span>
                             <input 
                                 type="color" 
