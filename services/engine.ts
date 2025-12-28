@@ -18,6 +18,7 @@ import { gizmoSystem } from './GizmoSystem';
 import { moduleManager } from './ModuleManager';
 import { registerCoreModules } from './modules/CoreModules';
 import { consoleService } from './Console';
+import type { MeshRenderSystem } from './systems/MeshRenderSystem';
 
 export class Engine {
     ecs: SoAEntitySystem;
@@ -77,6 +78,10 @@ export class Engine {
             ecs: this.ecs,
             scene: this.sceneGraph
         });
+    }
+
+    get meshSystem(): MeshRenderSystem {
+        return this.renderer.meshSystem;
     }
 
     initGL(canvas: HTMLCanvasElement) {
@@ -162,7 +167,7 @@ export class Engine {
 
             this.sceneGraph.update();
 
-            // Run Module Updates (Logic that runs every frame, distinct from fixed physics)
+            // Run Module Updates
             moduleManager.update(dt);
 
             if (this.currentViewProj && !this.isPlaying) {
@@ -247,10 +252,9 @@ export class Engine {
                 const b = parseInt(hex.substring(5, 7), 16) / 255;
                 return { r, g, b };
             };
-            const colComp = { r: 0.2, g: 0.6, b: 1.0 }; // Wireframe Color
-            const colSel = { r: 1.0, g: 0.8, b: 0.0 }; // Selected Gold
+            const colComp = { r: 0.2, g: 0.6, b: 1.0 }; 
+            const colSel = { r: 1.0, g: 0.8, b: 0.0 }; 
             const colVertex = hexToRgb(this.uiConfig.vertexColor);
-            const colNeutral = { r: 0.5, g: 0.5, b: 0.5 }; // Unselected Vert Dot
             const colObjectSelection = hexToRgb(this.uiConfig.selectionEdgeColor || '#4f80f8');
 
             // Draw Wireframe
@@ -278,18 +282,15 @@ export class Engine {
                     const d = Vec3Utils.distance(p, camPos); 
                     
                     const isSelected = this.subSelection.vertexIds.has(i);
-                    const s = baseSize * d * (isSelected ? 1.5 : 1.0); // Selected are bigger
+                    const s = baseSize * d * (isSelected ? 1.5 : 1.0);
                     const c = isSelected ? colSel : colVertex;
 
-                    // Draw Dot/Cube based on preference, but ensure they are visible
                     if (this.uiConfig.vertexShape === 'CUBE' || isSelected) {
-                        // Draw Cube/Diamond shape for selected/active
                         const v = [{x:p.x-s, y:p.y-s, z:p.z-s}, {x:p.x+s, y:p.y-s, z:p.z-s}, {x:p.x+s, y:p.y+s, z:p.z-s}, {x:p.x-s, y:p.y+s, z:p.z-s}, {x:p.x-s, y:p.y-s, z:p.z+s}, {x:p.x+s, y:p.y-s, z:p.z+s}, {x:p.x+s, y:p.y+s, z:p.z+s}, {x:p.x-s, y:p.y+s, z:p.z+s}];
                         this.debugRenderer.drawLine(v[0], v[1], c); this.debugRenderer.drawLine(v[1], v[2], c); this.debugRenderer.drawLine(v[2], v[3], c); this.debugRenderer.drawLine(v[3], v[0], c);
                         this.debugRenderer.drawLine(v[4], v[5], c); this.debugRenderer.drawLine(v[5], v[6], c); this.debugRenderer.drawLine(v[6], v[7], c); this.debugRenderer.drawLine(v[7], v[4], c);
                         this.debugRenderer.drawLine(v[0], v[4], c); this.debugRenderer.drawLine(v[1], v[5], c); this.debugRenderer.drawLine(v[2], v[6], c); this.debugRenderer.drawLine(v[3], v[7], c);
                     } else {
-                        // Draw Simple Crosshair/Dot for unselected (Performance/Clarity)
                         this.debugRenderer.drawLine({x:p.x-s, y:p.y, z:p.z}, {x:p.x+s, y:p.y, z:p.z}, c);
                         this.debugRenderer.drawLine({x:p.x, y:p.y-s, z:p.z}, {x:p.x, y:p.y+s, z:p.z}, c);
                         this.debugRenderer.drawLine({x:p.x, y:p.y, z:p.z-s}, {x:p.x, y:p.y, z:p.z+s}, c);
@@ -331,51 +332,26 @@ export class Engine {
         
         const store = this.ecs.store;
         
-        // Copy Transform
-        store.posX[newIdx] = store.posX[idx];
-        store.posY[newIdx] = store.posY[idx];
-        store.posZ[newIdx] = store.posZ[idx];
-        store.rotX[newIdx] = store.rotX[idx];
-        store.rotY[newIdx] = store.rotY[idx];
-        store.rotZ[newIdx] = store.rotZ[idx];
-        store.scaleX[newIdx] = store.scaleX[idx];
-        store.scaleY[newIdx] = store.scaleY[idx];
-        store.scaleZ[newIdx] = store.scaleZ[idx];
+        store.posX[newIdx] = store.posX[idx]; store.posY[newIdx] = store.posY[idx]; store.posZ[newIdx] = store.posZ[idx];
+        store.rotX[newIdx] = store.rotX[idx]; store.rotY[newIdx] = store.rotY[idx]; store.rotZ[newIdx] = store.rotZ[idx];
+        store.scaleX[newIdx] = store.scaleX[idx]; store.scaleY[newIdx] = store.scaleY[idx]; store.scaleZ[newIdx] = store.scaleZ[idx];
         store.rotationOrder[newIdx] = store.rotationOrder[idx];
         
-        // Copy Components mask
         store.componentMask[newIdx] = store.componentMask[idx];
-        
-        // Copy Mesh Data
-        store.meshType[newIdx] = store.meshType[idx];
-        store.materialIndex[newIdx] = store.materialIndex[idx];
-        store.textureIndex[newIdx] = store.textureIndex[idx];
-        store.rigIndex[newIdx] = store.rigIndex[idx];
+        store.meshType[newIdx] = store.meshType[idx]; store.materialIndex[newIdx] = store.materialIndex[idx];
+        store.textureIndex[newIdx] = store.textureIndex[idx]; store.rigIndex[newIdx] = store.rigIndex[idx];
         store.effectIndex[newIdx] = store.effectIndex[idx];
-        store.colorR[newIdx] = store.colorR[idx];
-        store.colorG[newIdx] = store.colorG[idx];
-        store.colorB[newIdx] = store.colorB[idx];
+        store.colorR[newIdx] = store.colorR[idx]; store.colorG[newIdx] = store.colorG[idx]; store.colorB[newIdx] = store.colorB[idx];
         
-        // Copy Physics
-        store.mass[newIdx] = store.mass[idx];
-        store.useGravity[newIdx] = store.useGravity[idx];
+        store.mass[newIdx] = store.mass[idx]; store.useGravity[newIdx] = store.useGravity[idx];
         store.physicsMaterialIndex[newIdx] = store.physicsMaterialIndex[idx];
         
-        // Copy Light
-        store.lightType[newIdx] = store.lightType[idx];
-        store.lightIntensity[newIdx] = store.lightIntensity[idx];
-
-        // Copy Virtual Pivot
+        store.lightType[newIdx] = store.lightType[idx]; store.lightIntensity[newIdx] = store.lightIntensity[idx];
         store.vpLength[newIdx] = store.vpLength[idx];
         
-        // Register
         this.sceneGraph.registerEntity(newId);
-        
-        // Parent check
         const parent = this.sceneGraph.getParentId(id);
-        if (parent) {
-            this.sceneGraph.attach(newId, parent);
-        }
+        if (parent) this.sceneGraph.attach(newId, parent);
         
         this.setSelected([newId]);
         this.pushUndoState();
@@ -390,7 +366,7 @@ export class Engine {
     registerAssetWithGPU(asset: Asset) {
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             const internalId = assetManager.getMeshID(asset.id);
-            if (internalId > 0) this.renderer.registerMesh(internalId, asset.geometry);
+            if (internalId > 0) this.meshSystem.registerMesh(internalId, asset.geometry);
         }
     }
 
@@ -491,7 +467,7 @@ export class Engine {
     compileGraph(nodes: GraphNode[], connections: GraphConnection[], assetId?: string) {
         if (assetId) {
             const res = compileShader(nodes, connections);
-            if (typeof res !== 'string') { this.currentShaderSource = res.fs; const matID = assetManager.getMaterialID(assetId); this.renderer.updateMaterial(matID, res); }
+            if (typeof res !== 'string') { this.currentShaderSource = res.fs; const matID = assetManager.getMaterialID(assetId); this.meshSystem.updateMaterial(matID, res); }
         }
     }
 

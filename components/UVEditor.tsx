@@ -216,7 +216,7 @@ export const UVEditor: React.FC = () => {
             editingAsset.geometry.uvs = new Float32Array(uvBuffer);
             const internalId = assetManager.getMeshID(editingAsset.id);
             if (internalId > 0) {
-                engineInstance.renderer.registerMesh(internalId, editingAsset.geometry);
+                engineInstance.meshSystem.registerMesh(internalId, editingAsset.geometry);
                 engineInstance.tick(0);
             }
             alert('UVs Updated');
