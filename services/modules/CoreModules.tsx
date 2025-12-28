@@ -190,8 +190,8 @@ export const MeshModule: EngineModule = {
 
             // Draw Vertices (using Points)
             if (isVertexMode) {
-                // Reduced base size for sharper, less blobby look
-                const baseSize = Math.max(2.5, engine.uiConfig.vertexSize * 3.0);
+                // Increased base size per user request (twice as big)
+                const baseSize = Math.max(3.0, engine.uiConfig.vertexSize * 3.0);
                 
                 const m0=worldMat[0], m1=worldMat[1], m2=worldMat[2], m12=worldMat[12];
                 const m4=worldMat[4], m5=worldMat[5], m6=worldMat[6], m13=worldMat[13];
@@ -224,19 +224,11 @@ export const MeshModule: EngineModule = {
                         }
                     }
 
-                    if (isSelected) {
+                    if (isSelected || isHovered) {
+                        // Solid Yellow for both selection and hover (No edge/border effect)
                         r = colSel.r; g = colSel.g; b = colSel.b;
-                        size = baseSize * 1.4; // Slightly larger for selection
-                    }
-
-                    if (isHovered) {
-                        if (isSelected) {
-                            size = baseSize * 1.6; 
-                        } else { 
-                            border = 0.3; // Thick border for hover
-                            size = baseSize * 1.6; 
-                            r=1; g=1; b=1; // White center
-                        }
+                        size = baseSize * 1.5; 
+                        border = 0.0; // Ensure solid color
                     }
 
                     engine.debugRenderer.drawPointRaw(wx, wy, wz, r, g, b, size, border);
