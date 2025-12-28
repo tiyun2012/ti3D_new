@@ -1,6 +1,6 @@
 
 import React, { useContext } from 'react';
-import { EngineModule, ComponentType, InspectorProps, TransformSpace } from '../../types';
+import { EngineModule, ComponentType, InspectorProps, TransformSpace, StaticMeshAsset } from '../../types';
 import { EditorContext } from '../../contexts/EditorContext';
 import { Select } from '../../components/ui/Select';
 import { ROTATION_ORDERS, LIGHT_TYPES, COMPONENT_MASKS } from '../constants';
@@ -127,7 +127,114 @@ export const MeshModule: EngineModule = {
     name: 'Mesh Renderer',
     icon: 'Box',
     order: 10,
-    InspectorComponent: MeshInspector
+    InspectorComponent: MeshInspector,
+    onRender: (gl, viewProj, ctx) => {
+        // Draw Mesh Component Overlay (Wireframe / Vertices)
+        // Moved from Engine.ts for modularity
+        const engine = ctx.engine;
+        const selectedIndices = engine.selectedIndices;
+        
+        if (selectedIndices.size === 0 || engine.isPlaying) return;
+        
+        const isObjectMode = engine.meshComponentMode === 'OBJECT';
+        const isVertexMode = engine.meshComponentMode === 'VERTEX';
+        
+        if (isObjectMode && !engine.uiConfig.selectionEdgeHighlight) return;
+
+        // Helpers
+        const hexToRgb = (hex: string) => {
+            const r = parseInt(hex.substring(1, 3), 16) / 255;
+            const g = parseInt(hex.substring(3, 5), 16) / 255;
+            const b = parseInt(hex.substring(5, 7), 16) / 255;
+            return { r, g, b };
+        };
+        const colDef = { r: 0.866, g: 0.317, b: 0.941 }; 
+        const colSel = { r: 0.976, g: 0.917, b: 0.305 }; 
+        const colObjectSelection = hexToRgb(engine.uiConfig.selectionEdgeColor || '#4f80f8');
+        const colComp = { r: 0.2, g: 0.6, b: 1.0 };
+
+        selectedIndices.forEach((idx: number) => {
+            const entityId = ctx.ecs.store.ids[idx];
+            const meshIntId = ctx.ecs.store.meshType[idx];
+            const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+            if (!assetUuid) return;
+            const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+            if (!asset || !asset.topology) return;
+            
+            const worldMat = ctx.scene.getWorldMatrix(entityId);
+            if (!worldMat) return;
+            const verts = asset.geometry.vertices;
+            const colors = asset.geometry.colors;
+            const topo = asset.topology;
+
+            // Draw Wireframe
+            if (engine.debugRenderer.lineCount < engine.debugRenderer.maxLines) {
+                topo.faces.forEach((face: number[]) => {
+                    for(let k=0; k<face.length; k++) {
+                        const vA = face[k], vB = face[(k+1)%face.length];
+                        const pA = Vec3Utils.transformMat4({ x:verts[vA*3], y:verts[vA*3+1], z:verts[vA*3+2] }, worldMat, {x:0,y:0,z:0});
+                        const pB = Vec3Utils.transformMat4({ x:verts[vB*3], y:verts[vB*3+1], z:verts[vB*3+2] }, worldMat, {x:0,y:0,z:0});
+                        let color = isObjectMode ? colObjectSelection : (isVertexMode ? colComp : colComp);
+                        if (!isObjectMode && !isVertexMode) {
+                            const edgeKey = [vA, vB].sort().join('-');
+                            if (engine.subSelection.edgeIds.has(edgeKey)) color = colSel;
+                        }
+                        engine.debugRenderer.drawLine(pA, pB, color);
+                    }
+                });
+            }
+
+            // Draw Vertices (using Points)
+            if (isVertexMode) {
+                const baseSize = engine.uiConfig.vertexSize * 4.0;
+                const m0=worldMat[0], m1=worldMat[1], m2=worldMat[2], m12=worldMat[12];
+                const m4=worldMat[4], m5=worldMat[5], m6=worldMat[6], m13=worldMat[13];
+                const m8=worldMat[8], m9=worldMat[9], m10=worldMat[10], m14=worldMat[14];
+
+                for(let i=0; i<verts.length/3; i++) {
+                    const x = verts[i*3];
+                    const y = verts[i*3+1];
+                    const z = verts[i*3+2];
+
+                    const wx = m0*x + m4*y + m8*z + m12;
+                    const wy = m1*x + m5*y + m9*z + m13;
+                    const wz = m2*x + m6*y + m10*z + m14;
+
+                    const isSelected = engine.subSelection.vertexIds.has(i);
+                    const isHovered = engine.hoveredVertex?.entityId === entityId && engine.hoveredVertex?.index === i;
+                    
+                    let size = baseSize;
+                    let border = 0.0;
+                    let r = 1, g = 1, b = 1;
+                    
+                    if (colors) {
+                        const cr = colors[i*3];
+                        const cg = colors[i*3+1];
+                        const cb = colors[i*3+2];
+                        if (cr > 0.99 && cg > 0.99 && cb > 0.99) {
+                            r = colDef.r; g = colDef.g; b = colDef.b;
+                        } else {
+                            r = cr; g = cg; b = cb;
+                        }
+                    } else {
+                        r = colDef.r; g = colDef.g; b = colDef.b;
+                    }
+
+                    if (isSelected) {
+                        r = colSel.r; g = colSel.g; b = colSel.b;
+                        size = baseSize * 1.25;
+                    }
+
+                    if (isHovered) {
+                        if (isSelected) size = baseSize * 1.5; 
+                        else { border = 0.25; size = baseSize * 1.5; }
+                    }
+
+                    engine.debugRenderer.drawPointRaw(wx, wy, wz, r, g, b, size, border);
+                }
+            }
+        });
+    }
 };
 
 // --- LIGHT MODULE ---
