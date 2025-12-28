@@ -20,26 +20,6 @@ interface SceneViewProps {
   tool: ToolType;
 }
 
-const StatsOverlay: React.FC = () => {
-    const [metrics, setMetrics] = useState<PerformanceMetrics>(engineInstance.metrics);
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setMetrics({...engineInstance.metrics});
-        }, 500);
-        return () => clearInterval(interval);
-    }, []);
-
-    return (
-        <div className="absolute top-10 right-2 bg-black/60 backdrop-blur border border-white/10 rounded-md p-2 text-[10px] font-mono text-text-secondary select-none pointer-events-none z-30 shadow-lg">
-            <div className="flex justify-between gap-4"><span className="text-white">FPS</span> <span className={metrics.fps < 30 ? "text-red-500" : "text-green-500"}>{metrics.fps.toFixed(0)}</span></div>
-            <div className="flex justify-between gap-4"><span>Frame</span> <span>{metrics.frameTime.toFixed(2)}ms</span></div>
-            <div className="flex justify-between gap-4"><span>Calls</span> <span>{metrics.drawCalls}</span></div>
-            <div className="flex justify-between gap-4"><span>Tris</span> <span>{metrics.triangleCount}</span></div>
-            <div className="flex justify-between gap-4"><span>Ents</span> <span>{metrics.entityCount}</span></div>
-        </div>
-    );
-};
-
 export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedIds, tool }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -262,10 +242,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
     // 3. Standard Tools & Selection (Left Click)
     if (!e.altKey && e.button === 0) {
+        let componentHit = false;
+
         if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
             const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
             
             if (result) {
+                componentHit = true;
                 // Clear previous if not shift
                 if (!e.shiftKey) {
                     engineInstance.subSelection.vertexIds.clear();
@@ -287,25 +270,48 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     else engineInstance.subSelection.faceIds.add(id);
                 }
                 engineInstance.notifyUI(); // Force redraw debug overlay
-            } else if (!e.shiftKey) {
-                // Clicked empty space in component mode -> clear subselection
-                engineInstance.subSelection.vertexIds.clear();
-                engineInstance.subSelection.edgeIds.clear();
-                engineInstance.subSelection.faceIds.clear();
-                engineInstance.notifyUI();
+                return; // Interaction handled by component
             }
-            return; 
         }
 
-        // UNIFIED SELECTION LOGIC
-        // Try to pick a single object
+        // Fallthrough to Object Selection if no component was hit
         const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
         
         if (hitId) {
-             // Hit an object: Select it directly
-             onSelect(e.shiftKey ? [...selectedIds, hitId] : [hitId]);
+             // We hit an object
+             if (meshComponentMode !== 'OBJECT' && !componentHit) {
+                 // Check if we hit a DIFFERENT object
+                 if (!selectedIds.includes(hitId)) {
+                     setMeshComponentMode('OBJECT');
+                 }
+                 
+                 // Clear sub-selections (either new object, or missed component on current object)
+                 if (!e.shiftKey) {
+                    engineInstance.subSelection.vertexIds.clear();
+                    engineInstance.subSelection.edgeIds.clear();
+                    engineInstance.subSelection.faceIds.clear();
+                    engineInstance.notifyUI();
+                 }
+             }
+
+             if (e.shiftKey) {
+                 const newSel = selectedIds.includes(hitId) ? selectedIds.filter(id => id !== hitId) : [...selectedIds, hitId];
+                 onSelect(newSel);
+             } else {
+                 onSelect([hitId]);
+             }
         } else {
-             // Clicked Empty Space: Start Box Selection (Fallback for ALL tools)
+             // Clicked Empty Space: Start Box Selection
+             // Clear component selection if no shift
+             if (!e.shiftKey) {
+                 if (meshComponentMode !== 'OBJECT') {
+                    engineInstance.subSelection.vertexIds.clear();
+                    engineInstance.subSelection.edgeIds.clear();
+                    engineInstance.subSelection.faceIds.clear();
+                    engineInstance.notifyUI();
+                 }
+                 // Usually clicking empty space deselects everything in object mode, handled below by selectionBox logic on mouseUp
+             }
              setSelectionBox({ startX: mx, startY: my, currentX: mx, currentY: my, isSelecting: true });
         }
     }
@@ -460,8 +466,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     >
         <canvas ref={canvasRef} className="block w-full h-full outline-none" />
         
-        <StatsOverlay />
-        
         {selectionBox && selectionBox.isSelecting && (
             <div className="absolute border border-blue-500 bg-blue-500/20 pointer-events-none z-30" style={{ left: Math.min(selectionBox.startX, selectionBox.currentX), top: Math.min(selectionBox.startY, selectionBox.currentY), width: Math.abs(selectionBox.currentX - selectionBox.startX), height: Math.abs(selectionBox.currentY - selectionBox.startY) }} />
         )}
@@ -484,12 +488,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     </div>
                 )}
             </div>
-
-            {meshComponentMode !== 'OBJECT' && (
-                <div className="bg-accent/20 backdrop-blur border border-accent/40 rounded-md flex items-center px-3 py-1 text-[10px] text-accent font-bold uppercase tracking-widest animate-pulse">
-                    Selection Mode: {meshComponentMode}
-                </div>
-            )}
         </div>
         <div className="absolute bottom-2 right-2 text-[10px] text-text-secondary bg-black/40 px-2 py-0.5 rounded backdrop-blur border border-white/5 z-20">Cam: {camera.target.x.toFixed(1)}, {camera.target.y.toFixed(1)}, {camera.target.z.toFixed(1)}</div>
 
