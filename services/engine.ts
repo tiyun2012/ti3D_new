@@ -38,6 +38,9 @@ export class Engine {
         edgeIds: new Set<string>(), 
         faceIds: new Set<number>()
     };
+    
+    // New: Track hovered vertex for UI feedback
+    hoveredVertex: { entityId: string, index: number } | null = null;
 
     uiConfig: UIConfiguration = DEFAULT_UI_CONFIG;
 
@@ -253,7 +256,8 @@ export class Engine {
                 return { r, g, b };
             };
             const colComp = { r: 0.2, g: 0.6, b: 1.0 }; 
-            const colSel = { r: 1.0, g: 1.0, b: 1.0 }; 
+            // #f8f24f -> r: 0.97, g: 0.95, b: 0.31
+            const colSel = { r: 0.97, g: 0.95, b: 0.31 }; 
             const colVertex = hexToRgb(this.uiConfig.vertexColor);
             const colObjectSelection = hexToRgb(this.uiConfig.selectionEdgeColor || '#4f80f8');
 
@@ -281,7 +285,11 @@ export class Engine {
                     const p = Vec3Utils.transformMat4({ x:verts[i*3], y:verts[i*3+1], z:verts[i*3+2] }, worldMat, {x:0,y:0,z:0});
                     
                     const isSelected = this.subSelection.vertexIds.has(i);
-                    const size = isSelected ? pointSize + 3.0 : pointSize;
+                    const isHovered = this.hoveredVertex?.entityId === entityId && this.hoveredVertex?.index === i;
+                    
+                    let size = pointSize;
+                    if (isHovered) size = pointSize * 2.5; 
+                    
                     const c = isSelected ? colSel : colVertex;
 
                     this.debugRenderer.drawPoint(p, c, size);
@@ -301,6 +309,67 @@ export class Engine {
             if (idx !== undefined) this.selectedIndices.add(idx);
         });
         this.subSelection.vertexIds.clear(); this.subSelection.edgeIds.clear(); this.subSelection.faceIds.clear();
+        this.hoveredVertex = null;
+    }
+
+    highlightVertexAt(mx: number, my: number, w: number, h: number) {
+        if (this.meshComponentMode !== 'VERTEX' || this.selectedIndices.size === 0 || !this.currentViewProj) {
+            this.hoveredVertex = null;
+            return;
+        }
+
+        // Only check vertices of the first selected object for now (performance)
+        const idx = Array.from(this.selectedIndices)[0];
+        const entityId = this.ecs.store.ids[idx];
+        
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        if (!assetUuid) return;
+        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+        if (!asset) return;
+
+        const worldMat = this.sceneGraph.getWorldMatrix(entityId);
+        if (!worldMat) return;
+
+        const mvp = Mat4Utils.create();
+        Mat4Utils.multiply(this.currentViewProj, worldMat, mvp);
+
+        const verts = asset.geometry.vertices;
+        let minDistSq = 20 * 20; // 20px radius
+        let closest = -1;
+
+        // Skip heavy iteration if too many vertices? 
+        // For now, assume < 100k verts is acceptable in JS loop for hover
+        
+        for (let i = 0; i < verts.length / 3; i++) {
+            const x = verts[i*3], y = verts[i*3+1], z = verts[i*3+2];
+            
+            // Project
+            const cx = mvp[0]*x + mvp[4]*y + mvp[8]*z + mvp[12];
+            const cy = mvp[1]*x + mvp[5]*y + mvp[9]*z + mvp[13];
+            const cw = mvp[3]*x + mvp[7]*y + mvp[11]*z + mvp[15];
+            
+            if (cw <= 0) continue; 
+            
+            const invW = 1.0 / cw;
+            const sx = (cx * invW + 1) * 0.5 * w;
+            const sy = (1 - cy * invW) * 0.5 * h; 
+            
+            const dx = sx - mx;
+            const dy = sy - my;
+            const dSq = dx*dx + dy*dy;
+            
+            if (dSq < minDistSq) {
+                minDistSq = dSq;
+                closest = i;
+            }
+        }
+
+        if (closest !== -1) {
+            this.hoveredVertex = { entityId, index: closest };
+        } else {
+            this.hoveredVertex = null;
+        }
     }
 
     deleteEntity(id: string, sceneGraph: SceneGraph) { 

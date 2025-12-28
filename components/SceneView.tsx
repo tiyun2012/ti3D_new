@@ -244,7 +244,27 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     if (!e.altKey && e.button === 0) {
         let componentHit = false;
 
-        if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
+        // Specialized handling for VERTEX mode using screen-space proximity
+        if (meshComponentMode === 'VERTEX' && selectedIds.length > 0) {
+            if (engineInstance.hoveredVertex) {
+                componentHit = true;
+                if (!e.shiftKey) {
+                    engineInstance.subSelection.vertexIds.clear();
+                    // Keep edges/faces clear too
+                    engineInstance.subSelection.edgeIds.clear();
+                    engineInstance.subSelection.faceIds.clear();
+                }
+                
+                const id = engineInstance.hoveredVertex.index;
+                if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
+                else engineInstance.subSelection.vertexIds.add(id);
+                
+                engineInstance.notifyUI();
+                return;
+            }
+        }
+        // Handling for EDGE/FACE (still using Raycast)
+        else if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
             const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
             
             if (result) {
@@ -256,11 +276,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     engineInstance.subSelection.faceIds.clear();
                 }
 
-                if (meshComponentMode === 'VERTEX') {
-                    const id = result.vertexId;
-                    if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
-                    else engineInstance.subSelection.vertexIds.add(id);
-                } else if (meshComponentMode === 'EDGE') {
+                if (meshComponentMode === 'EDGE') {
                     const id = result.edgeId.sort().join('-'); // "v1-v2"
                     if (engineInstance.subSelection.edgeIds.has(id)) engineInstance.subSelection.edgeIds.delete(id);
                     else engineInstance.subSelection.edgeIds.add(id);
@@ -338,6 +354,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
       // Update Gizmo Hover State
       gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
 
+      // Update Vertex Hover State (if in Vertex Mode)
+      if (meshComponentMode === 'VERTEX') {
+          engineInstance.highlightVertexAt(mx, my, rect.width, rect.height);
+      }
+
       if (dragState && dragState.isDragging) {
           const dx = e.clientX - dragState.startX;
           const dy = e.clientY - dragState.startY;
@@ -385,7 +406,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         window.removeEventListener('mousemove', handleWindowMouseMove);
         window.removeEventListener('mouseup', handleWindowMouseUp);
     };
-  }, [dragState, camera, selectionBox]);
+  }, [dragState, camera, selectionBox, meshComponentMode]);
 
   // Local Mouse Up: Commits Selection
   const handleMouseUp = (e: React.MouseEvent) => {
