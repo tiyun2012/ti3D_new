@@ -253,7 +253,7 @@ export class Engine {
                 return { r, g, b };
             };
             const colComp = { r: 0.2, g: 0.6, b: 1.0 }; 
-            const colSel = { r: 1.0, g: 0.8, b: 0.0 }; 
+            const colSel = { r: 1.0, g: 1.0, b: 1.0 }; 
             const colVertex = hexToRgb(this.uiConfig.vertexColor);
             const colObjectSelection = hexToRgb(this.uiConfig.selectionEdgeColor || '#4f80f8');
 
@@ -285,7 +285,7 @@ export class Engine {
                     const s = baseSize * d * (isSelected ? 1.5 : 1.0);
                     const c = isSelected ? colSel : colVertex;
 
-                    if (this.uiConfig.vertexShape === 'CUBE' || isSelected) {
+                    if (this.uiConfig.vertexShape === 'CUBE') {
                         const v = [{x:p.x-s, y:p.y-s, z:p.z-s}, {x:p.x+s, y:p.y-s, z:p.z-s}, {x:p.x+s, y:p.y+s, z:p.z-s}, {x:p.x-s, y:p.y+s, z:p.z-s}, {x:p.x-s, y:p.y-s, z:p.z+s}, {x:p.x+s, y:p.y-s, z:p.z+s}, {x:p.x+s, y:p.y+s, z:p.z+s}, {x:p.x-s, y:p.y+s, z:p.z+s}];
                         this.debugRenderer.drawLine(v[0], v[1], c); this.debugRenderer.drawLine(v[1], v[2], c); this.debugRenderer.drawLine(v[2], v[3], c); this.debugRenderer.drawLine(v[3], v[0], c);
                         this.debugRenderer.drawLine(v[4], v[5], c); this.debugRenderer.drawLine(v[5], v[6], c); this.debugRenderer.drawLine(v[6], v[7], c); this.debugRenderer.drawLine(v[7], v[4], c);
