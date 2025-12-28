@@ -24,6 +24,7 @@ export class DebugRenderer {
         this.gl = gl;
         
         // Updated Shader to support Point Size and Border (Circle)
+        // Reduced Depth Bias (0.002 -> 0.00005) to prevent "see-through" edges near vertices
         const vs = `#version 300 es
         layout(location=0) in vec3 a_pos; 
         layout(location=1) in vec3 a_color; 
@@ -34,6 +35,11 @@ export class DebugRenderer {
         out float v_border;
         void main() { 
             gl_Position = u_vp * vec4(a_pos, 1.0); 
+            
+            // Bias: Pulls geometry slightly towards camera to overlay on meshes.
+            // Value tuned to 0.00005 to fix back-face bleed-through while preventing Z-fighting.
+            gl_Position.z -= 0.00005 * gl_Position.w;
+            
             v_color = a_color; 
             v_border = a_border;
             gl_PointSize = a_size;
@@ -46,19 +52,20 @@ export class DebugRenderer {
         void main() { 
             vec2 coord = gl_PointCoord - vec2(0.5);
             float dist = length(coord);
-            if (dist > 0.5) discard;
             
-            // Sharp anti-aliased edge using fwidth
-            float delta = fwidth(dist);
-            float alpha = 1.0 - smoothstep(0.5 - delta, 0.5, dist);
+            // Hard circle cut
+            if (dist > 0.5) discard;
             
             vec3 c = v_color;
             
             // Draw Border (Yellow #f9ea4e)
             // v_border is normalized thickness relative to point size (0.0 - 0.5)
-            if (dist > (0.5 - v_border)) {
-                c = vec3(0.976, 0.917, 0.305); // #f9ea4e
+            if (v_border > 0.0 && dist > (0.5 - v_border)) {
+                c = vec3(1.0, 0.9, 0.0); // Bright Yellow
             }
+            
+            // Minimal AA to prevent jagglies but keep it sharp (no large smoothstep gradient)
+            float alpha = smoothstep(0.5, 0.45, dist);
             
             color = vec4(c, alpha); 
         }`;

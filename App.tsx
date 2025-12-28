@@ -270,6 +270,12 @@ const App: React.FC = () => {
         return engineInstance.subscribe(update);
     }, []);
 
+    // Sync mesh component mode to engine
+    useEffect(() => {
+        engineInstance.meshComponentMode = meshComponentMode;
+        engineInstance.notifyUI();
+    }, [meshComponentMode]);
+
     useEffect(() => { engineInstance.setGridConfig(gridConfig); }, [gridConfig]);
     useEffect(() => { engineInstance.setUiConfig(uiConfig); }, [uiConfig]);
 

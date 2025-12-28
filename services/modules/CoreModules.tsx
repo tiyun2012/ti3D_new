@@ -129,8 +129,6 @@ export const MeshModule: EngineModule = {
     order: 10,
     InspectorComponent: MeshInspector,
     onRender: (gl, viewProj, ctx) => {
-        // Draw Mesh Component Overlay (Wireframe / Vertices)
-        // Moved from Engine.ts for modularity
         const engine = ctx.engine;
         const selectedIndices = engine.selectedIndices;
         
@@ -148,10 +146,13 @@ export const MeshModule: EngineModule = {
             const b = parseInt(hex.substring(5, 7), 16) / 255;
             return { r, g, b };
         };
-        const colDef = { r: 0.866, g: 0.317, b: 0.941 }; 
-        const colSel = { r: 0.976, g: 0.917, b: 0.305 }; 
+        
+        const colSel = { r: 0.976, g: 0.917, b: 0.305 }; // Yellow Selection
         const colObjectSelection = hexToRgb(engine.uiConfig.selectionEdgeColor || '#4f80f8');
-        const colComp = { r: 0.2, g: 0.6, b: 1.0 };
+        
+        // Vertices use configurable color, but for wireframe background we use a dimmer color
+        const vertexConfigColor = hexToRgb(engine.uiConfig.vertexColor || '#a855f7'); 
+        const wireframeDim = { r: 0.3, g: 0.3, b: 0.35 }; 
 
         selectedIndices.forEach((idx: number) => {
             const entityId = ctx.ecs.store.ids[idx];
@@ -174,7 +175,10 @@ export const MeshModule: EngineModule = {
                         const vA = face[k], vB = face[(k+1)%face.length];
                         const pA = Vec3Utils.transformMat4({ x:verts[vA*3], y:verts[vA*3+1], z:verts[vA*3+2] }, worldMat, {x:0,y:0,z:0});
                         const pB = Vec3Utils.transformMat4({ x:verts[vB*3], y:verts[vB*3+1], z:verts[vB*3+2] }, worldMat, {x:0,y:0,z:0});
-                        let color = isObjectMode ? colObjectSelection : (isVertexMode ? colComp : colComp);
+                        
+                        // If in vertex mode, wireframe is dimmer to let vertices pop
+                        let color = isObjectMode ? colObjectSelection : (isVertexMode ? wireframeDim : wireframeDim);
+                        
                         if (!isObjectMode && !isVertexMode) {
                             const edgeKey = [vA, vB].sort().join('-');
                             if (engine.subSelection.edgeIds.has(edgeKey)) color = colSel;
@@ -186,7 +190,9 @@ export const MeshModule: EngineModule = {
 
             // Draw Vertices (using Points)
             if (isVertexMode) {
-                const baseSize = engine.uiConfig.vertexSize * 4.0;
+                // Reduced base size for sharper, less blobby look
+                const baseSize = Math.max(2.5, engine.uiConfig.vertexSize * 3.0);
+                
                 const m0=worldMat[0], m1=worldMat[1], m2=worldMat[2], m12=worldMat[12];
                 const m4=worldMat[4], m5=worldMat[5], m6=worldMat[6], m13=worldMat[13];
                 const m8=worldMat[8], m9=worldMat[9], m10=worldMat[10], m14=worldMat[14];
@@ -205,29 +211,32 @@ export const MeshModule: EngineModule = {
                     
                     let size = baseSize;
                     let border = 0.0;
-                    let r = 1, g = 1, b = 1;
+                    // Default vertex color from config
+                    let r = vertexConfigColor.r, g = vertexConfigColor.g, b = vertexConfigColor.b; 
                     
+                    // Tint if vertex paint exists and is significant
                     if (colors) {
                         const cr = colors[i*3];
                         const cg = colors[i*3+1];
                         const cb = colors[i*3+2];
-                        if (cr > 0.99 && cg > 0.99 && cb > 0.99) {
-                            r = colDef.r; g = colDef.g; b = colDef.b;
-                        } else {
-                            r = cr; g = cg; b = cb;
+                        if (!(cr > 0.9 && cg > 0.9 && cb > 0.9)) {
+                             r *= cr; g *= cg; b *= cb;
                         }
-                    } else {
-                        r = colDef.r; g = colDef.g; b = colDef.b;
                     }
 
                     if (isSelected) {
                         r = colSel.r; g = colSel.g; b = colSel.b;
-                        size = baseSize * 1.25;
+                        size = baseSize * 1.4; // Slightly larger for selection
                     }
 
                     if (isHovered) {
-                        if (isSelected) size = baseSize * 1.5; 
-                        else { border = 0.25; size = baseSize * 1.5; }
+                        if (isSelected) {
+                            size = baseSize * 1.6; 
+                        } else { 
+                            border = 0.3; // Thick border for hover
+                            size = baseSize * 1.6; 
+                            r=1; g=1; b=1; // White center
+                        }
                     }
 
                     engine.debugRenderer.drawPointRaw(wx, wy, wz, r, g, b, size, border);
