@@ -12,7 +12,7 @@ export class DebugRenderer {
 
     // Points
     maxPoints = 100000;
-    pointBufferData = new Float32Array(this.maxPoints * 7); // x, y, z, r, g, b, size
+    pointBufferData = new Float32Array(this.maxPoints * 8); // x, y, z, r, g, b, size, border
     pointCount = 0;
     pointVAO: WebGLVertexArrayObject | null = null;
     pointVBO: WebGLBuffer | null = null;
@@ -23,23 +23,45 @@ export class DebugRenderer {
         if (!gl) return;
         this.gl = gl;
         
-        // Updated Shader to support Point Size
+        // Updated Shader to support Point Size and Border (Circle)
         const vs = `#version 300 es
         layout(location=0) in vec3 a_pos; 
         layout(location=1) in vec3 a_color; 
         layout(location=2) in float a_size; 
+        layout(location=3) in float a_border;
         uniform mat4 u_vp; 
         out vec3 v_color; 
+        out float v_border;
         void main() { 
             gl_Position = u_vp * vec4(a_pos, 1.0); 
             v_color = a_color; 
+            v_border = a_border;
             gl_PointSize = a_size;
         }`;
         const fs = `#version 300 es
         precision mediump float; 
         in vec3 v_color; 
+        in float v_border;
         out vec4 color; 
-        void main() { color = vec4(v_color, 1.0); }`;
+        void main() { 
+            vec2 coord = gl_PointCoord - vec2(0.5);
+            float dist = length(coord);
+            if (dist > 0.5) discard;
+            
+            // Sharp anti-aliased edge using fwidth
+            float delta = fwidth(dist);
+            float alpha = 1.0 - smoothstep(0.5 - delta, 0.5, dist);
+            
+            vec3 c = v_color;
+            
+            // Draw Border (Yellow #f9ea4e)
+            // v_border is normalized thickness relative to point size (0.0 - 0.5)
+            if (dist > (0.5 - v_border)) {
+                c = vec3(0.976, 0.917, 0.305); // #f9ea4e
+            }
+            
+            color = vec4(c, alpha); 
+        }`;
         
         const createShader = (type: number, src: string) => {
             const s = gl.createShader(type)!; gl.shaderSource(s, src); gl.compileShader(s);
@@ -59,16 +81,16 @@ export class DebugRenderer {
         gl.bufferData(gl.ARRAY_BUFFER, this.lineBufferData.byteLength, gl.DYNAMIC_DRAW);
         gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0); 
         gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
-        // Attribute 2 (size) is disabled for lines, defaults to 0/undefined
         gl.bindVertexArray(null);
 
         // Init Point VAO
         this.pointVAO = gl.createVertexArray(); this.pointVBO = gl.createBuffer();
         gl.bindVertexArray(this.pointVAO); gl.bindBuffer(gl.ARRAY_BUFFER, this.pointVBO);
         gl.bufferData(gl.ARRAY_BUFFER, this.pointBufferData.byteLength, gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0); 
-        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 28, 12);
-        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 28, 24); // Size
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0); 
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12);
+        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 32, 24); // Size
+        gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 32, 28); // Border
         gl.bindVertexArray(null);
     }
 
@@ -87,12 +109,17 @@ export class DebugRenderer {
         this.lineCount++;
     }
 
-    drawPoint(p: {x:number, y:number, z:number}, color: {r:number, g:number, b:number}, size: number) {
+    drawPoint(p: {x:number, y:number, z:number}, color: {r:number, g:number, b:number}, size: number, border: number = 0.0) {
+        this.drawPointRaw(p.x, p.y, p.z, color.r, color.g, color.b, size, border);
+    }
+
+    drawPointRaw(x: number, y: number, z: number, r: number, g: number, b: number, size: number, border: number = 0.0) {
         if (this.pointCount >= this.maxPoints) return;
-        const i = this.pointCount * 7;
-        this.pointBufferData[i] = p.x;   this.pointBufferData[i+1] = p.y;   this.pointBufferData[i+2] = p.z;
-        this.pointBufferData[i+3] = color.r; this.pointBufferData[i+4] = color.g; this.pointBufferData[i+5] = color.b;
+        const i = this.pointCount * 8;
+        this.pointBufferData[i] = x;   this.pointBufferData[i+1] = y;   this.pointBufferData[i+2] = z;
+        this.pointBufferData[i+3] = r; this.pointBufferData[i+4] = g; this.pointBufferData[i+5] = b;
         this.pointBufferData[i+6] = size;
+        this.pointBufferData[i+7] = border;
         this.pointCount++;
     }
 
@@ -104,6 +131,10 @@ export class DebugRenderer {
         
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
+        
+        // Enable blending for anti-aliased points
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         // Render Lines
         if (this.lineCount > 0 && this.lineVAO) {
@@ -117,10 +148,11 @@ export class DebugRenderer {
         if (this.pointCount > 0 && this.pointVAO) {
             gl.bindVertexArray(this.pointVAO);
             gl.bindBuffer(gl.ARRAY_BUFFER, this.pointVBO);
-            gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.pointBufferData.subarray(0, this.pointCount * 7));
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.pointBufferData.subarray(0, this.pointCount * 8));
             gl.drawArrays(gl.POINTS, 0, this.pointCount);
         }
 
         gl.bindVertexArray(null);
+        gl.disable(gl.BLEND);
     }
 }

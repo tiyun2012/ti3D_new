@@ -41,6 +41,7 @@ export class Engine {
     
     // New: Track hovered vertex for UI feedback
     hoveredVertex: { entityId: string, index: number } | null = null;
+    isInputDown: boolean = false;
 
     uiConfig: UIConfiguration = DEFAULT_UI_CONFIG;
 
@@ -158,6 +159,22 @@ export class Engine {
         return id;
     }
 
+    updateVertexColor(entityId: string, vertexIndex: number, color: {r: number, g: number, b: number}) {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return;
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        if (!assetUuid) return;
+        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+        if (!asset || !asset.geometry.colors) return;
+        
+        asset.geometry.colors[vertexIndex * 3] = color.r;
+        asset.geometry.colors[vertexIndex * 3 + 1] = color.g;
+        asset.geometry.colors[vertexIndex * 3 + 2] = color.b;
+        
+        this.registerAssetWithGPU(asset);
+    }
+
     tick(dt: number) {
             const start = performance.now();
             const clampedDt = Math.min(dt, this.maxFrameTime);
@@ -248,51 +265,108 @@ export class Engine {
             const worldMat = this.sceneGraph.getWorldMatrix(entityId);
             if (!worldMat) return;
             const verts = asset.geometry.vertices;
+            // Get Vertex Colors if available
+            const colors = asset.geometry.colors;
             const topo = asset.topology;
+            
+            // Hex color helpers
             const hexToRgb = (hex: string) => {
                 const r = parseInt(hex.substring(1, 3), 16) / 255;
                 const g = parseInt(hex.substring(3, 5), 16) / 255;
                 const b = parseInt(hex.substring(5, 7), 16) / 255;
                 return { r, g, b };
             };
-            const colComp = { r: 0.2, g: 0.6, b: 1.0 }; 
-            // #f8f24f -> r: 0.97, g: 0.95, b: 0.31
-            const colSel = { r: 0.97, g: 0.95, b: 0.31 }; 
-            const colVertex = hexToRgb(this.uiConfig.vertexColor);
+            
+            // Define Standard Colors
+            // #dd51f0 (Purple) for Default Vertex
+            const colDef = { r: 0.866, g: 0.317, b: 0.941 }; 
+            // #f9ea4e (Yellow) for Selected / Hover Border
+            const colSel = { r: 0.976, g: 0.917, b: 0.305 }; 
+            
             const colObjectSelection = hexToRgb(this.uiConfig.selectionEdgeColor || '#4f80f8');
+            const colComp = { r: 0.2, g: 0.6, b: 1.0 }; 
 
             // Draw Wireframe
-            topo.faces.forEach((face) => {
-                for(let k=0; k<face.length; k++) {
-                    const vA = face[k], vB = face[(k+1)%face.length];
-                    const pA = Vec3Utils.transformMat4({ x:verts[vA*3], y:verts[vA*3+1], z:verts[vA*3+2] }, worldMat, {x:0,y:0,z:0});
-                    const pB = Vec3Utils.transformMat4({ x:verts[vB*3], y:verts[vB*3+1], z:verts[vB*3+2] }, worldMat, {x:0,y:0,z:0});
-                    let color = isObjectMode ? colObjectSelection : (isVertexMode ? colComp : colComp);
-                    if (!isObjectMode && !isVertexMode) {
-                        const edgeKey = [vA, vB].sort().join('-');
-                        if (this.subSelection.edgeIds.has(edgeKey)) color = colSel;
+            if (this.debugRenderer.lineCount < this.debugRenderer.maxLines) {
+                topo.faces.forEach((face) => {
+                    for(let k=0; k<face.length; k++) {
+                        const vA = face[k], vB = face[(k+1)%face.length];
+                        const pA = Vec3Utils.transformMat4({ x:verts[vA*3], y:verts[vA*3+1], z:verts[vA*3+2] }, worldMat, {x:0,y:0,z:0});
+                        const pB = Vec3Utils.transformMat4({ x:verts[vB*3], y:verts[vB*3+1], z:verts[vB*3+2] }, worldMat, {x:0,y:0,z:0});
+                        let color = isObjectMode ? colObjectSelection : (isVertexMode ? colComp : colComp);
+                        if (!isObjectMode && !isVertexMode) {
+                            const edgeKey = [vA, vB].sort().join('-');
+                            if (this.subSelection.edgeIds.has(edgeKey)) color = colSel;
+                        }
+                        this.debugRenderer.drawLine(pA, pB, color);
                     }
-                    this.debugRenderer.drawLine(pA, pB, color);
-                }
-            });
+                });
+            }
 
             // Draw Vertices (using Points)
             if (isVertexMode) {
-                // Base size in pixels
-                const pointSize = this.uiConfig.vertexSize * 4.0;
+                const baseSize = this.uiConfig.vertexSize * 4.0;
                 
+                // Matrix components
+                const m0=worldMat[0], m1=worldMat[1], m2=worldMat[2], m3=worldMat[3];
+                const m4=worldMat[4], m5=worldMat[5], m6=worldMat[6], m7=worldMat[7];
+                const m8=worldMat[8], m9=worldMat[9], m10=worldMat[10], m11=worldMat[11];
+                const m12=worldMat[12], m13=worldMat[13], m14=worldMat[14], m15=worldMat[15];
+
                 for(let i=0; i<verts.length/3; i++) {
-                    const p = Vec3Utils.transformMat4({ x:verts[i*3], y:verts[i*3+1], z:verts[i*3+2] }, worldMat, {x:0,y:0,z:0});
-                    
+                    const x = verts[i*3];
+                    const y = verts[i*3+1];
+                    const z = verts[i*3+2];
+
+                    const wx = m0*x + m4*y + m8*z + m12;
+                    const wy = m1*x + m5*y + m9*z + m13;
+                    const wz = m2*x + m6*y + m10*z + m14;
+
                     const isSelected = this.subSelection.vertexIds.has(i);
                     const isHovered = this.hoveredVertex?.entityId === entityId && this.hoveredVertex?.index === i;
                     
-                    let size = pointSize;
-                    if (isHovered) size = pointSize * 2.5; 
+                    let size = baseSize;
+                    let border = 0.0;
                     
-                    const c = isSelected ? colSel : colVertex;
+                    // Default Color Logic
+                    // If stored color is White (1,1,1), show Purple (Default visual)
+                    // If stored color is modified (not 1,1,1), show that color (Debug Progress)
+                    let r = 1, g = 1, b = 1;
+                    
+                    if (colors) {
+                        const cr = colors[i*3];
+                        const cg = colors[i*3+1];
+                        const cb = colors[i*3+2];
+                        if (cr > 0.99 && cg > 0.99 && cb > 0.99) {
+                            // Unmodified -> Default Purple
+                            r = colDef.r; g = colDef.g; b = colDef.b;
+                        } else {
+                            // Modified -> Show data color
+                            r = cr; g = cg; b = cb;
+                        }
+                    } else {
+                        r = colDef.r; g = colDef.g; b = colDef.b;
+                    }
 
-                    this.debugRenderer.drawPoint(p, c, size);
+                    if (isSelected) {
+                        // Selected: Solid Yellow (#f9ea4e)
+                        r = colSel.r; g = colSel.g; b = colSel.b;
+                        size = baseSize * 1.25;
+                    }
+
+                    if (isHovered) {
+                        if (isSelected) {
+                            // Selected + Hover: Just larger
+                            size = baseSize * 1.5; 
+                        } else {
+                            // Unselected + Hover: Thin Yellow Border (#f9ea4e via shader)
+                            border = 0.25; 
+                            size = baseSize * 1.5; 
+                        }
+                    }
+
+                    // Use Raw call to avoid allocations
+                    this.debugRenderer.drawPointRaw(wx, wy, wz, r, g, b, size, border);
                 }
             }
         });

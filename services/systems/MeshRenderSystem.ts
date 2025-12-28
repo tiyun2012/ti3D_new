@@ -26,6 +26,7 @@ layout(location=9) in float a_texIndex;
 layout(location=10) in float a_effectIndex;
 layout(location=11) in vec4 a_joints;
 layout(location=12) in vec4 a_weights;
+layout(location=13) in vec3 a_vertexColor; // Per-Vertex Color
 
 uniform mat4 u_viewProjection;
 uniform highp float u_time;
@@ -73,7 +74,10 @@ void main() {
     v_normal = normalize(mat3(model) * localNormal);
     v_objectPos = a_position;
     v_uv = a_uv;
-    v_color = a_color;
+    
+    // Combine Instance Color with Vertex Color
+    v_color = a_color * a_vertexColor;
+    
     v_isSelected = a_isSelected;
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
@@ -217,6 +221,11 @@ export class MeshRenderSystem {
         createBuf(geometry.normals, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
         createBuf(geometry.uvs, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 2, gl.FLOAT, false, 0, 0);
         
+        // Vertex Colors (Location 13)
+        if (geometry.colors) {
+            createBuf(geometry.colors, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(13); gl.vertexAttribPointer(13, 3, gl.FLOAT, false, 0, 0);
+        }
+
         const hasSkin = !!(geometry.jointIndices && geometry.jointWeights);
         if (hasSkin) {
             createBuf(geometry.jointIndices, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(11); gl.vertexAttribPointer(11, 4, gl.FLOAT, false, 0, 0);

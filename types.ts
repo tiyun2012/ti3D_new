@@ -141,6 +141,7 @@ export interface StaticMeshAsset extends BaseAsset {
         vertices: Float32Array;
         normals: Float32Array;
         uvs: Float32Array;
+        colors: Float32Array;
         indices: Uint16Array;
     };
     topology?: LogicalMesh; // Optional CPU-side topology data
@@ -153,6 +154,7 @@ export interface SkeletalMeshAsset extends BaseAsset {
         vertices: Float32Array;
         normals: Float32Array;
         uvs: Float32Array;
+        colors: Float32Array;
         indices: Uint16Array;
         jointIndices: Float32Array;
         jointWeights: Float32Array;

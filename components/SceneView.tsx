@@ -242,6 +242,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
     // 3. Standard Tools & Selection (Left Click)
     if (!e.altKey && e.button === 0) {
+        engineInstance.isInputDown = true; // Flag for rendering
+        
         let componentHit = false;
 
         // Specialized handling for VERTEX mode using screen-space proximity
@@ -257,7 +259,12 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 
                 const id = engineInstance.hoveredVertex.index;
                 if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
-                else engineInstance.subSelection.vertexIds.add(id);
+                else {
+                    engineInstance.subSelection.vertexIds.add(id);
+                    // NEW: Update persistent color data for "debug progress"
+                    // Color Yellow: 0.976, 0.917, 0.305
+                    engineInstance.updateVertexColor(engineInstance.hoveredVertex.entityId, id, { r: 0.976, g: 0.917, b: 0.305 });
+                }
                 
                 engineInstance.notifyUI();
                 return;
@@ -392,6 +399,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     };
 
     const handleWindowMouseUp = (e: MouseEvent) => {
+        engineInstance.isInputDown = false; // Reset press state
         if (containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
             // Pass isUp=true to finish Gizmo drag
