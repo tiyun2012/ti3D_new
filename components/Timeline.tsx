@@ -21,11 +21,32 @@ export const Timeline: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        const update = () => {
+        // Subscribe to engine state changes (Play/Pause/Stop/Manual Set)
+        const onEngineNotify = () => {
             setTimeline({ ...engineInstance.timelineSystem.state });
         };
-        const unsub = engineInstance.subscribe(update);
-        return unsub;
+        const unsub = engineInstance.subscribe(onEngineNotify);
+
+        // Polling loop for smooth UI updates during playback
+        let rAF = 0;
+        const loop = () => {
+            if (engineInstance.isPlaying) {
+                setTimeline(prev => {
+                    // Only update if time actually changed to avoid redundant renders if paused
+                    if (prev.currentTime !== engineInstance.timelineSystem.state.currentTime) {
+                        return { ...engineInstance.timelineSystem.state };
+                    }
+                    return prev;
+                });
+            }
+            rAF = requestAnimationFrame(loop);
+        };
+        loop();
+
+        return () => {
+            unsub();
+            cancelAnimationFrame(rAF);
+        };
     }, []);
 
     const handleScrub = (e: React.MouseEvent | React.TouchEvent) => {

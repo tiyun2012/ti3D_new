@@ -178,6 +178,10 @@ export class Engine {
         this.isPlaying = false; 
         this.simulationMode = 'STOPPED';
         this.timelineSystem.stop();
+        
+        // Reset animation pose to time 0
+        this.animationSystem.update(0, 0, this.meshSystem, this.ecs, this.sceneGraph);
+        
         this.notifyUI(); 
         consoleService.info('Stopped'); 
     }
