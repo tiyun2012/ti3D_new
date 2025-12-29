@@ -1,4 +1,3 @@
-
 // services/engine.ts
 
 import { SoAEntitySystem } from './ecs/EntitySystem';
@@ -313,6 +312,134 @@ export class Engine {
             }
         }
         return result;
+    }
+
+    // --- MARQUEE COMPONENT SELECTION ---
+    selectComponentsInRect(rectX: number, rectY: number, rectW: number, rectH: number, mode: MeshComponentMode, append: boolean) {
+        if (!this.currentViewProj || this.selectedIndices.size === 0) return;
+
+        if (!append) {
+            this.subSelection.vertexIds.clear();
+            this.subSelection.edgeIds.clear();
+            this.subSelection.faceIds.clear();
+        }
+
+        // Bounds
+        const rLeft = rectX;
+        const rRight = rectX + rectW;
+        const rTop = rectY;
+        const rBottom = rectY + rectH;
+        
+        const width = this.currentWidth;
+        const height = this.currentHeight;
+        const halfW = width * 0.5;
+        const halfH = height * 0.5;
+
+        const vp = this.currentViewProj;
+        const mvp = new Float32Array(16);
+
+        // Iterate selected entities (Usually just one for component editing)
+        for (const idx of this.selectedIndices) {
+            const entityId = this.ecs.store.ids[idx];
+            const meshIntId = this.ecs.store.meshType[idx];
+            const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+            if (!assetUuid) continue;
+            const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+            if (!asset) continue;
+
+            const worldMat = this.sceneGraph.getWorldMatrix(entityId);
+            if (!worldMat) continue;
+
+            // MVP = VP * Model
+            Mat4Utils.multiply(vp, worldMat, mvp);
+            
+            const verts = asset.geometry.vertices;
+            const vertexCount = verts.length / 3;
+
+            // Access matrix elements directly for speed
+            const m00 = mvp[0], m01 = mvp[1], m02 = mvp[2], m03 = mvp[3];
+            const m10 = mvp[4], m11 = mvp[5], m12 = mvp[6], m13 = mvp[7];
+            const m20 = mvp[8], m21 = mvp[9], m22 = mvp[10], m23 = mvp[11];
+            const m30 = mvp[12], m31 = mvp[13], m32 = mvp[14], m33 = mvp[15];
+
+            // Helper to check a 3D point (local space) vs screen rect
+            const checkPoint = (lx: number, ly: number, lz: number) => {
+                // Manual Matrix Multiply (Position * MVP)
+                const w = m03*lx + m13*ly + m23*lz + m33;
+                if (w <= 0) return false; // Behind camera plane
+                
+                const x = (m00*lx + m10*ly + m20*lz + m30) / w;
+                const y = (m01*lx + m11*ly + m21*lz + m31) / w;
+                
+                // NDC (-1..1) to Screen Coords
+                const sx = (x + 1) * halfW;
+                const sy = (1 - y) * halfH; // Invert Y for screen coords
+                
+                return sx >= rLeft && sx <= rRight && sy >= rTop && sy <= rBottom;
+            };
+
+            if (mode === 'VERTEX') {
+                for (let i = 0; i < vertexCount; i++) {
+                    const lx = verts[i*3];
+                    const ly = verts[i*3+1];
+                    const lz = verts[i*3+2];
+                    
+                    if (checkPoint(lx, ly, lz)) {
+                        this.subSelection.vertexIds.add(i);
+                    }
+                }
+            } else if (mode === 'FACE') {
+                // Check Face Centroids
+                if (asset.topology) {
+                    asset.topology.faces.forEach((face, fIdx) => {
+                        let cx=0, cy=0, cz=0;
+                        for(let vIdx of face) {
+                            cx += verts[vIdx*3]; cy += verts[vIdx*3+1]; cz += verts[vIdx*3+2];
+                        }
+                        const inv = 1.0 / face.length;
+                        if (checkPoint(cx*inv, cy*inv, cz*inv)) {
+                            this.subSelection.faceIds.add(fIdx);
+                        }
+                    });
+                } else {
+                    // Triangle soup fallback
+                    const idxs = asset.geometry.indices;
+                    for (let i=0; i<idxs.length; i+=3) {
+                        const i1=idxs[i], i2=idxs[i+1], i3=idxs[i+2];
+                        const cx = (verts[i1*3]+verts[i2*3]+verts[i3*3])/3;
+                        const cy = (verts[i1*3+1]+verts[i2*3+1]+verts[i3*3+1])/3;
+                        const cz = (verts[i1*3+2]+verts[i2*3+2]+verts[i3*3+2])/3;
+                        if (checkPoint(cx, cy, cz)) {
+                            this.subSelection.faceIds.add(i/3);
+                        }
+                    }
+                }
+            } else if (mode === 'EDGE') {
+                // Check Edge Midpoints
+                if (asset.topology && asset.topology.graph) {
+                    asset.topology.graph.halfEdges.forEach(he => {
+                        // Prevent duplicates: only process one direction of the half-edge pair
+                        if (he.pair !== -1 && he.id > he.pair) return;
+                        
+                        // Edge connects pair-vertex to this-vertex
+                        const vDest = he.vertex;
+                        const vOrigin = asset.topology!.graph!.halfEdges[he.prev].vertex;
+                        
+                        const lx = (verts[vDest*3] + verts[vOrigin*3]) * 0.5;
+                        const ly = (verts[vDest*3+1] + verts[vOrigin*3+1]) * 0.5;
+                        const lz = (verts[vDest*3+2] + verts[vOrigin*3+2]) * 0.5;
+                        
+                        if (checkPoint(lx, ly, lz)) {
+                            const key = [vOrigin, vDest].sort((a,b)=>a-b).join('-');
+                            this.subSelection.edgeIds.add(key);
+                        }
+                    });
+                }
+            }
+        }
+        
+        this.recalculateSoftSelection();
+        this.notifyUI();
     }
 
     recalculateSoftSelection(triggerDeformation = true) {

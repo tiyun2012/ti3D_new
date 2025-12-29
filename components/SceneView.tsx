@@ -490,19 +490,36 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const h = Math.abs(selectionBox.currentY - selectionBox.startY);
             
             if (w > 3 || h > 3) {
-                const hitIds = engineInstance.selectEntitiesInRect(x, y, w, h);
-                if (e.shiftKey) {
-                    const nextSelection = new Set(selectedIds);
-                    hitIds.forEach(id => {
-                        if (nextSelection.has(id)) nextSelection.delete(id);
-                        else nextSelection.add(id);
-                    });
-                    onSelect(Array.from(nextSelection));
+                // Determine Mode
+                if (meshComponentMode === 'OBJECT') {
+                    const hitIds = engineInstance.selectEntitiesInRect(x, y, w, h);
+                    if (e.shiftKey) {
+                        const nextSelection = new Set(selectedIds);
+                        hitIds.forEach(id => {
+                            if (nextSelection.has(id)) nextSelection.delete(id);
+                            else nextSelection.add(id);
+                        });
+                        onSelect(Array.from(nextSelection));
+                    } else {
+                        onSelect(hitIds);
+                    }
                 } else {
-                    onSelect(hitIds);
+                    // Component Marquee Selection
+                    engineInstance.selectComponentsInRect(x, y, w, h, meshComponentMode, e.shiftKey || e.ctrlKey);
                 }
             } else {
-                if (!e.shiftKey && e.button === 0) onSelect([]);
+                // Click (Empty Space)
+                if (!e.shiftKey && e.button === 0) {
+                    if (meshComponentMode === 'OBJECT') {
+                        onSelect([]);
+                    } else {
+                        engineInstance.subSelection.vertexIds.clear();
+                        engineInstance.subSelection.edgeIds.clear();
+                        engineInstance.subSelection.faceIds.clear();
+                        engineInstance.recalculateSoftSelection();
+                        engineInstance.notifyUI();
+                    }
+                }
             }
             setSelectionBox(null);
         }
