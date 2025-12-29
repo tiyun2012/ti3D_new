@@ -47,7 +47,7 @@ export class GizmoSystem {
         if (selected.size === 0) return; 
         
         // --- Calculate Gizmo Position ---
-        let worldPos: Vector3 = { x: 0, y: 0, z: 0 };
+        let worldPos = { x: 0, y: 0, z: 0 };
         let entityId: string | null = null;
 
         const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
@@ -110,7 +110,7 @@ export class GizmoSystem {
         const selected = engineInstance.selectedIndices;
         if (selected.size === 0) return;
 
-        let pos: Vector3 = { x: 0, y: 0, z: 0 };
+        let pos = { x: 0, y: 0, z: 0 };
         
         const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
 
@@ -207,22 +207,9 @@ export class GizmoSystem {
             // Note: We constrain the HIT point relative to START POS to ensure sliding along axis
             let constrainedHit = { ...hit };
             
-            // Explicitly cast to any if TS is confused about vector types, but normally this should work if Vector3 is typed correctly.
-            // Using explicit property assignment to avoid any ambiguity.
-            if (this.activeAxis === 'X') { 
-                constrainedHit.y = this.startPos.y + this.clickOffset.y; 
-                constrainedHit.z = this.startPos.z + this.clickOffset.z; 
-            }
-            if (this.activeAxis === 'Y') { 
-                constrainedHit.x = this.startPos.x + this.clickOffset.x; 
-                constrainedHit.z = this.startPos.z + this.clickOffset.z; 
-            }
-            if (this.activeAxis === 'Z') { 
-                constrainedHit.x = this.startPos.x + this.clickOffset.x; 
-                constrainedHit.y = this.startPos.y + this.clickOffset.y; 
-            }
-            
-            // Planes
+            if (this.activeAxis === 'X') { constrainedHit.y = this.startPos.y + this.clickOffset.y; constrainedHit.z = this.startPos.z + this.clickOffset.z; }
+            if (this.activeAxis === 'Y') { constrainedHit.x = this.startPos.x + this.clickOffset.x; constrainedHit.z = this.startPos.z + this.clickOffset.z; }
+            if (this.activeAxis === 'Z') { constrainedHit.x = this.startPos.x + this.clickOffset.x; constrainedHit.y = this.startPos.y + this.clickOffset.y; }
             if (this.activeAxis === 'XY') constrainedHit.z = this.startPos.z + this.clickOffset.z;
             if (this.activeAxis === 'XZ') constrainedHit.y = this.startPos.y + this.clickOffset.y;
             if (this.activeAxis === 'YZ') constrainedHit.x = this.startPos.x + this.clickOffset.x;

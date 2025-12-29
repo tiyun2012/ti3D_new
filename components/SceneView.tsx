@@ -256,22 +256,34 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                                 const loop = MeshTopologyUtils.getFaceLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
                                 loop.forEach(f => engineInstance.subSelection.faceIds.add(f));
                             } else if (meshComponentMode === 'VERTEX') {
-                                // Unified Vertex Loop Logic via Engine Command
-                                const lastSelected = Array.from(engineInstance.subSelection.vertexIds).pop();
+                                // Vertex Loop Logic
+                                const previouslySelected = Array.from(engineInstance.subSelection.vertexIds);
                                 const clickedV = result.vertexId;
-                                
-                                // Directional Selection: If we have a previous vertex, use it as anchor
-                                if (lastSelected !== undefined && lastSelected !== clickedV) {
-                                    const loop = engineInstance.computeVertexLoop(selectedIds[0], lastSelected, clickedV);
-                                    if (loop.length > 0) {
-                                        loop.forEach(v => engineInstance.subSelection.vertexIds.add(v));
-                                    } else {
-                                        // Fallback if not connected: Just add the single vertex
-                                        engineInstance.subSelection.vertexIds.add(clickedV);
+                                let loopFound = false;
+
+                                // 1. Directional Selection: If exactly 1 vertex was selected, and we clicked a neighbor
+                                if (previouslySelected.length === 1 && clickedV !== -1 && clickedV !== previouslySelected[0]) {
+                                    const v1 = previouslySelected[0];
+                                    const v2 = clickedV;
+                                    
+                                    // Verify connectivity via edge map
+                                    const graph = asset.topology.graph;
+                                    const key = [v1, v2].sort((a,b)=>a-b).join('-');
+                                    
+                                    if (graph && graph.edgeKeyToHalfEdge.has(key)) {
+                                        const loop = MeshTopologyUtils.getVertexLoop(asset.topology, v1, v2);
+                                        if (loop.length > 0) {
+                                            loop.forEach(v => engineInstance.subSelection.vertexIds.add(v));
+                                            loopFound = true;
+                                        }
                                     }
-                                } else {
-                                    // No previous selection, or clicked same vertex. Just add single.
-                                    engineInstance.subSelection.vertexIds.add(clickedV);
+                                }
+
+                                // 2. Fallback: Use the edge closest to cursor (raycast hit)
+                                if (!loopFound) {
+                                    // result.edgeId is always valid from raycastMesh (closest edge on face)
+                                    const loop = MeshTopologyUtils.getVertexLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
+                                    loop.forEach(v => engineInstance.subSelection.vertexIds.add(v));
                                 }
                             }
                         }
