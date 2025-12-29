@@ -108,7 +108,29 @@ export interface PerformanceMetrics {
   entityCount: number;
 }
 
-// Mesh Topology Types
+// --- TOPOLOGY TYPES (HALF-EDGE) ---
+export interface HalfEdge {
+    id: number;         // ID of this half-edge
+    vertex: number;     // Index of the vertex this edge points TO
+    pair: number;       // ID of the twin half-edge (or -1 if boundary)
+    next: number;       // ID of next half-edge in the face loop
+    prev: number;       // ID of prev half-edge in the face loop
+    face: number;       // ID of the face this edge belongs to
+    edgeKey: string;    // Stable key "min-max" for edge selection
+}
+
+export interface MeshTopology {
+    halfEdges: HalfEdge[];
+    vertices: { 
+        edge: number; // One outgoing half-edge
+    }[]; 
+    faces: { 
+        edge: number; // One starting half-edge
+    }[];
+    // Fast Lookups
+    edgeKeyToHalfEdge: Map<string, number>; // "v1-v2" -> halfEdgeIndex
+}
+
 export interface LogicalMesh {
     // Defines the original Faces (Quads/Polygons)
     faces: number[][]; 
@@ -118,6 +140,9 @@ export interface LogicalMesh {
 
     // Connectivity maps for fast lookups
     vertexToFaces: Map<number, number[]>;
+    
+    // Advanced Topology Graph (Lazy loaded or computed on import)
+    graph?: MeshTopology;
 }
 
 // Asset Types

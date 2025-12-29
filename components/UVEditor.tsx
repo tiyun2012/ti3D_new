@@ -175,18 +175,16 @@ export const UVEditor: React.FC = () => {
                     if (newSet.has(closest)) newSet.delete(closest); else newSet.add(closest);
                     setSelectedIndices(newSet);
                 } else if (e.altKey || (e.ctrlKey && closest !== -1)) {
+                    // Loop Selection
                     if (editingAsset?.topology) {
                         const topology = editingAsset.topology;
-                        const faces = topology.vertexToFaces.get(closest) || [];
-                        if (faces.length > 0) {
-                            const face = topology.faces[faces[0]];
-                            const idxInFace = face.indexOf(closest);
-                            const nextInFace = face[(idxInFace + 1) % face.length];
-                            const loop = MeshTopologyUtils.getEdgeLoop(topology, closest, nextInFace);
-                            const newSet = new Set<number>();
-                            loop.forEach(edge => { newSet.add(edge[0]); newSet.add(edge[1]); });
-                            setSelectedIndices(newSet);
-                        }
+                        // For vertex loop, we need a direction. 
+                        // UV Editor simple logic: Just select connected vertices for now as loop needs edges.
+                        // Or if we have a previous selection, get loop between them.
+                        const loop = MeshTopologyUtils.getVertexLoop(topology, closest);
+                        const newSet = new Set<number>();
+                        loop.forEach(v => newSet.add(v));
+                        setSelectedIndices(newSet);
                     }
                 } else {
                     setSelectedVertex(closest);
@@ -252,7 +250,7 @@ export const UVEditor: React.FC = () => {
             }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={() => setIsDragging(false)} onMouseLeave={() => setIsDragging(false)}>
                 <canvas ref={canvasRef} className="block" />
                 <div className="absolute bottom-2 left-2 text-[9px] text-text-secondary opacity-50 pointer-events-none bg-black/50 px-2 py-1 rounded">
-                    Pan: Alt+Drag • Zoom: Wheel • Loop: Alt+Click Edge • Multiple: Shift+Click
+                    Pan: Alt+Drag • Zoom: Wheel • Loop: Ctrl+Click
                 </div>
             </div>
         </div>

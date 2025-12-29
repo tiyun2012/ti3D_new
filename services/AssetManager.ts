@@ -4,6 +4,7 @@ import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
 import { engineInstance } from './engine';
 import { ProceduralGeneration } from './ProceduralGeneration';
+import { MeshTopologyUtils } from './MeshTopologyUtils';
 
 export interface RigTemplate {
     name: string;
@@ -298,11 +299,17 @@ class AssetManagerService {
             });
         });
 
+        // 1. Basic Topology (Faces)
         const topology: LogicalMesh = {
             faces: geometryData.faces,
             triangleToFaceIndex: new Int32Array(geometryData.triToFace),
             vertexToFaces: v2f
         };
+        
+        // 2. Build Advanced Graph (Half-Edge)
+        // Note: vertices buffer needed for distance checking if we implemented welding, 
+        // but simple builder uses indices directly
+        topology.graph = MeshTopologyUtils.buildTopology(topology, geometryData.v.length / 3);
 
         // Create default skin weights if none exist or if it's a static mesh being imported as skeletal
         const vertexCount = geometryData.v.length / 3;
@@ -483,6 +490,17 @@ class AssetManagerService {
         // Allocate Colors (White)
         const colors = new Float32Array(data.v.length).fill(1.0);
 
+        const topology: LogicalMesh = { 
+            faces: data.faces, 
+            triangleToFaceIndex: new Int32Array(data.triToFace), 
+            vertexToFaces: v2f 
+        };
+        
+        // Build Topology
+        if (data.faces) {
+            topology.graph = MeshTopologyUtils.buildTopology(topology, data.v.length / 3);
+        }
+
         return { 
             id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', isProtected: true, path: '/Content/Meshes',
             geometry: { 
@@ -492,7 +510,7 @@ class AssetManagerService {
                 colors: colors,
                 indices: new Uint16Array(data.idx) 
             },
-            topology: data.faces ? { faces: data.faces, triangleToFaceIndex: new Int32Array(data.triToFace), vertexToFaces: v2f } : undefined
+            topology
         };
     }
 
