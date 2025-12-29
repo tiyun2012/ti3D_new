@@ -26,13 +26,18 @@ layout(location=9) in float a_texIndex;
 layout(location=10) in float a_effectIndex;
 layout(location=11) in vec4 a_joints;
 layout(location=12) in vec4 a_weights;
-layout(location=13) in vec3 a_vertexColor; // Per-Vertex Color
+layout(location=13) in vec3 a_vertexColor;
 
 uniform mat4 u_viewProjection;
 uniform highp float u_time;
 uniform sampler2DArray u_textures;
 uniform sampler2D u_boneTexture; 
 uniform int u_hasSkinning; 
+
+// Soft Selection Uniforms
+uniform int u_softSelEnabled;
+uniform vec3 u_softSelCenter;
+uniform float u_softSelRadius;
 
 out vec3 v_normal;
 out vec3 v_worldPos;
@@ -43,6 +48,7 @@ out vec2 v_uv;
 out float v_texIndex;
 out float v_effectIndex;
 out vec4 v_weights;
+out float v_softWeight;
 
 // %VERTEX_LOGIC%
 
@@ -70,12 +76,14 @@ void main() {
         localNormal = mat3(skinMatrix) * localNormal;
     }
 
-    v_worldPos = (model * localPos).xyz;
+    // Calculate initial world position for distance check (before vertex shader displacement)
+    vec4 initialWorldPos = model * localPos;
+    v_worldPos = initialWorldPos.xyz;
     v_normal = normalize(mat3(model) * localNormal);
     v_objectPos = a_position;
     v_uv = a_uv;
     
-    // Combine Instance Color with Vertex Color
+    // Combine Instance Color with Vertex Color (Default white if unbound)
     v_color = a_color * a_vertexColor;
     
     v_isSelected = a_isSelected;
@@ -83,14 +91,26 @@ void main() {
     v_effectIndex = a_effectIndex;
     v_weights = a_weights;
     
+    // Soft Selection Calculation (Distance based on initial world position)
+    v_softWeight = 0.0;
+    if (u_softSelEnabled == 1) {
+        float dist = distance(v_worldPos, u_softSelCenter);
+        if (dist <= u_softSelRadius) {
+            // Smooth falloff: (1 - d/r)^2 * (smoothstep)
+            float t = 1.0 - (dist / u_softSelRadius);
+            v_softWeight = t * t * (3.0 - 2.0 * t); 
+        }
+    }
+    
     vec3 vertexOffset = vec3(0.0);
     // %VERTEX_BODY%
     
     localPos.xyz += vertexOffset;
-    vec4 worldPos = model * localPos;
-    gl_Position = u_viewProjection * worldPos;
-    v_normal = normalize(mat3(model) * localNormal); 
-    v_worldPos = worldPos.xyz;
+    vec4 finalWorldPos = model * localPos;
+    gl_Position = u_viewProjection * finalWorldPos;
+    
+    // Update world pos to final for lighting if needed
+    v_worldPos = finalWorldPos.xyz;
 }`;
 
 const FS_DEFAULT_SOURCE = `#version 300 es
@@ -106,6 +126,7 @@ in highp vec2 v_uv;
 in highp float v_texIndex;
 in highp float v_effectIndex;
 in highp vec4 v_weights;
+in highp float v_softWeight;
 
 uniform sampler2DArray u_textures;
 uniform int u_renderMode; 
@@ -113,6 +134,7 @@ uniform vec3 u_cameraPos;
 uniform vec3 u_lightDir;
 uniform vec3 u_lightColor;
 uniform float u_lightIntensity;
+uniform float u_time;
 
 layout(location=0) out vec4 outColor;
 layout(location=1) out vec4 outData; 
@@ -128,9 +150,13 @@ vec3 getStylizedLighting(vec3 normal, vec3 viewDir, vec3 albedo) {
     return finalLight;
 }
 
-vec3 heatMap(float v) {
-    float val = clamp(v, 0.0, 1.0);
-    return vec3(smoothstep(0.5, 0.8, val), smoothstep(0.0, 0.5, val) - smoothstep(0.8, 1.0, val), smoothstep(0.0, 0.2, val) - smoothstep(0.5, 1.0, val));
+vec3 heatMap(float t) {
+    t = clamp(t, 0.0, 1.0);
+    vec3 a = vec3(0.5, 0.5, 0.5);
+    vec3 b = vec3(0.5, 0.5, 0.5);
+    vec3 c = vec3(1.0, 1.0, 1.0);
+    vec3 d = vec3(0.00, 0.33, 0.67);
+    return a + b * cos(6.28318 * (c * t + d));
 }
 
 void main() {
@@ -139,6 +165,7 @@ void main() {
     vec4 texColor = texture(u_textures, vec3(v_uv, v_texIndex));
     vec3 albedo = v_color * texColor.rgb;
     vec3 result = vec3(0.0);
+    
     if (u_renderMode == 0) result = getStylizedLighting(normal, viewDir, albedo);
     else if (u_renderMode == 1) result = normal * 0.5 + 0.5;
     else if (u_renderMode == 2) result = albedo;
@@ -148,6 +175,16 @@ void main() {
     }
     else result = albedo;
     
+    // --- Soft Selection Overlay ---
+    if (v_softWeight > 0.0001) {
+        vec3 heat = heatMap(v_softWeight);
+        float pulse = 0.5 + 0.5 * sin(u_time * 10.0);
+        float blend = smoothstep(0.0, 0.2, v_softWeight) * 0.7;
+        result = mix(result, heat, blend);
+        float lines = step(0.9, fract(v_softWeight * 10.0));
+        result += lines * 0.5 * heat * (0.5 + 0.5 * pulse);
+    }
+
     outColor = vec4(result, 1.0);
     outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
 }`;
@@ -169,14 +206,24 @@ export class MeshRenderSystem {
         this.defaultProgram = this.createProgram(gl, defaultVS, FS_DEFAULT_SOURCE);
         this.initTextureArray(gl);
         this.initBoneTexture(gl);
+        
+        // Ensure default vertex color is white (1,1,1) for unbuffered attributes
+        gl.vertexAttrib3f(13, 1.0, 1.0, 1.0);
     }
 
     private createProgram(gl: WebGL2RenderingContext, vsSrc: string, fsSrc: string): WebGLProgram | null {
         const vs = gl.createShader(gl.VERTEX_SHADER)!; gl.shaderSource(vs, vsSrc); gl.compileShader(vs);
         const fs = gl.createShader(gl.FRAGMENT_SHADER)!; gl.shaderSource(fs, fsSrc); gl.compileShader(fs);
+        
         if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) { console.error('VS Error', gl.getShaderInfoLog(vs)); return null; }
         if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) { console.error('FS Error', gl.getShaderInfoLog(fs)); return null; }
+        
         const prog = gl.createProgram()!; gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+        
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+            console.error('Link Error', gl.getProgramInfoLog(prog));
+            return null;
+        }
         return prog;
     }
 
@@ -222,14 +269,21 @@ export class MeshRenderSystem {
         createBuf(geometry.uvs, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 2, gl.FLOAT, false, 0, 0);
         
         // Vertex Colors (Location 13)
-        if (geometry.colors) {
-            createBuf(geometry.colors, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(13); gl.vertexAttribPointer(13, 3, gl.FLOAT, false, 0, 0);
+        if (geometry.colors && geometry.colors.length > 0) {
+            createBuf(geometry.colors, gl.ARRAY_BUFFER); 
+            gl.enableVertexAttribArray(13); 
+            gl.vertexAttribPointer(13, 3, gl.FLOAT, false, 0, 0);
+        } else {
+            gl.disableVertexAttribArray(13);
         }
 
         const hasSkin = !!(geometry.jointIndices && geometry.jointWeights);
         if (hasSkin) {
             createBuf(geometry.jointIndices, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(11); gl.vertexAttribPointer(11, 4, gl.FLOAT, false, 0, 0);
             createBuf(geometry.jointWeights, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(12); gl.vertexAttribPointer(12, 4, gl.FLOAT, false, 0, 0);
+        } else {
+            gl.disableVertexAttribArray(11);
+            gl.disableVertexAttribArray(12);
         }
 
         createBuf(geometry.indices, gl.ELEMENT_ARRAY_BUFFER);
@@ -271,14 +325,20 @@ export class MeshRenderSystem {
         }
     }
 
-    render(store: ComponentStorage, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number, renderMode: number, pass: 'OPAQUE' | 'OVERLAY') {
+    render(store: ComponentStorage, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number, renderMode: number, pass: 'OPAQUE' | 'OVERLAY', softSelData: { enabled: boolean, center: {x:number, y:number, z:number}, radius: number }) {
         const gl = this.gl!;
+        
+        // Reset default generic attribute for colors to WHITE
+        gl.vertexAttrib3f(13, 1.0, 1.0, 1.0);
+
         const targetBuckets = pass === 'OPAQUE' ? this.buckets : this.excludedBuckets;
 
         targetBuckets.forEach((indices, key) => {
             const matId = key >> 16; const meshId = key & 0xFFFF; const mesh = this.meshes.get(meshId); if(!mesh) return;
             const program = (matId > 0 && this.materialPrograms.has(matId)) ? this.materialPrograms.get(matId)! : this.defaultProgram!;
             gl.useProgram(program);
+            
+            // Standard Uniforms
             gl.uniformMatrix4fv(gl.getUniformLocation(program, 'u_viewProjection'), false, vp);
             gl.uniform1f(gl.getUniformLocation(program, 'u_time'), time);
             gl.uniform3f(gl.getUniformLocation(program, 'u_cameraPos'), cam.x, cam.y, cam.z);
@@ -287,13 +347,32 @@ export class MeshRenderSystem {
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightColor'), lightColor);
             gl.uniform1f(gl.getUniformLocation(program, 'u_lightIntensity'), lightIntensity);
             
+            // Soft Selection Uniforms (Must be robust)
+            const uSoftSelEnabled = gl.getUniformLocation(program, 'u_softSelEnabled');
+            const uSoftSelCenter = gl.getUniformLocation(program, 'u_softSelCenter');
+            const uSoftSelRadius = gl.getUniformLocation(program, 'u_softSelRadius');
+            
+            // If optimization removes uniforms, getUniformLocation returns null. 
+            // We check for truthy object (WebGLUniformLocation) to avoid errors.
+            if (uSoftSelEnabled) gl.uniform1i(uSoftSelEnabled, softSelData.enabled ? 1 : 0);
+            if (uSoftSelCenter) gl.uniform3f(uSoftSelCenter, softSelData.center.x, softSelData.center.y, softSelData.center.z);
+            if (uSoftSelRadius) gl.uniform1f(uSoftSelRadius, softSelData.radius);
+
             if (this.boneTexture) {
                 gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.boneTexture);
-                gl.uniform1i(gl.getUniformLocation(program, 'u_boneTexture'), 1);
-                gl.uniform1i(gl.getUniformLocation(program, 'u_hasSkinning'), mesh.hasSkin ? 1 : 0);
+                const loc = gl.getUniformLocation(program, 'u_boneTexture');
+                if (loc) gl.uniform1i(loc, 1);
+                
+                const locSkin = gl.getUniformLocation(program, 'u_hasSkinning');
+                if (locSkin) gl.uniform1i(locSkin, mesh.hasSkin ? 1 : 0);
             }
 
-            if (this.textureArray) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray); gl.uniform1i(gl.getUniformLocation(program, 'u_textures'), 0); }
+            if (this.textureArray) { 
+                gl.activeTexture(gl.TEXTURE0); 
+                gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray); 
+                const loc = gl.getUniformLocation(program, 'u_textures');
+                if (loc) gl.uniform1i(loc, 0); 
+            }
             
             let instanceCount = 0; const stride = 22; const buf = mesh.cpuBuffer;
             for (const idx of indices) {

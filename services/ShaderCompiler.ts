@@ -27,6 +27,30 @@ const toVec3 = (v: string | null, def = "vec3(1.0)") => {
     return v;
 };
 
+// Turbo Colormap (Synced with MeshRenderSystem)
+const HEATMAP_FUNC = `
+vec3 heatMap(float t) {
+    t = clamp(t, 0.0, 1.0);
+    vec3 a = vec3(0.5, 0.5, 0.5);
+    vec3 b = vec3(0.5, 0.5, 0.5);
+    vec3 c = vec3(1.0, 1.0, 1.0);
+    vec3 d = vec3(0.00, 0.33, 0.67);
+    return a + b * cos(6.28318 * (c * t + d));
+}
+`;
+
+// Logic to blend heatmap over material
+const SOFT_SEL_LOGIC = `
+            if (v_softWeight > 0.0001) {
+                vec3 heat = heatMap(v_softWeight);
+                float pulse = 0.5 + 0.5 * sin(u_time * 10.0);
+                float blend = smoothstep(0.0, 0.2, v_softWeight) * 0.7;
+                finalColor = mix(finalColor, heat, blend);
+                float lines = step(0.9, fract(v_softWeight * 10.0));
+                finalColor += lines * 0.5 * heat * (0.5 + 0.5 * pulse);
+            }
+`;
+
 export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]): CompileResult | string => {
     const outNode = nodes.find(n => n.type === 'StandardMaterial' || n.type === 'ShaderOutput');
     if (!outNode) return '';
@@ -154,14 +178,39 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
             vec3 finalColor = directLight + getFakeIBL(N, V, roughnessVal, F0, albedoVal, metallicVal) + emissionVal;
             finalColor += vec3(pow(1.0 - max(dot(N, V), 0.0), 4.0)) * rimStrengthVal * u_lightColor;
             if (u_renderMode == 1) finalColor = N * 0.5 + 0.5;
+            ${SOFT_SEL_LOGIC}
             outColor = vec4(finalColor, alphaVal); outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
         }`;
     } else {
         const rgb = generateGraphFromInput('rgb'); fsGlobals.push(...rgb.functions);
         const rgbVar = rgb.finalVar ? toVec3(rgb.finalVar) : 'vec3(1.0, 0.0, 1.0)';
-        fsSource = `void main() { ${rgb.body} vec3 finalColor = ${rgbVar}; if (u_renderMode == 1) finalColor = normalize(v_normal) * 0.5 + 0.5; outColor = vec4(finalColor, 1.0); outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0); }`;
+        fsSource = `void main() { ${rgb.body} vec3 finalColor = ${rgbVar}; if (u_renderMode == 1) finalColor = normalize(v_normal) * 0.5 + 0.5; ${SOFT_SEL_LOGIC} outColor = vec4(finalColor, 1.0); outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0); }`;
     }
     const vsSource = `// --- Global Functions (VS) ---\n${vsData.functions.join('\n')}\n// --- Graph Body (VS) ---\n${vsData.body}\n${vsFinalAssignment}`;
-    const fullFs = `#version 300 es\nprecision highp float; precision highp sampler2DArray; uniform float u_time; uniform vec3 u_cameraPos; uniform sampler2DArray u_textures; uniform int u_renderMode; uniform vec3 u_lightDir; uniform vec3 u_lightColor; uniform float u_lightIntensity; in vec3 v_normal, v_worldPos, v_objectPos, v_color; in float v_isSelected, v_texIndex, v_effectIndex; in vec2 v_uv; layout(location=0) out vec4 outColor; layout(location=1) out vec4 outData; ${[...new Set(fsGlobals)].join('\n')} ${fsSource}`;
+    
+    const fullFs = `#version 300 es
+    precision highp float; 
+    precision highp sampler2DArray; 
+    uniform float u_time; 
+    uniform vec3 u_cameraPos; 
+    uniform sampler2DArray u_textures; 
+    uniform int u_renderMode; 
+    uniform vec3 u_lightDir; 
+    uniform vec3 u_lightColor; 
+    uniform float u_lightIntensity; 
+    
+    in vec3 v_normal, v_worldPos, v_objectPos, v_color; 
+    in float v_isSelected, v_texIndex, v_effectIndex; 
+    in vec4 v_weights; 
+    in float v_softWeight; 
+    in vec2 v_uv; 
+    
+    layout(location=0) out vec4 outColor; 
+    layout(location=1) out vec4 outData; 
+    
+    ${HEATMAP_FUNC} 
+    ${[...new Set(fsGlobals)].join('\n')} 
+    ${fsSource}`;
+    
     return { vs: vsSource, fs: fullFs };
 };

@@ -256,6 +256,44 @@ export class Engine {
         // For simplicity, we skip full normal recalc here as it's expensive per frame. 
     }
 
+    private getSoftSelectionContext() {
+        const enabled = this.softSelectionEnabled && this.meshComponentMode === 'VERTEX' && this.subSelection.vertexIds.size > 0;
+        let center = { x: 0, y: 0, z: 0 };
+        
+        if (enabled && this.selectedIndices.size > 0) {
+            // Calculate center of selection in World Space
+            // Assume single object editing for vertex mode
+            const idx = Array.from(this.selectedIndices)[0];
+            const entityId = this.ecs.store.ids[idx];
+            
+            const meshIntId = this.ecs.store.meshType[idx];
+            const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+            if (assetUuid) {
+                const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+                if (asset) {
+                    const worldMat = this.sceneGraph.getWorldMatrix(entityId);
+                    if (worldMat) {
+                        const verts = asset.geometry.vertices;
+                        const vIds = Array.from(this.subSelection.vertexIds);
+                        
+                        let cx = 0, cy = 0, cz = 0;
+                        for (const vId of vIds) {
+                            const vx = verts[vId*3], vy = verts[vId*3+1], vz = verts[vId*3+2];
+                            // Transform to World
+                            cx += worldMat[0]*vx + worldMat[4]*vy + worldMat[8]*vz + worldMat[12];
+                            cy += worldMat[1]*vx + worldMat[5]*vy + worldMat[9]*vz + worldMat[13];
+                            cz += worldMat[2]*vx + worldMat[6]*vy + worldMat[10]*vz + worldMat[14];
+                        }
+                        const invLen = 1.0 / vIds.length;
+                        center = { x: cx * invLen, y: cy * invLen, z: cz * invLen };
+                    }
+                }
+            }
+        }
+        
+        return { enabled, center, radius: this.softSelectionRadius };
+    }
+
     tick(dt: number) {
             const start = performance.now();
             const clampedDt = Math.min(dt, this.maxFrameTime);
@@ -277,6 +315,8 @@ export class Engine {
             }
 
             if (this.currentViewProj) {
+                const softSel = this.getSoftSelectionContext();
+                
                 this.renderer.render(
                     this.ecs.store, 
                     this.ecs.count, 
@@ -285,6 +325,7 @@ export class Engine {
                     this.currentWidth, 
                     this.currentHeight, 
                     this.currentCameraPos,
+                    softSel,
                     this.isPlaying && this.simulationMode === 'GAME' ? undefined : this.debugRenderer
                 );
             }
