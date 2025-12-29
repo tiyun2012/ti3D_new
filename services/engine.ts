@@ -48,18 +48,15 @@ export class Engine {
     softSelectionEnabled: boolean = false;
     softSelectionRadius: number = 2.0;
     softSelectionMode: SoftSelectionMode = 'FIXED';
-    softSelectionFalloff: SoftSelectionFalloff = 'VOLUME'; // Default to simple
+    softSelectionFalloff: SoftSelectionFalloff = 'VOLUME'; 
     softSelectionHeatmapVisible: boolean = true;
     
     // Cached weights for the current selection
     softSelectionWeights: Map<number, Float32Array> = new Map();
 
     // --- DEFORMATION SNAPSHOT STATE ---
-    // Stores vertex positions at the start of a drag operation
     private vertexSnapshot: Float32Array | null = null;
-    // Stores the currently applied drag delta (total distance from drag start)
     private currentDeformationDelta: Vector3 = { x: 0, y: 0, z: 0 };
-    // The entity currently being deformed
     private activeDeformationEntity: string | null = null;
 
     uiConfig: UIConfiguration = DEFAULT_UI_CONFIG;
@@ -193,9 +190,50 @@ export class Engine {
         this.registerAssetWithGPU(asset);
     }
 
+    // --- SELECTION HELPERS ---
+    
+    getSelectionAsVertices(): Set<number> {
+        if (this.selectedIndices.size === 0) return new Set();
+        const idx = Array.from(this.selectedIndices)[0];
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        if (!assetUuid) return new Set();
+        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+        if (!asset) return new Set();
+
+        const result = new Set<number>();
+
+        if (this.meshComponentMode === 'VERTEX') {
+            return this.subSelection.vertexIds;
+        }
+        if (this.meshComponentMode === 'EDGE') {
+            this.subSelection.edgeIds.forEach(key => {
+                const [vA, vB] = key.split('-').map(Number);
+                result.add(vA); result.add(vB);
+            });
+        }
+        if (this.meshComponentMode === 'FACE') {
+            const topo = asset.topology;
+            if (topo) {
+                this.subSelection.faceIds.forEach(fIdx => {
+                    topo.faces[fIdx].forEach(v => result.add(v));
+                });
+            } else {
+                // Fallback for non-topo meshes (raw tris)
+                const indices = asset.geometry.indices;
+                this.subSelection.faceIds.forEach(fIdx => {
+                    // Assuming faces map to triangles directly if no topo
+                    result.add(indices[fIdx * 3]);
+                    result.add(indices[fIdx * 3 + 1]);
+                    result.add(indices[fIdx * 3 + 2]);
+                });
+            }
+        }
+        return result;
+    }
+
     recalculateSoftSelection(triggerDeformation = true) {
-        // Clear old weights if disabled
-        if (!this.softSelectionEnabled || this.meshComponentMode !== 'VERTEX') {
+        if (!this.softSelectionEnabled || this.meshComponentMode === 'OBJECT') {
             this.softSelectionWeights.forEach((weights, meshId) => {
                 weights.fill(0);
                 this.meshSystem.updateSoftSelectionBuffer(meshId, weights);
@@ -204,7 +242,6 @@ export class Engine {
             return;
         }
 
-        // Only single object editing supported for now
         if (this.selectedIndices.size === 0) return;
         const idx = Array.from(this.selectedIndices)[0];
         const meshIntId = this.ecs.store.meshType[idx];
@@ -213,37 +250,34 @@ export class Engine {
         const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
         if (!asset) return;
 
-        // FIXED MODE: Use Snapshot (Rest Pose) if dragging to prevent swimming
-        // DYNAMIC MODE: Use Current Vertices (Deformed) to allow swimming/propagation
         const useSnapshot = this.softSelectionMode === 'FIXED' && this.vertexSnapshot;
         const sourceVerts = useSnapshot ? this.vertexSnapshot! : asset.geometry.vertices;
         const vertexCount = sourceVerts.length / 3;
         
-        // Convert Radius to Local Space
         const sx = this.ecs.store.scaleX[idx];
         const sy = this.ecs.store.scaleY[idx];
         const sz = this.ecs.store.scaleZ[idx];
         const maxScale = Math.max(sx, Math.max(sy, sz)) || 1.0;
         const localRadius = this.softSelectionRadius / maxScale;
 
+        // Get unified vertex set from active mode (Edge/Face/Vertex)
+        const selectedVerts = this.getSelectionAsVertices();
         let weights: Float32Array;
 
         if (this.softSelectionFalloff === 'SURFACE') {
-            // Geodesic Distance
             weights = MeshTopologyUtils.computeSurfaceWeights(
                 asset.geometry.indices,
                 sourceVerts,
-                this.subSelection.vertexIds,
+                selectedVerts,
                 localRadius,
                 vertexCount
             );
         } else {
-            // Euclidean Distance (Volume)
             weights = this.softSelectionWeights.get(meshIntId) || new Float32Array(vertexCount);
             
-            // Calculate Centroid in Local Space (using source vertices)
             const centroid = {x:0, y:0, z:0};
-            const selection = Array.from(this.subSelection.vertexIds);
+            const selection = Array.from(selectedVerts);
+            
             if (selection.length > 0) {
                 for(const vid of selection) {
                     centroid.x += sourceVerts[vid*3];
@@ -253,9 +287,8 @@ export class Engine {
                 const invLen = 1.0 / selection.length;
                 centroid.x *= invLen; centroid.y *= invLen; centroid.z *= invLen;
 
-                // Populate Weights
                 for (let i = 0; i < vertexCount; i++) {
-                    if (this.subSelection.vertexIds.has(i)) {
+                    if (selectedVerts.has(i)) {
                         weights[i] = 1.0;
                         continue;
                     }
@@ -264,7 +297,7 @@ export class Engine {
                     
                     if (dist <= localRadius) {
                         const t = 1.0 - (dist / localRadius);
-                        weights[i] = t * t * (3 - 2 * t); // SmoothStep falloff
+                        weights[i] = t * t * (3 - 2 * t); 
                     } else {
                         weights[i] = 0.0;
                     }
@@ -277,13 +310,10 @@ export class Engine {
         this.softSelectionWeights.set(meshIntId, weights);
         this.meshSystem.updateSoftSelectionBuffer(meshIntId, weights);
 
-        // If dragging and triggered by radius change, update deformation immediately
         if (triggerDeformation && this.vertexSnapshot && this.activeDeformationEntity && this.softSelectionMode === 'FIXED') {
             this.applyDeformation(this.activeDeformationEntity);
         }
     }
-
-    // --- SNAPSHOT BASED DEFORMATION SYSTEM ---
 
     startVertexDrag(entityId: string) {
         const idx = this.ecs.idToIndex.get(entityId);
@@ -294,12 +324,10 @@ export class Engine {
         const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
         if (!asset) return;
 
-        // 1. Capture Snapshot (Copy current vertices)
         this.vertexSnapshot = new Float32Array(asset.geometry.vertices);
         this.activeDeformationEntity = entityId;
         this.currentDeformationDelta = { x:0, y:0, z:0 };
 
-        // 2. Ensure weights are calculated
         this.recalculateSoftSelection(false); 
     }
 
@@ -308,33 +336,22 @@ export class Engine {
             this.startVertexDrag(entityId); 
         }
 
-        // Transform World Delta to Local Delta
         const worldMat = this.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return;
         const invWorld = Mat4Utils.create();
         Mat4Utils.invert(worldMat, invWorld);
         
-        // Calculate the Total Local Delta (from start of drag)
         const localTotalDelta = Vec3Utils.transformMat4Normal(totalWorldDelta, invWorld, {x:0,y:0,z:0});
         
         if (this.softSelectionEnabled && this.softSelectionMode === 'DYNAMIC') {
-            // Dynamic Mode: Incremental Update
-            // 1. Calculate the delta for *this frame only*
             const frameDelta = Vec3Utils.subtract(localTotalDelta, this.currentDeformationDelta, {x:0,y:0,z:0});
-            
-            // 2. Apply this small delta to current vertices using CURRENT weights
             this.applyIncrementalDeformation(entityId, frameDelta);
-            
-            // 3. Recalculate weights based on the NEW deformed geometry for the next frame
             this.recalculateSoftSelection(false); 
         } else {
-            // Fixed Mode: Absolute Update
-            // Apply Total Delta to Snapshot
-            this.currentDeformationDelta = localTotalDelta; // Store for consistency
+            this.currentDeformationDelta = localTotalDelta;
             this.applyDeformation(entityId);
         }
         
-        // Update tracker for next frame
         this.currentDeformationDelta = localTotalDelta;
     }
 
@@ -348,6 +365,9 @@ export class Engine {
 
         const verts = asset.geometry.vertices;
         const weights = this.softSelectionWeights.get(meshIntId);
+        
+        // Use getSelectionAsVertices to support all modes
+        const selectedVerts = this.getSelectionAsVertices();
 
         if (this.softSelectionEnabled && weights) {
             for (let i = 0; i < weights.length; i++) {
@@ -359,7 +379,7 @@ export class Engine {
                 }
             }
         } else {
-            for (const vIdx of this.subSelection.vertexIds) {
+            for (const vIdx of selectedVerts) {
                 verts[vIdx*3] += localDelta.x;
                 verts[vIdx*3+1] += localDelta.y;
                 verts[vIdx*3+2] += localDelta.z;
@@ -380,6 +400,8 @@ export class Engine {
         const snap = this.vertexSnapshot;
         const weights = this.softSelectionWeights.get(meshIntId);
         const delta = this.currentDeformationDelta;
+        
+        const selectedVerts = this.getSelectionAsVertices();
 
         if (this.softSelectionEnabled && weights) {
             for (let i = 0; i < weights.length; i++) {
@@ -396,7 +418,7 @@ export class Engine {
             }
         } else {
             verts.set(snap);
-            for (const vIdx of this.subSelection.vertexIds) {
+            for (const vIdx of selectedVerts) {
                 verts[vIdx*3] += delta.x;
                 verts[vIdx*3+1] += delta.y;
                 verts[vIdx*3+2] += delta.z;
@@ -407,8 +429,6 @@ export class Engine {
     }
 
     endVertexDrag() {
-        // We do NOT clear deformation history here to allow for "swimming" adjustment after drag.
-        // The snapshot and delta persist until a new selection is made or explicitly cleared.
     }
 
     clearDeformation() {
@@ -435,9 +455,8 @@ export class Engine {
             }
 
             if (this.currentViewProj) {
-                // Visual Ring logic
                 const softSel = { 
-                    enabled: this.softSelectionEnabled && this.meshComponentMode === 'VERTEX', 
+                    enabled: this.softSelectionEnabled && this.meshComponentMode !== 'OBJECT', 
                     center: {x:0,y:0,z:0}, 
                     radius: this.softSelectionRadius,
                     heatmapVisible: this.softSelectionHeatmapVisible
@@ -448,13 +467,13 @@ export class Engine {
                      const id = this.ecs.store.ids[idx];
                      const wm = this.sceneGraph.getWorldMatrix(id);
                      
-                     // In Dynamic mode, center follows the geometry (swim)
-                     // In Fixed mode, center stays with snapshot source if dragging, or current if not.
                      const useSnap = (this.softSelectionMode === 'FIXED' && this.vertexSnapshot);
                      const sourceV = useSnap ? this.vertexSnapshot! : (assetManager.getAsset(assetManager.meshIntToUuid.get(this.ecs.store.meshType[idx])!) as StaticMeshAsset)?.geometry.vertices;
+                     
+                     const activeVerts = this.getSelectionAsVertices();
 
-                     if (sourceV && this.subSelection.vertexIds.size > 0 && wm) {
-                         const vId = Array.from(this.subSelection.vertexIds)[0];
+                     if (sourceV && activeVerts.size > 0 && wm) {
+                         const vId = Array.from(activeVerts)[0];
                          const lx = sourceV[vId*3], ly = sourceV[vId*3+1], lz = sourceV[vId*3+2];
                          const wx = wm[0]*lx + wm[4]*ly + wm[8]*lz + wm[12];
                          const wy = wm[1]*lx + wm[5]*ly + wm[9]*lz + wm[13];

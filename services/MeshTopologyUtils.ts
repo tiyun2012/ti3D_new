@@ -97,15 +97,6 @@ export const MeshTopologyUtils = {
 
                 halfEdges.push(he);
                 
-                // Link Vertex to ONE outgoing edge (we use the edge pointing FROM vCurrent)
-                // Since this HE points TO vNext, it starts FROM vCurrent.
-                // However, conventionally HE.vertex is the destination. 
-                // So the outgoing edge for vCurrent is actually this HE.
-                // Wait, standard HE: origin -> vertex. 
-                // Let's stick to standard: he.vertex is the HEAD. Origin is implicit (he.prev.vertex).
-                // So this edge belongs to vertex `vNext`'s incoming ring, or `vCurrent`'s outgoing ring?
-                // Usually vertices store an *outgoing* half-edge.
-                // This edge goes vCurrent -> vNext. So it is outgoing from vCurrent.
                 if (vertices[vCurrent].edge === -1) {
                     vertices[vCurrent].edge = heIdx;
                 }
@@ -204,19 +195,72 @@ export const MeshTopologyUtils = {
 
     // --- LOOP SELECTION ALGORITHMS ---
 
-    /**
-     * Selects an edge loop based on Maya-style quad topology rules.
-     * Stops at poles (vertices with valence != 4) or boundaries.
-     */
+    getFaceLoop: (mesh: LogicalMesh, startFace: number, guideEdgeVertices: [number, number]): number[] => {
+        if (!mesh.graph) return [startFace];
+        const graph = mesh.graph;
+        
+        const vA = guideEdgeVertices[0];
+        const vB = guideEdgeVertices[1];
+        
+        let startHeIdx = -1;
+        let key = `${vA}-${vB}`;
+        
+        let candidateIdx = graph.edgeKeyToHalfEdge.get(key);
+        if (candidateIdx === undefined) {
+             key = `${vB}-${vA}`;
+             candidateIdx = graph.edgeKeyToHalfEdge.get(key);
+        }
+        if (candidateIdx === undefined) return [startFace];
+        
+        if (graph.halfEdges[candidateIdx].face === startFace) startHeIdx = candidateIdx;
+        else if (graph.halfEdges[candidateIdx].pair !== -1 && graph.halfEdges[graph.halfEdges[candidateIdx].pair].face === startFace) {
+            startHeIdx = graph.halfEdges[candidateIdx].pair;
+        }
+        
+        if (startHeIdx === -1) return [startFace];
+
+        const loop = new Set<number>();
+        loop.add(startFace);
+
+        // Walk neighbor across guide edge
+        MeshTopologyUtils.walkFaceLoop(graph, startHeIdx, loop);
+        
+        // Walk opposite direction (opposite edge of the quad)
+        const next = graph.halfEdges[startHeIdx].next;
+        const opp = graph.halfEdges[next].next;
+        MeshTopologyUtils.walkFaceLoop(graph, opp, loop);
+
+        return Array.from(loop);
+    },
+
+    walkFaceLoop: (graph: MeshTopology, exitHeIdx: number, result: Set<number>) => {
+        let curr = exitHeIdx;
+        
+        while(true) {
+            const pair = graph.halfEdges[curr].pair;
+            if (pair === -1) break; 
+            
+            const neighborFace = graph.halfEdges[pair].face;
+            if (result.has(neighborFace)) break;
+            
+            const fEdge = graph.faces[neighborFace].edge;
+            let count = 0; let it = fEdge;
+            do { count++; it = graph.halfEdges[it].next; } while(it !== fEdge);
+            if (count !== 4) {
+                result.add(neighborFace);
+                break;
+            }
+            
+            result.add(neighborFace);
+            curr = graph.halfEdges[graph.halfEdges[pair].next].next;
+        }
+    },
+
     getEdgeLoop: (mesh: LogicalMesh, startEdgeKey: string): string[] => {
         if (!mesh.graph) return [startEdgeKey];
         
         const graph = mesh.graph;
-        
-        // Find one half-edge for this key (direction doesn't matter for key start)
-        // Try forward
         let startHeIdx = graph.edgeKeyToHalfEdge.get(startEdgeKey.split('-').join('-')); 
-        // If not found, try reverse key just in case input is flipped
         if (startHeIdx === undefined) {
              const parts = startEdgeKey.split('-');
              startHeIdx = graph.edgeKeyToHalfEdge.get(`${parts[1]}-${parts[0]}`);
@@ -226,10 +270,8 @@ export const MeshTopologyUtils = {
         const loop = new Set<string>();
         loop.add(graph.halfEdges[startHeIdx].edgeKey);
 
-        // Walk Direction 1
         MeshTopologyUtils.walkEdgeLoop(graph, startHeIdx, loop);
         
-        // Walk Direction 2 (Reverse)
         const pairIdx = graph.halfEdges[startHeIdx].pair;
         if (pairIdx !== -1) {
             MeshTopologyUtils.walkEdgeLoop(graph, pairIdx, loop);
@@ -240,47 +282,31 @@ export const MeshTopologyUtils = {
 
     walkEdgeLoop: (graph: MeshTopology, startHeIdx: number, result: Set<string>) => {
         let currentHeIdx = startHeIdx;
-        
         while (true) {
             const he = graph.halfEdges[currentHeIdx];
-            
-            // In a quad, the "loop continuation" edge is across the face.
-            // HE -> Next -> Next.
-            // Check if face is a Quad
             const faceEdge = graph.faces[he.face].edge;
             let edgeCount = 0;
             let iter = faceEdge;
             do { edgeCount++; iter = graph.halfEdges[iter].next; } while(iter !== faceEdge);
 
-            if (edgeCount !== 4) break; // Stop at non-quads (triangles, ngons)
+            if (edgeCount !== 4) break; 
 
-            // Jump across face
             const nextAcrossIdx = graph.halfEdges[graph.halfEdges[he.next].next].id;
-            
-            // Check Valence of the vertex we just crossed (he.next.vertex)
-            // Ideally we check valence to stop at poles, but jumping across quad is the robust definition of loop
-            
-            // Add to result
             const nextKey = graph.halfEdges[nextAcrossIdx].edgeKey;
-            if (result.has(nextKey)) break; // Loop closed
+            if (result.has(nextKey)) break;
             result.add(nextKey);
 
-            // Cross boundary to continue loop
             const pairIdx = graph.halfEdges[nextAcrossIdx].pair;
-            if (pairIdx === -1) break; // Boundary reached
+            if (pairIdx === -1) break;
             
             currentHeIdx = pairIdx;
         }
     },
 
-    /**
-     * Selects an edge RING (parallel edges).
-     */
     getEdgeRing: (mesh: LogicalMesh, startEdgeKey: string): string[] => {
         if (!mesh.graph) return [startEdgeKey];
         const graph = mesh.graph;
         
-        // Resolve HE index similar to Loop
         const parts = startEdgeKey.split('-');
         let startHeIdx = graph.edgeKeyToHalfEdge.get(`${parts[0]}-${parts[1]}`);
         if (startHeIdx === undefined) startHeIdx = graph.edgeKeyToHalfEdge.get(`${parts[1]}-${parts[0]}`);
@@ -289,7 +315,6 @@ export const MeshTopologyUtils = {
         const ring = new Set<string>();
         ring.add(graph.halfEdges[startHeIdx].edgeKey);
 
-        // Walk Both Sides
         MeshTopologyUtils.walkEdgeRing(graph, startHeIdx, ring);
         const pair = graph.halfEdges[startHeIdx].pair;
         if (pair !== -1) MeshTopologyUtils.walkEdgeRing(graph, pair, ring);
@@ -301,20 +326,11 @@ export const MeshTopologyUtils = {
         let currentHeIdx = startHeIdx;
         while(true) {
             const he = graph.halfEdges[currentHeIdx];
-            
-            // In a quad, the ring neighbor is shared via the shared edges (next or prev)
-            // But visually, it's the edge connected via "next" then "pair" then "next"? 
-            // No, Ring is "side-by-side".
-            // Implementation: Go to Next Edge in face -> Cross to Pair -> That edge is parallel.
-            
             const nextHe = graph.halfEdges[he.next];
             const nextPair = nextHe.pair;
-            if (nextPair === -1) break; // Boundary
+            if (nextPair === -1) break; 
             
-            // In the adjacent face, the parallel edge is .next of the shared edge
             const parallelHeIdx = graph.halfEdges[nextPair].next;
-            
-            // Check Quad geometry
             const faceEdge = graph.faces[graph.halfEdges[parallelHeIdx].face].edge;
             let edgeCount = 0; let iter = faceEdge;
             do { edgeCount++; iter = graph.halfEdges[iter].next; } while(iter !== faceEdge);
@@ -328,31 +344,19 @@ export const MeshTopologyUtils = {
         }
     },
 
-    /**
-     * Vertex Loop (often called Vertex Ring in generic terms, usually means vertices along an edge loop)
-     * We simulate this by getting the edge loop, then collecting unique vertices.
-     */
     getVertexLoop: (mesh: LogicalMesh, startVertex: number): number[] => {
         if (!mesh.graph) return [startVertex];
-        
-        // We need a direction. Usually defined by mouse movement or selection context.
-        // Without an edge, "Vertex Loop" is ambiguous (could be any of 4 directions on a grid).
-        // Fallback: Return connected vertices (Star/Umbrella)
         const connected = new Set<number>();
         const startHe = mesh.graph.vertices[startVertex].edge;
         if (startHe === -1) return [startVertex];
 
-        // Circulate around vertex
         let curr = startHe;
         let safe = 0;
         do {
             const he = mesh.graph.halfEdges[curr];
-            // he.vertex is the TO vertex. Origin is startVertex.
             connected.add(he.vertex);
-            
-            // Move to next spoke: pair -> next
             const pair = he.pair;
-            if (pair === -1) break; // Boundary
+            if (pair === -1) break; 
             curr = mesh.graph.halfEdges[pair].next;
             safe++;
         } while (curr !== startHe && safe < 20);
@@ -360,11 +364,6 @@ export const MeshTopologyUtils = {
         return Array.from(connected);
     },
 
-    /**
-     * Calculates Soft Selection weights using Surface Distance (Geodesic).
-     * Builds an adjacency graph on-the-fly and runs Dijkstra's algorithm.
-     * Uses a MinHeap for performance O(E log V).
-     */
     computeSurfaceWeights: (
         indices: Uint16Array | Uint32Array,
         vertices: Float32Array,
@@ -375,12 +374,9 @@ export const MeshTopologyUtils = {
         const weights = new Float32Array(vertexCount).fill(0);
         if (selectedIndices.size === 0) return weights;
 
-        // 1. Build Adjacency Graph
-        // Using sparse array of arrays for adjacency to save memory vs matrix
         const adj: number[][] = new Array(vertexCount);
         for(let i=0; i<vertexCount; i++) adj[i] = [];
 
-        // Pre-allocate check to prevent heavy duplicates (simple check is enough for triangles)
         for (let i = 0; i < indices.length; i += 3) {
             const v0 = indices[i];
             const v1 = indices[i+1];
@@ -396,7 +392,6 @@ export const MeshTopologyUtils = {
             if (adj[v0].indexOf(v2) === -1) adj[v0].push(v2);
         }
 
-        // 2. Initialize Dijkstra
         const dists = new Float32Array(vertexCount).fill(Infinity);
         const pq = new MinHeap();
 
@@ -406,18 +401,12 @@ export const MeshTopologyUtils = {
             pq.push({ id: idx, dist: 0 });
         });
 
-        // 3. Process Queue
-        // Limit iterations as a failsafe for degenerate geometry/infinite loops
         let iterations = 0;
         const MAX_ITER = vertexCount * 10; 
 
         while (pq.length > 0 && iterations++ < MAX_ITER) {
             const u = pq.pop()!;
-            
-            // Stale entry check
             if (u.dist > dists[u.id]) continue;
-            
-            // Optimization: Don't propagate beyond radius
             if (u.dist > radius) continue;
 
             const neighbors = adj[u.id];
@@ -427,9 +416,7 @@ export const MeshTopologyUtils = {
                 const v = neighbors[i];
                 const vPos = { x: vertices[v*3], y: vertices[v*3+1], z: vertices[v*3+2] };
                 const edgeLen = Math.sqrt((uPos.x - vPos.x)**2 + (uPos.y - vPos.y)**2 + (uPos.z - vPos.z)**2);
-                
                 const alt = u.dist + edgeLen;
-                
                 if (alt < dists[v] && alt <= radius) {
                     dists[v] = alt;
                     pq.push({ id: v, dist: alt });
@@ -437,7 +424,6 @@ export const MeshTopologyUtils = {
             }
         }
 
-        // 4. Convert Distances to Weights
         for (let i = 0; i < vertexCount; i++) {
             if (dists[i] <= radius) {
                 if (radius <= 0.0001) {
