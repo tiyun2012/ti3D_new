@@ -78,8 +78,8 @@ export class Engine {
     public currentHeight: number = 0;
 
     private accumulator: number = 0;
-    private readonly fixedTimeStep: number = 1 / 60; 
-    private readonly maxFrameTime: number = 0.1;     
+    private fixedTimeStep: number = 1 / 60; 
+    private maxFrameTime: number = 0.1;     
 
     constructor() {
         this.ecs = new SoAEntitySystem();
@@ -438,9 +438,30 @@ export class Engine {
     }
 
     // --- LOOP SELECTION API ---
+    computeVertexLoop(entityId: string, v1: number, v2: number): number[] {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return [];
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
+        if (!asset || !asset.topology) return [];
+
+        const topo = asset.topology;
+        const key = [v1, v2].sort((a,b)=>a-b).join('-');
+        
+        // Ensure the two vertices are actually connected
+        if (topo.graph && topo.graph.edgeKeyToHalfEdge.has(key)) {
+            return MeshTopologyUtils.getVertexLoop(topo, v1, v2);
+        } else {
+            consoleService.warn('Vertices are not connected by a direct edge');
+            return [];
+        }
+    }
+
     selectLoop(mode: MeshComponentMode) {
         if (this.selectedIndices.size === 0) return;
         const idx = Array.from(this.selectedIndices)[0];
+        const entityId = this.ecs.store.ids[idx];
         const meshIntId = this.ecs.store.meshType[idx];
         const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
         const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
@@ -467,16 +488,12 @@ export class Engine {
                 consoleService.warn('Select at least 2 vertices to define loop direction');
                 return;
             }
+            // Use insertion order (last two added)
             const v1 = verts[verts.length - 2];
             const v2 = verts[verts.length - 1];
-            // Validate connection
-            const key = [v1, v2].sort((a,b)=>a-b).join('-');
-            if (topo.graph && topo.graph.edgeKeyToHalfEdge.has(key)) {
-                const loop = MeshTopologyUtils.getVertexLoop(topo, v1, v2);
-                loop.forEach(v => this.subSelection.vertexIds.add(v));
-            } else {
-                consoleService.warn('Selected vertices are not connected');
-            }
+            
+            const loop = this.computeVertexLoop(entityId, v1, v2);
+            loop.forEach(v => this.subSelection.vertexIds.add(v));
         } 
         else if (mode === 'FACE') {
             // Need 2 adjacent faces to define strip direction
