@@ -98,6 +98,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
             const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
             
+            // Prevent NaN propagation
+            if (isNaN(eyeX) || isNaN(eyeY) || isNaN(eyeZ)) {
+                console.error("Invalid Camera State Detected - Resetting");
+                setCamera({ theta: 0.5, phi: 1.2, radius: 10, target: { x: 0, y: 0, z: 0 } });
+                return;
+            }
+
             const aspect = containerRef.current ? (containerRef.current.clientWidth / containerRef.current.clientHeight) : 1;
             const proj = Mat4Utils.create();
             Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0, proj);
@@ -128,6 +135,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
             const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
             
+            if (isNaN(eyeX)) return; // Skip frame if bad math
+
             const width = containerRef.current?.clientWidth || 1;
             const height = containerRef.current?.clientHeight || 1;
             const aspect = width / height;
@@ -171,7 +180,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => cancelAnimationFrame(frameId);
     }, [camera, softSelectionEnabled, softSelectionRadius]); 
 
-    // Focus Camera Logic (Enhanced for Multi-Selection and Component Modes)
+    // Focus Camera Logic (Enhanced with Robustness)
     const handleFocus = useCallback(() => {
         // 1. Component Mode Focus
         if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
@@ -193,43 +202,62 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             let count = 0;
 
             const addVertex = (vIdx: number) => {
+                // Safety: Bounds Check
+                if (vIdx < 0 || vIdx * 3 + 2 >= vertices.length) return;
+
                 const x = vertices[vIdx*3];
                 const y = vertices[vIdx*3+1];
                 const z = vertices[vIdx*3+2];
+                
+                // Safety: NaN Check
+                if (isNaN(x) || isNaN(y) || isNaN(z)) return;
+
                 // Transform to world
                 const wx = worldMat[0]*x + worldMat[4]*y + worldMat[8]*z + worldMat[12];
                 const wy = worldMat[1]*x + worldMat[5]*y + worldMat[9]*z + worldMat[13];
                 const wz = worldMat[2]*x + worldMat[6]*y + worldMat[10]*z + worldMat[14];
-                cx += wx; cy += wy; cz += wz;
-                count++;
+                
+                // Safety: Result Check
+                if (!isNaN(wx) && !isNaN(wy) && !isNaN(wz)) {
+                    cx += wx; cy += wy; cz += wz;
+                    count++;
+                }
             };
 
             if (meshComponentMode === 'VERTEX') {
                 engineInstance.subSelection.vertexIds.forEach(v => addVertex(v));
             } else if (meshComponentMode === 'EDGE') {
                 engineInstance.subSelection.edgeIds.forEach(key => {
-                    const [v1, v2] = key.split('-').map(Number);
-                    addVertex(v1); addVertex(v2);
+                    const parts = key.split('-').map(Number);
+                    if (parts.length === 2) {
+                        addVertex(parts[0]); addVertex(parts[1]);
+                    }
                 });
             } else if (meshComponentMode === 'FACE') {
                 const topo = asset.topology;
                 engineInstance.subSelection.faceIds.forEach(fIdx => {
-                    if (topo) {
+                    if (topo && topo.faces[fIdx]) {
                         topo.faces[fIdx].forEach(v => addVertex(v));
                     } else {
                         // Fallback
                         const idxs = asset.geometry.indices;
-                        addVertex(idxs[fIdx*3]);
-                        addVertex(idxs[fIdx*3+1]);
-                        addVertex(idxs[fIdx*3+2]);
+                        if (idxs && fIdx * 3 + 2 < idxs.length) {
+                            addVertex(idxs[fIdx*3]);
+                            addVertex(idxs[fIdx*3+1]);
+                            addVertex(idxs[fIdx*3+2]);
+                        }
                     }
                 });
             }
 
             if (count > 0) {
+                const tx = cx/count;
+                const ty = cy/count;
+                const tz = cz/count;
+                
                 setCamera(prev => ({ 
                     ...prev, 
-                    target: { x: cx/count, y: cy/count, z: cz/count },
+                    target: { x: tx, y: ty, z: tz },
                     radius: Math.max(1.5, prev.radius * 0.4) // Closer zoom for components
                 }));
                 return;
@@ -243,8 +271,10 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             
             selectedIds.forEach(id => {
                 const pos = sceneGraph.getWorldPosition(id);
-                cx += pos.x; cy += pos.y; cz += pos.z;
-                count++;
+                if (!isNaN(pos.x)) {
+                    cx += pos.x; cy += pos.y; cz += pos.z;
+                    count++;
+                }
             });
             
             if (count > 0) {
