@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
+import React, { useRef, useEffect, useState, useLayoutEffect, useContext, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Entity, ToolType, MeshComponentMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -171,15 +171,45 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => cancelAnimationFrame(frameId);
     }, [camera, softSelectionEnabled, softSelectionRadius]); 
 
-    const handleFocus = () => {
+    // Focus Camera Logic (Enhanced for Multi-Selection)
+    const handleFocus = useCallback(() => {
         if (selectedIds.length > 0) {
-            const id = selectedIds[0];
-            const pos = sceneGraph.getWorldPosition(id);
-            setCamera(prev => ({ ...prev, target: pos, radius: 3.0 })); // Zoom in
+            let cx = 0, cy = 0, cz = 0;
+            let count = 0;
+            
+            selectedIds.forEach(id => {
+                const pos = sceneGraph.getWorldPosition(id);
+                cx += pos.x; cy += pos.y; cz += pos.z;
+                count++;
+            });
+            
+            if (count > 0) {
+                const target = { x: cx / count, y: cy / count, z: cz / count };
+                setCamera(prev => ({ 
+                    ...prev, 
+                    target, 
+                    radius: Math.max(3.0, prev.radius * 0.5) // Zoom somewhat but keep distance reasonable
+                }));
+            }
         } else {
             setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
         }
-    };
+    }, [selectedIds, sceneGraph]);
+
+    // Keyboard 'F' for Focus
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            const active = document.activeElement;
+            const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
+            if (isInput) return;
+
+            if (e.key.toLowerCase() === 'f') {
+                handleFocus();
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [handleFocus]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (pieMenuState && e.button !== 2) setPieMenuState(null);
