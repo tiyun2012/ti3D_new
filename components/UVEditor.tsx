@@ -175,17 +175,10 @@ export const UVEditor: React.FC = () => {
                     if (newSet.has(closest)) newSet.delete(closest); else newSet.add(closest);
                     setSelectedIndices(newSet);
                 } else if (e.altKey || (e.ctrlKey && closest !== -1)) {
-                    // Loop Selection
-                    if (editingAsset?.topology) {
-                        const topology = editingAsset.topology;
-                        // For vertex loop, we need a direction. 
-                        // UV Editor simple logic: Just select connected vertices for now as loop needs edges.
-                        // Or if we have a previous selection, get loop between them.
-                        const loop = MeshTopologyUtils.getVertexLoop(topology, closest);
-                        const newSet = new Set<number>();
-                        loop.forEach(v => newSet.add(v));
-                        setSelectedIndices(newSet);
-                    }
+                    // Loop Selection - [REMOVED FOR NOW: API Changed to require 2 vertices]
+                    // Standard fallback: select connected shell? Or just single vertex.
+                    setSelectedVertex(closest);
+                    setSelectedIndices(new Set([closest]));
                 } else {
                     setSelectedVertex(closest);
                     setSelectedIndices(new Set([closest]));

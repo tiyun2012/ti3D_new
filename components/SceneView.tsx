@@ -252,12 +252,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                                 const loop = MeshTopologyUtils.getFaceLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
                                 loop.forEach(f => engineInstance.subSelection.faceIds.add(f));
                             } else if (meshComponentMode === 'VERTEX') {
-                                // Vertex loop: Get edge loop through the closest edge to click, extract unique vertices
-                                const loop = MeshTopologyUtils.getEdgeLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
-                                loop.forEach(edge => {
-                                    engineInstance.subSelection.vertexIds.add(edge[0]);
-                                    engineInstance.subSelection.vertexIds.add(edge[1]);
-                                });
+                                // Vertex loop: Use the closest edge to define direction and extract vertices
+                                const loop = MeshTopologyUtils.getVertexLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
+                                loop.forEach(v => engineInstance.subSelection.vertexIds.add(v));
                             }
                         }
                     } else {

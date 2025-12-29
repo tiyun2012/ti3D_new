@@ -227,24 +227,14 @@ export const MeshTopologyUtils = {
     },
 
     /**
-     * Get Vertex Loop: For a single vertex, this is ambiguous without direction.
-     * Returns the 1-ring neighborhood (connected vertices) for now.
+     * Get Vertex Loop: Vertices along the edge loop defined by v1-v2.
+     * Takes 2 vertices to define the initial direction.
      */
-    getVertexLoop: (mesh: LogicalMesh, vertexIndex: number): number[] => {
-        const neighbors = new Set<number>();
-        neighbors.add(vertexIndex);
-        
-        const faces = mesh.vertexToFaces.get(vertexIndex) || [];
-        faces.forEach(fIdx => {
-            const face = mesh.faces[fIdx];
-            const idx = face.indexOf(vertexIndex);
-            if (idx !== -1) {
-                neighbors.add(face[(idx + 1) % face.length]);
-                neighbors.add(face[(idx + face.length - 1) % face.length]);
-            }
-        });
-        
-        return Array.from(neighbors);
+    getVertexLoop: (mesh: LogicalMesh, v1: number, v2: number): number[] => {
+        const edgeLoop = MeshTopologyUtils.getEdgeLoop(mesh, v1, v2);
+        const vertices = new Set<number>();
+        edgeLoop.forEach(e => { vertices.add(e[0]); vertices.add(e[1]); });
+        return Array.from(vertices);
     },
 
     // --- Internal Helpers ---
