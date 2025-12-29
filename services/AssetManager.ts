@@ -60,11 +60,11 @@ class AssetManagerService {
     rigIntToUuid = new Map<number, string>();
     rigUuidToInt = new Map<string, number>();
 
-    private nextMeshIntId = 100; 
-    private nextMatIntId = 1; 
-    private nextPhysMatIntId = 1;
-    private nextRigIntId = 1;
-    private nextTextureLayerId = 4; 
+    nextMeshIntId = 100; 
+    nextMatIntId = 1; 
+    nextPhysMatIntId = 1;
+    nextRigIntId = 1;
+    nextTextureLayerId = 4; 
 
     constructor() {
         this.registerDefaultAssets();
@@ -74,7 +74,7 @@ class AssetManagerService {
         this.createRig('Locomotion IK Logic', RIG_TEMPLATES[0]);
     }
 
-    private createDefaultPhysicsMaterials() {
+    createDefaultPhysicsMaterials() {
         this.createPhysicsMaterial('Concrete', { staticFriction: 0.8, dynamicFriction: 0.7, bounciness: 0.1, density: 2.4 });
         this.createPhysicsMaterial('Rubber', { staticFriction: 0.9, dynamicFriction: 0.8, bounciness: 0.8, density: 1.1 });
         this.createPhysicsMaterial('Ice', { staticFriction: 0.05, dynamicFriction: 0.03, bounciness: 0.1, density: 0.9 });
@@ -289,13 +289,23 @@ class AssetManagerService {
                 const loader = new FBXLoader();
                 const group = loader.parse(content, '');
                 
-                // Extract first mesh
+                // Extract first mesh - Traverse deep to find the first valid mesh
                 let targetMesh: THREE.SkinnedMesh | THREE.Mesh | null = null;
                 group.traverse((child) => {
                     if (!targetMesh && (child as THREE.Mesh).isMesh) {
-                        targetMesh = child as THREE.Mesh;
+                        // Prefer SkinnedMesh if type is SKELETAL_MESH
+                        if (type === 'SKELETAL_MESH') {
+                            if ((child as THREE.SkinnedMesh).isSkinnedMesh) targetMesh = child as THREE.Mesh;
+                        } else {
+                            targetMesh = child as THREE.Mesh;
+                        }
                     }
                 });
+                
+                // Fallback: If we wanted skeletal but only found static, take static
+                if (!targetMesh && type === 'SKELETAL_MESH') {
+                     group.traverse((child) => { if (!targetMesh && (child as THREE.Mesh).isMesh) targetMesh = child as THREE.Mesh; });
+                }
 
                 if (targetMesh) {
                     const geo = targetMesh.geometry;
@@ -305,7 +315,7 @@ class AssetManagerService {
                     const positions = geo.attributes.position.array;
                     const normals = geo.attributes.normal ? geo.attributes.normal.array : new Float32Array(positions.length);
                     const uvs = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((positions.length / 3) * 2);
-                    const indices = geo.index ? Array.from(geo.index.array) : [];
+                    const indices: number[] = geo.index ? Array.from(geo.index.array) as number[] : [];
                     
                     if (indices.length === 0) {
                         // Generate indices if non-indexed
@@ -337,25 +347,25 @@ class AssetManagerService {
                                 inverseBindPose: new Float32Array(inverseBind.elements)
                             });
                         });
-                        
-                        // Extract Animations (if any)
-                        if (group.animations) {
-                            animationData = group.animations.map(clip => {
-                                const tracks = clip.tracks.map(t => {
-                                    return {
-                                        name: t.name,
-                                        type: t.name.endsWith('.position') ? 'position' : (t.name.endsWith('.quaternion') ? 'rotation' : 'scale'),
-                                        times: new Float32Array(t.times as any),
-                                        values: new Float32Array(t.values as any)
-                                    } as any;
-                                });
+                    }
+                    
+                    // Extract Animations (on Group or Mesh)
+                    if (group.animations && group.animations.length > 0) {
+                        animationData = group.animations.map(clip => {
+                            const tracks = clip.tracks.map(t => {
                                 return {
-                                    name: clip.name,
-                                    duration: clip.duration,
-                                    tracks
-                                };
+                                    name: t.name,
+                                    type: t.name.endsWith('.position') ? 'position' : (t.name.endsWith('.quaternion') ? 'rotation' : 'scale'),
+                                    times: new Float32Array(t.times as any),
+                                    values: new Float32Array(t.values as any)
+                                } as any;
                             });
-                        }
+                            return {
+                                name: clip.name,
+                                duration: clip.duration,
+                                tracks
+                            };
+                        });
                     }
 
                     // Build Logical Mesh (Simple Triangle Soup to Faces)
@@ -443,12 +453,12 @@ class AssetManagerService {
              return skelAsset;
         }
 
-        const staticAsset: StaticMeshAsset = { ...assetBase, type: 'MESH' };
-        this.registerAsset(staticAsset);
-        return staticAsset;
+        const meshAsset: StaticMeshAsset = { ...assetBase, type: 'MESH' };
+        this.registerAsset(meshAsset);
+        return meshAsset;
     }
 
-    private parseOBJ(text: string, scale: number) {
+    parseOBJ(text: string, scale: number) {
         const positions: number[][] = [];
         const normals: number[][] = [];
         const uvs: number[][] = [];
@@ -509,7 +519,7 @@ class AssetManagerService {
         return { v: finalV, n: finalN, u: finalU, idx: finalIdx, faces: logicalFaces, triToFace };
     }
 
-    private generateMissingNormals(v: number[], n: number[], idx: number[]) {
+    generateMissingNormals(v: number[], n: number[], idx: number[]) {
         if (v.length > 0) {
             for (let i = 0; i < idx.length; i += 3) {
                 const i1 = idx[i] * 3, i2 = idx[i+1] * 3, i3 = idx[i+2] * 3;
@@ -526,7 +536,7 @@ class AssetManagerService {
         }
     }
 
-    private createPrimitive(name: string, generator: () => any): StaticMeshAsset {
+    createPrimitive(name: string, generator: () => any): StaticMeshAsset {
         const data = generator();
         const v2f = new Map<number, number[]>();
         data.faces?.forEach((f: number[], i: number) => f.forEach(v => { if(!v2f.has(v)) v2f.set(v, []); v2f.get(v)!.push(i); }));
@@ -558,7 +568,7 @@ class AssetManagerService {
         };
     }
 
-    private registerDefaultAssets() {
+    registerDefaultAssets() {
         // Register Primitives using modular procedural generation
         this.registerAsset(this.createPrimitive('Cube', () => ProceduralGeneration.createCube()), MESH_TYPES['Cube']);
         this.registerAsset(this.createPrimitive('Sphere', () => ProceduralGeneration.createSphere(24)), MESH_TYPES['Sphere']);

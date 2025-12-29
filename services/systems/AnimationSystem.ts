@@ -68,9 +68,6 @@ export class AnimationSystem {
             const boneMatrices = new Float32Array(skelAsset.skeleton.bones.length * 16);
             const globalMatrices = new Float32Array(skelAsset.skeleton.bones.length * 16);
             
-            // 1. Sample Local TRS
-            const localTRS: Float32Array[] = [];
-            
             skelAsset.skeleton.bones.forEach((bone, bIdx) => {
                 const safeName = bone.name.replace(':', '_').replace('.', '_'); // Sanitize
                 
@@ -90,10 +87,6 @@ export class AnimationSystem {
                     {x: s[0], y: s[1], z: s[2]},
                     m
                 );
-                
-                // If no track found, use Bind Pose relative to parent? 
-                // FBXLoader binds are world space usually. 
-                // Simplification: If no track, identity (assuming animation covers all relevant bones or we need ref pose)
                 
                 const globalM = Mat4Utils.create();
                 if (bone.parentIndex !== -1) {
