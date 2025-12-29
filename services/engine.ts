@@ -268,7 +268,9 @@ export class Engine {
         this.meshSystem.updateSoftSelectionBuffer(meshIntId, weights);
 
         // If dragging and triggered by radius change, update deformation immediately
-        if (triggerDeformation && this.vertexSnapshot && this.activeDeformationEntity) {
+        // Only applicable for FIXED mode where we can re-apply delta to snapshot.
+        // In DYNAMIC mode, we can't re-play the history on radius change easily.
+        if (triggerDeformation && this.vertexSnapshot && this.activeDeformationEntity && this.softSelectionMode === 'FIXED') {
             this.applyDeformation(this.activeDeformationEntity);
         }
     }
@@ -304,15 +306,58 @@ export class Engine {
         const invWorld = Mat4Utils.create();
         Mat4Utils.invert(worldMat, invWorld);
         
-        const localDelta = Vec3Utils.transformMat4Normal(totalWorldDelta, invWorld, {x:0,y:0,z:0});
+        // Calculate the Total Local Delta (from start of drag)
+        const localTotalDelta = Vec3Utils.transformMat4Normal(totalWorldDelta, invWorld, {x:0,y:0,z:0});
         
-        this.currentDeformationDelta = localDelta;
-        this.applyDeformation(entityId);
-
-        // Dynamic Mode: Update weights continuously based on deformed geometry (Swimming Effect)
         if (this.softSelectionEnabled && this.softSelectionMode === 'DYNAMIC') {
+            // Dynamic Mode: Incremental Update
+            // 1. Calculate the delta for *this frame only*
+            const frameDelta = Vec3Utils.subtract(localTotalDelta, this.currentDeformationDelta, {x:0,y:0,z:0});
+            
+            // 2. Apply this small delta to current vertices using CURRENT weights
+            this.applyIncrementalDeformation(entityId, frameDelta);
+            
+            // 3. Recalculate weights based on the NEW deformed geometry for the next frame
             this.recalculateSoftSelection(false); 
+        } else {
+            // Fixed Mode: Absolute Update
+            // Apply Total Delta to Snapshot
+            this.currentDeformationDelta = localTotalDelta; // Store for consistency
+            this.applyDeformation(entityId);
         }
+        
+        // Update tracker for next frame
+        this.currentDeformationDelta = localTotalDelta;
+    }
+
+    private applyIncrementalDeformation(entityId: string, localDelta: Vector3) {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return;
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
+        if (!asset) return;
+
+        const verts = asset.geometry.vertices;
+        const weights = this.softSelectionWeights.get(meshIntId);
+
+        if (this.softSelectionEnabled && weights) {
+            for (let i = 0; i < weights.length; i++) {
+                const w = weights[i];
+                if (w > 0.0001) {
+                    verts[i*3] += localDelta.x * w;
+                    verts[i*3+1] += localDelta.y * w;
+                    verts[i*3+2] += localDelta.z * w;
+                }
+            }
+        } else {
+            for (const vIdx of this.subSelection.vertexIds) {
+                verts[vIdx*3] += localDelta.x;
+                verts[vIdx*3+1] += localDelta.y;
+                verts[vIdx*3+2] += localDelta.z;
+            }
+        }
+        this.registerAssetWithGPU(asset);
     }
 
     private applyDeformation(entityId: string) {
