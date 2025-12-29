@@ -20,6 +20,7 @@ import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
 import { UVEditor } from './components/UVEditor';
 import { Timeline } from './components/Timeline';
 import { SkinningEditor } from './components/SkinningEditor';
+import { ToolOptionsPanel } from './components/ToolOptionsPanel'; // New Import
 
 // --- Widget Wrappers ---
 
@@ -90,6 +91,7 @@ const SceneWrapper = () => {
 
 const ProjectWrapper = () => <ProjectPanel />;
 const ConsoleWrapper = () => <ConsolePanel />;
+const ToolOptionsWrapper = () => <ToolOptionsPanel />; // New Wrapper
 
 const StatsContent = () => {
     const [metrics, setMetrics] = useState(engineInstance.metrics);
@@ -139,6 +141,10 @@ const EditorInterface: React.FC = () => {
             width: 320, height: 600, initialPosition: { x: window.innerWidth - 340, y: 100 }
         });
         wm.registerWindow({
+            id: 'tool_options', title: 'Tool Options', icon: 'Tool', content: <ToolOptionsWrapper />, 
+            width: 280, height: 350, initialPosition: { x: window.innerWidth - 640, y: 100 }
+        });
+        wm.registerWindow({
             id: 'project', title: 'Project Browser', icon: 'FolderOpen', content: <ProjectWrapper />, 
             width: 600, height: 350, initialPosition: { x: 380, y: window.innerHeight - 370 }
         });
@@ -174,6 +180,7 @@ const EditorInterface: React.FC = () => {
         if (!initialized.current) {
             wm.openWindow('hierarchy');
             wm.openWindow('inspector');
+            wm.openWindow('tool_options'); // Open by default
             wm.openWindow('project');
             // wm.openWindow('timeline'); // Disabled by default to save space
             consoleService.init(); // Initialize global error catching
@@ -247,6 +254,10 @@ const App: React.FC = () => {
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
     const [meshComponentMode, setMeshComponentMode] = useState<MeshComponentMode>('OBJECT');
     
+    // Soft Selection State
+    const [softSelectionEnabled, setSoftSelectionEnabled] = useState(false);
+    const [softSelectionRadius, setSoftSelectionRadius] = useState(2.0);
+
     // New State for Simulation
     const [simulationMode, setSimulationMode] = useState<SimulationMode>('STOPPED');
 
@@ -303,6 +314,10 @@ const App: React.FC = () => {
         setSelectionType,
         meshComponentMode,
         setMeshComponentMode,
+        softSelectionEnabled,
+        setSoftSelectionEnabled,
+        softSelectionRadius,
+        setSoftSelectionRadius,
         tool,
         setTool,
         transformSpace,
@@ -318,7 +333,7 @@ const App: React.FC = () => {
     }), [
         entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
         selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
-        snapSettings, engineInstance.isPlaying, simulationMode
+        snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius
     ]);
 
     return (

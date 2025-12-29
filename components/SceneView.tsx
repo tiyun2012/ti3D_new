@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { Entity, ToolType, MeshComponentMode } from '../types';
@@ -19,7 +20,11 @@ interface SceneViewProps {
 }
 
 export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSelect, selectedIds, tool }) => {
-    const { meshComponentMode, setMeshComponentMode } = useContext(EditorContext)!;
+    const { 
+        meshComponentMode, setMeshComponentMode, 
+        softSelectionEnabled, setSoftSelectionEnabled,
+        softSelectionRadius, setSoftSelectionRadius
+    } = useContext(EditorContext)!;
     
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,6 +33,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
     const [renderMode, setRenderMode] = useState(0);
     const [pieMenuState, setPieMenuState] = useState<{ x: number, y: number, entityId?: string } | null>(null);
+    const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
+    const brushStartPos = useRef({ x: 0, y: 0, startRadius: 0 });
     
     // Camera State (Mirroring Engine for UI, but engine holds truth)
     const [camera, setCamera] = useState({ theta: 0.5, phi: 1.2, radius: 10, target: { x: 0, y: 0, z: 0 } });
@@ -125,12 +132,36 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             
             engineInstance.updateCamera(vp, {x:eyeX, y:eyeY, z:eyeZ}, width, height);
             
+            // Visualizer for Soft Selection Radius
+            if (engineInstance.meshComponentMode === 'VERTEX' && engineInstance.subSelection.vertexIds.size > 0 && softSelectionEnabled) {
+                // Find center of selection
+                const entityId = engineInstance.ecs.store.ids[Array.from(engineInstance.selectedIndices)[0]];
+                if (entityId) {
+                    const worldPos = engineInstance.sceneGraph.getWorldPosition(entityId); // Approximate center
+                    // Draw Sphere
+                    // Simple ring drawing logic
+                    const segments = 32;
+                    const rad = softSelectionRadius;
+                    const prev = { x: worldPos.x + rad, y: worldPos.y, z: worldPos.z };
+                    for(let i=1; i<=segments; i++) {
+                        const th = (i/segments) * Math.PI * 2;
+                        const cur = { 
+                            x: worldPos.x + Math.cos(th) * rad, 
+                            y: worldPos.y, 
+                            z: worldPos.z + Math.sin(th) * rad 
+                        };
+                        engineInstance.debugRenderer.drawLine(prev, cur, { r: 1, g: 1, b: 0 }); // Yellow Ring
+                        prev.x = cur.x; prev.y = cur.y; prev.z = cur.z;
+                    }
+                }
+            }
+
             engineInstance.tick(dt);
             frameId = requestAnimationFrame(loop);
         };
         frameId = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(frameId);
-    }, [camera]); 
+    }, [camera, softSelectionEnabled, softSelectionRadius]); 
 
     const handleFocus = () => {
         if (selectedIds.length > 0) {
@@ -151,8 +182,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const mx = e.clientX - rect.left; 
         const my = e.clientY - rect.top;
 
+        // 0. Soft Selection Radius Adjustment (Alt + B + Left Drag)
+        if (e.altKey && e.button === 0 && meshComponentMode === 'VERTEX') {
+            // Check for B key (Requires window listener, but we can assume user holds B based on logic below or just use Alt+Drag if we simplify)
+            // But user asked for Alt+B specifically. 
+            // We'll handle B key via global listener, but trigger drag here.
+            // Simplified: If just Alt+Click in vertex mode, maybe trigger camera? 
+            // We need to know if B is pressed.
+        }
+
         // 1. GIZMO CHECK
-        if (e.button === 0) {
+        if (e.button === 0 && !isAdjustingBrush) {
             gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
             if (gizmoSystem.activeAxis) return; 
         }
@@ -170,7 +210,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         }
 
         // 3. Selection
-        if (!e.altKey && e.button === 0) {
+        if (!e.altKey && e.button === 0 && !isAdjustingBrush) {
             engineInstance.isInputDown = true;
             
             let componentHit = false;
@@ -290,6 +330,15 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
 
+        if (isAdjustingBrush) {
+            const dx = e.clientX - brushStartPos.current.x;
+            // Drag Right increases, Left decreases
+            const sensitivity = 0.05;
+            const newRad = Math.max(0.1, brushStartPos.current.startRadius + dx * sensitivity);
+            setSoftSelectionRadius(newRad);
+            return; // Consume event
+        }
+
         gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
 
         if (meshComponentMode === 'VERTEX') {
@@ -334,7 +383,51 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             gizmoSystem.update(0, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, false, true);
         }
         setDragState(null);
+        setIsAdjustingBrush(false);
     };
+
+    // Global Key Listener for Alt+B interaction
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() === 'b' && e.altKey) {
+                if (meshComponentMode === 'VERTEX') {
+                    // Activate Soft Selection if off
+                    if (!softSelectionEnabled) setSoftSelectionEnabled(true);
+                }
+            }
+        };
+        const handleMouseDown = (e: MouseEvent) => {
+            if (e.altKey && (e.buttons & 1) && meshComponentMode === 'VERTEX') {
+               // Check if B is held? Or just Alt+Drag is mostly camera.
+               // Let's rely on a global "is B down" tracker if needed, or simplified check.
+               // For now, let's assume the user holds B then clicks.
+               // Browsers don't easily give "isKeyBDown" on mouse event without tracking.
+            }
+        };
+        
+        // Track 'B' key state
+        let bDown = false;
+        const onDown = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = true; };
+        const onUp = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = false; };
+        
+        const onWindowMouseDown = (e: MouseEvent) => {
+            if (bDown && e.altKey && e.button === 0) {
+                e.preventDefault(); e.stopPropagation();
+                setIsAdjustingBrush(true);
+                brushStartPos.current = { x: e.clientX, y: e.clientY, startRadius: softSelectionRadius };
+            }
+        };
+
+        window.addEventListener('keydown', onDown);
+        window.addEventListener('keyup', onUp);
+        window.addEventListener('mousedown', onWindowMouseDown); // Capture before SceneView logic?
+        
+        return () => {
+            window.removeEventListener('keydown', onDown);
+            window.removeEventListener('keyup', onUp);
+            window.removeEventListener('mousedown', onWindowMouseDown);
+        };
+    }, [meshComponentMode, softSelectionRadius, setSoftSelectionEnabled]);
 
     useEffect(() => {
         window.addEventListener('mousemove', handleGlobalMouseMove);
@@ -343,7 +436,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
         };
-    }, [dragState, selectionBox, meshComponentMode]);
+    }, [dragState, selectionBox, meshComponentMode, isAdjustingBrush]);
 
     const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; };
     const handleDrop = (e: React.DragEvent) => {
@@ -381,7 +474,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
     return (
         <div ref={containerRef} 
-             className={`w-full h-full bg-[#151515] relative overflow-hidden select-none group/scene ${dragState ? (dragState.mode === 'PAN' ? 'cursor-move' : 'cursor-grabbing') : 'cursor-default'}`} 
+             className={`w-full h-full bg-[#151515] relative overflow-hidden select-none group/scene ${isAdjustingBrush ? 'cursor-ew-resize' : (dragState ? (dragState.mode === 'PAN' ? 'cursor-move' : 'cursor-grabbing') : 'cursor-default')}`} 
              onMouseDown={handleMouseDown} 
              onMouseUp={handleMouseUp} 
              onDragOver={handleDragOver}
@@ -428,9 +521,19 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     )}
                 </div>
             </div>
-            <div className="absolute bottom-2 right-2 text-[10px] text-text-secondary bg-black/40 px-2 py-0.5 rounded backdrop-blur border border-white/5 z-20">
-                Cam: {camera.target.x.toFixed(1)}, {camera.target.y.toFixed(1)}, {camera.target.z.toFixed(1)}
+            
+            <div className="absolute bottom-2 right-2 text-[10px] text-text-secondary bg-black/40 px-2 py-0.5 rounded backdrop-blur border border-white/5 z-20 flex flex-col items-end">
+                <span>Cam: {camera.target.x.toFixed(1)}, {camera.target.y.toFixed(1)}, {camera.target.z.toFixed(1)}</span>
+                {softSelectionEnabled && meshComponentMode === 'VERTEX' && (
+                    <span className="text-accent">Soft Sel Radius: {softSelectionRadius.toFixed(1)}</span>
+                )}
             </div>
+
+            {isAdjustingBrush && (
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white font-bold text-2xl drop-shadow-md z-50 pointer-events-none">
+                    Radius: {softSelectionRadius.toFixed(2)}
+                </div>
+            )}
 
             {pieMenuState && createPortal(
                 <PieMenu 

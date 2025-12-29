@@ -1,0 +1,230 @@
+
+import React, { useContext } from 'react';
+import { EditorContext } from '../contexts/EditorContext';
+import { Icon } from './Icon';
+import { TransformSpace } from '../types';
+
+export const ToolOptionsPanel: React.FC = () => {
+    const { 
+        tool,
+        transformSpace, setTransformSpace,
+        meshComponentMode, 
+        softSelectionEnabled, setSoftSelectionEnabled,
+        softSelectionRadius, setSoftSelectionRadius,
+        snapSettings, setSnapSettings
+    } = useContext(EditorContext)!;
+
+    return (
+        <div className="h-full bg-panel flex flex-col font-sans">
+            {/* Header */}
+            <div className="p-2 bg-panel-header border-b border-black/20 flex items-center justify-between">
+                <span className="text-xs font-bold text-text-primary uppercase tracking-wider">
+                    {tool} Tool
+                </span>
+                <div className="px-2 py-0.5 rounded bg-white/10 text-[10px] text-text-secondary">
+                    {meshComponentMode === 'OBJECT' ? 'Global' : 'Component'}
+                </div>
+            </div>
+
+            <div className="p-4 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+                
+                {/* --- ACTIVE TOOL SETTINGS --- */}
+                <div className="space-y-2 pb-2 border-b border-white/5">
+                    {tool === 'SELECT' && (
+                        <div className="text-[10px] text-text-secondary italic">
+                            Select objects in the scene. Hold Shift to add to selection.
+                        </div>
+                    )}
+
+                    {tool === 'MOVE' && (
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider">
+                                <Icon name="Move" size={12} /> Move Settings
+                            </div>
+                            <div className="bg-black/20 p-2 rounded border border-white/5">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-xs text-text-primary">Coordinate Space</span>
+                                </div>
+                                <div className="flex bg-black/40 rounded p-0.5 border border-white/5">
+                                    <button 
+                                        onClick={() => setTransformSpace('World')} 
+                                        className={`flex-1 py-1 text-[10px] rounded transition-colors ${transformSpace === 'World' ? 'bg-white/20 text-white font-bold' : 'text-text-secondary hover:text-white'}`}
+                                    >
+                                        World
+                                    </button>
+                                    <button 
+                                        onClick={() => setTransformSpace('Local')} 
+                                        className={`flex-1 py-1 text-[10px] rounded transition-colors ${transformSpace === 'Local' ? 'bg-white/20 text-white font-bold' : 'text-text-secondary hover:text-white'}`}
+                                    >
+                                        Local
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {tool === 'ROTATE' && (
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider">
+                                <Icon name="RotateCw" size={12} /> Rotate Settings
+                            </div>
+                            <div className="bg-black/20 p-2 rounded border border-white/5">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-xs text-text-primary">Coordinate Space</span>
+                                </div>
+                                <div className="flex bg-black/40 rounded p-0.5 border border-white/5">
+                                    <button 
+                                        onClick={() => setTransformSpace('World')} 
+                                        className={`flex-1 py-1 text-[10px] rounded transition-colors ${transformSpace === 'World' ? 'bg-white/20 text-white font-bold' : 'text-text-secondary hover:text-white'}`}
+                                    >
+                                        World
+                                    </button>
+                                    <button 
+                                        onClick={() => setTransformSpace('Local')} 
+                                        className={`flex-1 py-1 text-[10px] rounded transition-colors ${transformSpace === 'Local' ? 'bg-white/20 text-white font-bold' : 'text-text-secondary hover:text-white'}`}
+                                    >
+                                        Local
+                                    </button>
+                                </div>
+                                
+                                {/* Placeholder for visual feedback */}
+                                <div className="mt-2 text-[10px] text-text-secondary opacity-50 flex items-center gap-2 p-1 border border-dashed border-white/10 rounded">
+                                    <Icon name="CircleDashed" size={10} />
+                                    <span>Gimbal Lock Visualizer (Coming Soon)</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {tool === 'SCALE' && (
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider">
+                                <Icon name="Maximize" size={12} /> Scale Settings
+                            </div>
+                            <div className="bg-black/20 p-2 rounded border border-white/5 text-[10px] text-text-secondary">
+                                <div className="flex items-center justify-between opacity-50 cursor-not-allowed">
+                                    <span>Uniform Scale</span>
+                                    <input type="checkbox" checked disabled />
+                                </div>
+                                <div className="mt-2 text-[9px] opacity-40">
+                                    Scale tools are currently always local.
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* --- GLOBAL SNAPPING --- */}
+                <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider">
+                        <Icon name="Magnet" size={12} /> Snapping
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 bg-black/20 p-2 rounded border border-white/5">
+                        <label className="flex items-center gap-2 text-xs cursor-pointer group">
+                            <input 
+                                type="checkbox" 
+                                checked={snapSettings.active} 
+                                onChange={e => setSnapSettings({...snapSettings, active: e.target.checked})} 
+                                className="accent-accent"
+                            />
+                            <span className="group-hover:text-white transition-colors">Enabled</span>
+                        </label>
+                        <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-text-secondary">Grid</span>
+                            <input 
+                                type="number" 
+                                className="w-full bg-input-bg text-right px-1 py-0.5 rounded text-white text-[10px] outline-none border border-transparent focus:border-accent"
+                                value={snapSettings.move}
+                                onChange={e => setSnapSettings({...snapSettings, move: parseFloat(e.target.value)})}
+                                step={0.1}
+                            />
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-text-secondary">Rot</span>
+                            <input 
+                                type="number" 
+                                className="w-full bg-input-bg text-right px-1 py-0.5 rounded text-white text-[10px] outline-none border border-transparent focus:border-accent"
+                                value={snapSettings.rotate}
+                                onChange={e => setSnapSettings({...snapSettings, rotate: parseFloat(e.target.value)})}
+                                step={5}
+                            />
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-text-secondary">Scl</span>
+                            <input 
+                                type="number" 
+                                className="w-full bg-input-bg text-right px-1 py-0.5 rounded text-white text-[10px] outline-none border border-transparent focus:border-accent"
+                                value={snapSettings.scale}
+                                onChange={e => setSnapSettings({...snapSettings, scale: parseFloat(e.target.value)})}
+                                step={0.1}
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {/* --- SOFT SELECTION (Vertex Mode) --- */}
+                {meshComponentMode === 'VERTEX' && (
+                    <div className="space-y-2 pt-2 border-t border-white/5">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider">
+                                <Icon name="Target" size={12} /> Soft Selection
+                            </div>
+                            <span className="text-[9px] text-text-secondary bg-white/5 px-1 rounded">Alt+B</span>
+                        </div>
+                        
+                        <div className="bg-black/20 p-2 rounded border border-white/5 space-y-2">
+                            <label className="flex items-center justify-between cursor-pointer group">
+                                <span className="text-xs text-text-primary group-hover:text-white">Enable</span>
+                                <input 
+                                    type="checkbox" 
+                                    checked={softSelectionEnabled} 
+                                    onChange={e => setSoftSelectionEnabled(e.target.checked)} 
+                                    className="accent-accent"
+                                />
+                            </label>
+                            
+                            {softSelectionEnabled && (
+                                <div className="space-y-1">
+                                    <div className="flex justify-between text-[10px] text-text-secondary">
+                                        <span>Falloff Radius</span>
+                                        <span>{softSelectionRadius.toFixed(1)}m</span>
+                                    </div>
+                                    <input 
+                                        type="range" 
+                                        min="0.1" max="10" step="0.1" 
+                                        value={softSelectionRadius} 
+                                        onChange={e => setSoftSelectionRadius(parseFloat(e.target.value))} 
+                                        className="w-full"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* --- MESH OPERATIONS --- */}
+                {meshComponentMode !== 'OBJECT' && (
+                    <div className="space-y-2 pt-2 border-t border-white/5">
+                        <div className="flex items-center gap-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider">
+                            <Icon name="Tool" size={12} /> Mesh Tools
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button className="bg-white/5 hover:bg-white/10 hover:text-white p-2 rounded text-xs text-center border border-white/5 transition-colors flex flex-col items-center gap-1">
+                                <Icon name="ArrowUpSquare" size={16} /> Extrude
+                            </button>
+                            <button className="bg-white/5 hover:bg-white/10 hover:text-white p-2 rounded text-xs text-center border border-white/5 transition-colors flex flex-col items-center gap-1">
+                                <Icon name="Scissors" size={16} /> Cut / Split
+                            </button>
+                            <button className="bg-white/5 hover:bg-white/10 hover:text-white p-2 rounded text-xs text-center border border-white/5 transition-colors flex flex-col items-center gap-1">
+                                <Icon name="Ungroup" size={16} /> Bevel
+                            </button>
+                            <button className="bg-white/5 hover:bg-white/10 hover:text-white p-2 rounded text-xs text-center border border-white/5 transition-colors flex flex-col items-center gap-1">
+                                <Icon name="Merge" size={16} /> Weld
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};

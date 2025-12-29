@@ -8,8 +8,8 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode } from '../types';
-import { Mat4Utils, RayUtils, Vec3Utils, Ray } from './math';
+import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3 } from '../types';
+import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
 import { NodeRegistry } from './NodeRegistry';
@@ -42,6 +42,10 @@ export class Engine {
     // New: Track hovered vertex for UI feedback
     hoveredVertex: { entityId: string, index: number } | null = null;
     isInputDown: boolean = false;
+
+    // Soft Selection State
+    softSelectionEnabled: boolean = false;
+    softSelectionRadius: number = 2.0;
 
     uiConfig: UIConfiguration = DEFAULT_UI_CONFIG;
 
@@ -175,6 +179,83 @@ export class Engine {
         this.registerAssetWithGPU(asset);
     }
 
+    moveSelectedVertices(entityId: string, worldDelta: Vector3) {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return;
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        if (!assetUuid) return;
+        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+        if (!asset) return;
+
+        // 1. Transform World Delta to Local Delta
+        const worldMat = this.sceneGraph.getWorldMatrix(entityId);
+        if (!worldMat) return;
+        const invWorld = Mat4Utils.create();
+        Mat4Utils.invert(worldMat, invWorld);
+        
+        // Transform the vector (direction), ignore translation
+        const localDelta = Vec3Utils.transformMat4Normal(worldDelta, invWorld, {x:0,y:0,z:0});
+
+        const vertexIds = Array.from(this.subSelection.vertexIds);
+        if (vertexIds.length === 0) return;
+
+        const verts = asset.geometry.vertices;
+        const norms = asset.geometry.normals;
+
+        if (this.softSelectionEnabled) {
+            // Calculate Centroid of selection
+            const centroid = {x:0, y:0, z:0};
+            for(const vid of vertexIds) {
+                centroid.x += verts[vid*3];
+                centroid.y += verts[vid*3+1];
+                centroid.z += verts[vid*3+2];
+            }
+            centroid.x /= vertexIds.length;
+            centroid.y /= vertexIds.length;
+            centroid.z /= vertexIds.length;
+
+            // Iterate all vertices (Naive Approach)
+            // Ideally use Spatial Hash or BVH, but for < 65k verts JS loop is okay-ish
+            const radius = this.softSelectionRadius;
+            
+            // To properly handle radius in LOCAL space, we need to convert World Radius to Local Radius
+            // Scale factor is roughly max scale axis
+            const sx = this.ecs.store.scaleX[idx];
+            const sy = this.ecs.store.scaleY[idx];
+            const sz = this.ecs.store.scaleZ[idx];
+            const maxScale = Math.max(sx, Math.max(sy, sz));
+            const localRadius = radius / maxScale;
+
+            for (let i=0; i<verts.length/3; i++) {
+                const vx = verts[i*3], vy = verts[i*3+1], vz = verts[i*3+2];
+                const dist = Math.sqrt((vx-centroid.x)**2 + (vy-centroid.y)**2 + (vz-centroid.z)**2);
+                
+                if (dist <= localRadius) {
+                    // Falloff function (Smoothstep-ish)
+                    const t = 1.0 - (dist / localRadius);
+                    const weight = t * t * (3 - 2 * t);
+                    
+                    verts[i*3] += localDelta.x * weight;
+                    verts[i*3+1] += localDelta.y * weight;
+                    verts[i*3+2] += localDelta.z * weight;
+                }
+            }
+        } else {
+            // Hard Selection
+            for (const vIdx of vertexIds) {
+                verts[vIdx*3] += localDelta.x;
+                verts[vIdx*3+1] += localDelta.y;
+                verts[vIdx*3+2] += localDelta.z;
+            }
+        }
+
+        // Re-upload
+        this.registerAssetWithGPU(asset);
+        // Note: Normals are invalid after move. A real sculpting tool recalculates them.
+        // For simplicity, we skip full normal recalc here as it's expensive per frame. 
+    }
+
     tick(dt: number) {
             const start = performance.now();
             const clampedDt = Math.min(dt, this.maxFrameTime);
@@ -259,6 +340,9 @@ export class Engine {
             const idx = this.ecs.idToIndex.get(id);
             if (idx !== undefined) this.selectedIndices.add(idx);
         });
+        // We do NOT clear subSelection immediately if switching mode, but here we likely selected new objects
+        // If IDs changed, clear sub selection
+        // For now, keep it simple: always clear sub-sel on object change
         this.subSelection.vertexIds.clear(); this.subSelection.edgeIds.clear(); this.subSelection.faceIds.clear();
         this.hoveredVertex = null;
     }

@@ -92,6 +92,12 @@ export interface EditorContextType {
   meshComponentMode: MeshComponentMode;
   setMeshComponentMode: (mode: MeshComponentMode) => void;
 
+  // Soft Selection
+  softSelectionEnabled: boolean;
+  setSoftSelectionEnabled: (enabled: boolean) => void;
+  softSelectionRadius: number;
+  setSoftSelectionRadius: (radius: number) => void;
+
   tool: ToolType;
   setTool: (tool: ToolType) => void;
   transformSpace: TransformSpace;

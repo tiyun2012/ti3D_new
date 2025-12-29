@@ -73,7 +73,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
   const [name, setName] = useState('');
   const [refresh, setRefresh] = useState(0); // Force re-render for nested data
   const [showAddComponent, setShowAddComponent] = useState(false);
-  const editorCtx = useContext(EditorContext)!;
+  // Removed soft selection context usage as it moved to ToolOptionsPanel
 
   const activeObject = isLocked ? (snapshot?.object ?? initialObject) : initialObject;
   const activeType = isLocked ? (snapshot?.type ?? initialType) : initialType;
@@ -215,12 +215,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
           // Find the Mesh Component's asset
           const meshComp = entity.components['Mesh'];
           if (meshComp) {
-             const assetId = assetManager.getMeshID(meshComp.meshType) === 0 ? null : meshComp.meshType; // Actually this is INT id
-             // Need UUID. 
-             // Reverse lookup in assetManager
-             const uuid = assetManager.meshIntToUuid.get(assetManager.getMeshID(meshComp.materialId) || 0); // Logic flaw in prop access, fixing below
-             
-             // Correct way:
              const idx = engineInstance.ecs.idToIndex.get(entity.id);
              if (idx !== undefined) {
                  const meshInt = engineInstance.ecs.store.meshType[idx];
@@ -282,17 +276,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                         </div>
                     </div>
                 )}
-
-                {/* Tools */}
-                <div className="pt-2 border-t border-white/5">
-                    <div className="text-[10px] text-text-secondary uppercase font-bold tracking-wider mb-2">Operations</div>
-                    <div className="grid grid-cols-2 gap-2">
-                        <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Extrude</button>
-                        <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Bevel</button>
-                        <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Weld</button>
-                        <button className="bg-white/5 hover:bg-white/10 p-2 rounded text-center border border-white/5 transition-colors">Split</button>
-                    </div>
-                </div>
             </div>
         </div>
       );
