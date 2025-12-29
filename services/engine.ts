@@ -588,7 +588,14 @@ export class Engine {
     registerAssetWithGPU(asset: Asset) {
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             const internalId = assetManager.getMeshID(asset.id);
-            if (internalId > 0) this.meshSystem.registerMesh(internalId, asset.geometry);
+            if (internalId > 0) {
+                this.meshSystem.registerMesh(internalId, asset.geometry);
+                
+                // Restore soft selection weights if they exist for this mesh
+                if (this.softSelectionWeights.has(internalId)) {
+                    this.meshSystem.updateSoftSelectionBuffer(internalId, this.softSelectionWeights.get(internalId)!);
+                }
+            }
         }
     }
 
