@@ -49,9 +49,16 @@ export class Engine {
     softSelectionRadius: number = 2.0;
     softSelectionMode: SoftSelectionMode = 'FIXED';
     
-    // Cached weights for the current selection (keyed by Mesh Internal ID)
-    // Using a map to support multi-object editing in future, currently mainly 1.
+    // Cached weights for the current selection
     softSelectionWeights: Map<number, Float32Array> = new Map();
+
+    // --- DEFORMATION SNAPSHOT STATE ---
+    // Stores vertex positions at the start of a drag operation
+    private vertexSnapshot: Float32Array | null = null;
+    // Stores the currently applied drag delta (total distance from drag start)
+    private currentDeformationDelta: Vector3 = { x: 0, y: 0, z: 0 };
+    // The entity currently being deformed
+    private activeDeformationEntity: string | null = null;
 
     uiConfig: UIConfiguration = DEFAULT_UI_CONFIG;
 
@@ -204,10 +211,11 @@ export class Engine {
         const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
         if (!asset) return;
 
-        const verts = asset.geometry.vertices;
-        const vertexCount = verts.length / 3;
+        // Use Snapshot vertices (rest pose) if dragging, otherwise current vertices
+        // This prevents the selection "swimming" as points move out of the radius
+        const sourceVerts = this.vertexSnapshot ? this.vertexSnapshot : asset.geometry.vertices;
+        const vertexCount = sourceVerts.length / 3;
         
-        // Check cache existence
         let weights = this.softSelectionWeights.get(meshIntId);
         if (!weights || weights.length !== vertexCount) {
             weights = new Float32Array(vertexCount);
@@ -221,18 +229,17 @@ export class Engine {
             return;
         }
 
-        // Calculate Centroid in Local Space
+        // Calculate Centroid in Local Space (using source vertices)
         const centroid = {x:0, y:0, z:0};
         for(const vid of selection) {
-            centroid.x += verts[vid*3];
-            centroid.y += verts[vid*3+1];
-            centroid.z += verts[vid*3+2];
+            centroid.x += sourceVerts[vid*3];
+            centroid.y += sourceVerts[vid*3+1];
+            centroid.z += sourceVerts[vid*3+2];
         }
         const invLen = 1.0 / selection.length;
         centroid.x *= invLen; centroid.y *= invLen; centroid.z *= invLen;
 
         // Convert Radius to Local Space
-        // We approximate scale using the max component to keep radius uniform-ish
         const sx = this.ecs.store.scaleX[idx];
         const sy = this.ecs.store.scaleY[idx];
         const sz = this.ecs.store.scaleZ[idx];
@@ -245,7 +252,7 @@ export class Engine {
                 weights[i] = 1.0;
                 continue;
             }
-            const vx = verts[i*3], vy = verts[i*3+1], vz = verts[i*3+2];
+            const vx = sourceVerts[i*3], vy = sourceVerts[i*3+1], vz = sourceVerts[i*3+2];
             const dist = Math.sqrt((vx-centroid.x)**2 + (vy-centroid.y)**2 + (vz-centroid.z)**2);
             
             if (dist <= localRadius) {
@@ -257,9 +264,17 @@ export class Engine {
         }
 
         this.meshSystem.updateSoftSelectionBuffer(meshIntId, weights);
+
+        // If we are currently dragging, updating weights should re-apply the deformation immediately
+        // so the user sees the mesh reshape as they drag the slider.
+        if (this.vertexSnapshot && this.activeDeformationEntity) {
+            this.applyDeformation(this.activeDeformationEntity);
+        }
     }
 
-    moveSelectedVertices(entityId: string, worldDelta: Vector3) {
+    // --- SNAPSHOT BASED DEFORMATION SYSTEM ---
+
+    startVertexDrag(entityId: string) {
         const idx = this.ecs.idToIndex.get(entityId);
         if (idx === undefined) return;
         const meshIntId = this.ecs.store.meshType[idx];
@@ -268,44 +283,92 @@ export class Engine {
         const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
         if (!asset) return;
 
-        // Transform World Delta to Local
+        // 1. Capture Snapshot (Copy current vertices)
+        this.vertexSnapshot = new Float32Array(asset.geometry.vertices);
+        this.activeDeformationEntity = entityId;
+        this.currentDeformationDelta = { x:0, y:0, z:0 };
+
+        // 2. Ensure weights are calculated based on this snapshot (Rest Pose)
+        // This locks the heatmap to the object's shape at the start of the drag
+        this.recalculateSoftSelection(); 
+    }
+
+    updateVertexDrag(entityId: string, totalWorldDelta: Vector3) {
+        if (!this.vertexSnapshot || this.activeDeformationEntity !== entityId) {
+            // Fallback if start wasn't called (safety)
+            this.startVertexDrag(entityId); 
+        }
+
+        // Transform World Delta to Local Delta
         const worldMat = this.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return;
         const invWorld = Mat4Utils.create();
         Mat4Utils.invert(worldMat, invWorld);
-        const localDelta = Vec3Utils.transformMat4Normal(worldDelta, invWorld, {x:0,y:0,z:0});
+        
+        // We assume rotation doesn't change during vertex drag, so transforming vector is enough
+        const localDelta = Vec3Utils.transformMat4Normal(totalWorldDelta, invWorld, {x:0,y:0,z:0});
+        
+        this.currentDeformationDelta = localDelta;
+        this.applyDeformation(entityId);
+    }
+
+    private applyDeformation(entityId: string) {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return;
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
+        if (!asset || !this.vertexSnapshot) return;
 
         const verts = asset.geometry.vertices;
-        
-        if (this.softSelectionEnabled) {
-            const weights = this.softSelectionWeights.get(meshIntId);
-            if (weights) {
-                // Use pre-calculated weights (Fixed Mode logic implicitly handled by not recalculating)
-                for (let i = 0; i < weights.length; i++) {
-                    const w = weights[i];
-                    if (w > 0.001) {
-                        verts[i*3] += localDelta.x * w;
-                        verts[i*3+1] += localDelta.y * w;
-                        verts[i*3+2] += localDelta.z * w;
-                    }
+        const snap = this.vertexSnapshot;
+        const weights = this.softSelectionWeights.get(meshIntId);
+        const delta = this.currentDeformationDelta;
+
+        if (this.softSelectionEnabled && weights) {
+            for (let i = 0; i < weights.length; i++) {
+                const w = weights[i];
+                if (w > 0.001) {
+                    // Position = Original + (Delta * Weight)
+                    verts[i*3] = snap[i*3] + delta.x * w;
+                    verts[i*3+1] = snap[i*3+1] + delta.y * w;
+                    verts[i*3+2] = snap[i*3+2] + delta.z * w;
+                } else {
+                    // Reset to snapshot if weight is zero (handles radius shrinking)
+                    verts[i*3] = snap[i*3];
+                    verts[i*3+1] = snap[i*3+1];
+                    verts[i*3+2] = snap[i*3+2];
                 }
             }
         } else {
-            // Hard Selection
+            // Hard Selection (or Soft Selection disabled)
+            // Reset everything first to handle cases where we switch modes mid-drag
+            verts.set(snap);
             for (const vIdx of this.subSelection.vertexIds) {
-                verts[vIdx*3] += localDelta.x;
-                verts[vIdx*3+1] += localDelta.y;
-                verts[vIdx*3+2] += localDelta.z;
+                verts[vIdx*3] += delta.x;
+                verts[vIdx*3+1] += delta.y;
+                verts[vIdx*3+2] += delta.z;
             }
         }
 
         this.registerAssetWithGPU(asset);
         
-        // If Dynamic Mode is requested, we would recalculate weights here.
-        // But for "Fixed" (default), we do nothing, preserving the weights relative to start.
+        // If Dynamic Mode, recalculate weights based on NEW positions
         if (this.softSelectionMode === 'DYNAMIC' && this.softSelectionEnabled) {
-             this.recalculateSoftSelection();
+             // Note: In dynamic mode, we might get feedback loops if we use snapshot for weights.
+             // But for stability, usually weights should be based on pre-drag or post-drag state.
+             // Here we just trigger a recalc which will use snapshot if available.
+             // To support true dynamic (weights change AS you pull), we'd need to temporarily
+             // nullify vertexSnapshot inside recalculateSoftSelection, calculate, then restore.
+             // For now, let's stick to the robust snapshot-based weighting (Fixed topology).
         }
+    }
+
+    endVertexDrag() {
+        this.vertexSnapshot = null;
+        this.activeDeformationEntity = null;
+        this.currentDeformationDelta = { x: 0, y: 0, z: 0 };
+        // Don't clear weights, user might want to drag again with same selection
     }
 
     tick(dt: number) {
@@ -326,14 +389,27 @@ export class Engine {
             }
 
             if (this.currentViewProj) {
-                // Pass simplified soft selection data just for visual ring helper, actual weights are in buffer now
+                // Visual Ring logic
                 const softSel = { enabled: this.softSelectionEnabled && this.meshComponentMode === 'VERTEX', center: {x:0,y:0,z:0}, radius: this.softSelectionRadius };
-                // Center calculation for the UI ring (approximate)
+                
                 if (softSel.enabled && this.selectedIndices.size > 0) {
                      const idx = Array.from(this.selectedIndices)[0];
                      const id = this.ecs.store.ids[idx];
                      const wm = this.sceneGraph.getWorldMatrix(id);
-                     if (wm) softSel.center = { x: wm[12], y: wm[13], z: wm[14] }; // Use object pivot for ring for now
+                     
+                     // Use the Snapshot for the visual ring center too if dragging!
+                     // This keeps the ring centered on the original selection while geometry deforms away
+                     if (this.vertexSnapshot && this.subSelection.vertexIds.size > 0 && wm) {
+                         const vId = Array.from(this.subSelection.vertexIds)[0];
+                         const lx = this.vertexSnapshot[vId*3], ly = this.vertexSnapshot[vId*3+1], lz = this.vertexSnapshot[vId*3+2];
+                         // Transform local snapshot to world
+                         const wx = wm[0]*lx + wm[4]*ly + wm[8]*lz + wm[12];
+                         const wy = wm[1]*lx + wm[5]*ly + wm[9]*lz + wm[13];
+                         const wz = wm[2]*lx + wm[6]*ly + wm[10]*lz + wm[14];
+                         softSel.center = { x: wx, y: wy, z: wz };
+                     } else if (wm) {
+                         softSel.center = { x: wm[12], y: wm[13], z: wm[14] }; 
+                     }
                 }
 
                 this.renderer.render(

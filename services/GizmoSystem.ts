@@ -21,6 +21,9 @@ export class GizmoSystem {
     private clickOffset: Vector3 = { x: 0, y: 0, z: 0 };
     private planeNormal: Vector3 = { x: 0, y: 1, z: 0 };
     
+    // Tracks original click position on the intersection plane to calculate cumulative delta
+    private dragOrigin: Vector3 = { x: 0, y: 0, z: 0 };
+
     // --- API ---
     setTool(tool: ToolType) {
         this.tool = tool;
@@ -28,6 +31,7 @@ export class GizmoSystem {
         if (tool === 'SELECT' && this.isDragging) {
             this.isDragging = false;
             this.activeAxis = null;
+            engineInstance.endVertexDrag();
         }
     }
 
@@ -80,6 +84,9 @@ export class GizmoSystem {
             if (isUp) {
                 this.isDragging = false;
                 this.activeAxis = null;
+                if (isVertexMode) {
+                    engineInstance.endVertexDrag();
+                }
                 engineInstance.pushUndoState();
             } else {
                 this.handleDrag(ray, entityId, isVertexMode);
@@ -90,7 +97,7 @@ export class GizmoSystem {
             if (isDown && this.hoverAxis) {
                 this.isDragging = true;
                 this.activeAxis = this.hoverAxis;
-                this.startDrag(ray, worldPos);
+                this.startDrag(ray, worldPos, entityId, isVertexMode);
             }
         }
     }
@@ -164,7 +171,7 @@ export class GizmoSystem {
         return centroid;
     }
 
-    private startDrag(ray: any, pos: Vector3) {
+    private startDrag(ray: any, pos: Vector3, entityId: string, isVertexMode: boolean) {
         this.startPos = { ...pos };
         const axis = this.activeAxis;
         const viewDir = Vec3Utils.normalize(Vec3Utils.subtract(engineInstance.currentCameraPos, pos, {x:0,y:0,z:0}), {x:0,y:0,z:0});
@@ -182,35 +189,49 @@ export class GizmoSystem {
         const hit = this.rayPlaneIntersect(ray, pos, this.planeNormal);
         if (hit) {
             this.clickOffset = Vec3Utils.subtract(hit, pos, {x:0,y:0,z:0});
+            // Store original drag point for cumulative delta calculation
+            this.dragOrigin = { ...hit };
+        }
+
+        if (isVertexMode) {
+            engineInstance.startVertexDrag(entityId);
         }
     }
 
     private handleDrag(ray: any, entityId: string, isVertexMode: boolean) {
         const hit = this.rayPlaneIntersect(ray, this.startPos, this.planeNormal);
         if (hit) {
-            let target = Vec3Utils.subtract(hit, this.clickOffset, {x:0,y:0,z:0});
-            
             // Apply Constraints (If NOT free view/plane)
-            if (this.activeAxis === 'X') target = { x: target.x, y: this.startPos.y, z: this.startPos.z };
-            if (this.activeAxis === 'Y') target = { x: this.startPos.x, y: target.y, z: this.startPos.z };
-            if (this.activeAxis === 'Z') target = { x: this.startPos.x, y: this.startPos.y, z: target.z };
-            if (this.activeAxis === 'XY') target.z = this.startPos.z;
-            if (this.activeAxis === 'XZ') target.y = this.startPos.y;
-            if (this.activeAxis === 'YZ') target.x = this.startPos.x;
+            // Note: We constrain the HIT point relative to START POS to ensure sliding along axis
+            let constrainedHit = { ...hit };
+            
+            if (this.activeAxis === 'X') { constrainedHit.y = this.startPos.y + this.clickOffset.y; constrainedHit.z = this.startPos.z + this.clickOffset.z; }
+            if (this.activeAxis === 'Y') { constrainedHit.x = this.startPos.x + this.clickOffset.x; constrainedHit.z = this.startPos.z + this.clickOffset.z; }
+            if (this.activeAxis === 'Z') { constrainedHit.x = this.startPos.x + this.clickOffset.x; constrainedHit.y = this.startPos.y + this.clickOffset.y; }
+            if (this.activeAxis === 'XY') constrainedHit.z = this.startPos.z + this.clickOffset.z;
+            if (this.activeAxis === 'XZ') constrainedHit.y = this.startPos.y + this.clickOffset.y;
+            if (this.activeAxis === 'YZ') constrainedHit.x = this.startPos.x + this.clickOffset.x;
 
             if (isVertexMode) {
-                // Calculate Delta based on Gizmo movement
-                const delta = Vec3Utils.subtract(target, this.startPos, {x:0,y:0,z:0});
+                // Calculate Total Delta from drag START (not frame-to-frame)
+                // This allows us to re-apply the full deformation if weights change
+                // Note: dragOrigin includes the clickOffset, so we compare hit against dragOrigin
+                // But constraints need to be applied first.
                 
-                // Note: We don't set startPos to target here because we want continuous delta from the original start frame 
-                // for cumulative additions, OR we apply delta and update startPos.
-                // Better approach for vertices: Apply delta to mesh, then update startPos for next frame?
-                // Actually, simply passing delta to engine and updating startPos works best for visual sync.
-                engineInstance.moveSelectedVertices(entityId, delta);
+                // Let's simplify: 
+                // Target Position = Constrained Hit - Click Offset
+                const targetPos = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
                 
-                // Update start pos so next frame delta is relative to this frame
-                this.startPos = target; 
+                // Total Delta = Target Position - Initial Gizmo Position (this.startPos)
+                const totalDelta = Vec3Utils.subtract(targetPos, this.startPos, {x:0,y:0,z:0});
+                
+                engineInstance.updateVertexDrag(entityId, totalDelta);
+                
+                // Important: For vertex mode, we DO NOT update this.startPos every frame.
+                // We keep it fixed at the start location so we calculate cumulative delta.
             } else {
+                // Object Mode (Standard)
+                const target = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
                 this.setWorldPosition(entityId, target);
                 engineInstance.syncTransforms();
             }
