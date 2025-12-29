@@ -124,6 +124,88 @@ const StatsContent = () => {
     );
 };
 
+const StatusBarInfo: React.FC = () => {
+    const { meshComponentMode, selectedIds, simulationMode } = useContext(EditorContext)!;
+    const [statusText, setStatusText] = useState('Ready');
+    const [hintText, setHintText] = useState('');
+
+    useEffect(() => {
+        const update = () => {
+            if (simulationMode !== 'STOPPED') {
+                setStatusText(simulationMode === 'GAME' ? 'GAME MODE' : 'SIMULATING');
+                setHintText('Press Esc to release cursor');
+                return;
+            }
+
+            if (meshComponentMode === 'OBJECT') {
+                if (selectedIds.length > 0) {
+                    const count = selectedIds.length;
+                    const lastId = selectedIds[count - 1];
+                    const idx = engineInstance.ecs.idToIndex.get(lastId);
+                    const name = idx !== undefined ? engineInstance.ecs.store.names[idx] : 'Object';
+                    setStatusText(count === 1 ? name : `${count} Objects`);
+                    setHintText('Alt+LMB Orbit • MMB Pan • Wheel Zoom');
+                } else {
+                    setStatusText('Ready');
+                    setHintText('Select an object to edit');
+                }
+            } else {
+                const sub = engineInstance.subSelection;
+                if (meshComponentMode === 'VERTEX') {
+                    const count = sub.vertexIds.size;
+                    if (count === 0) {
+                        setStatusText('Vertex Mode');
+                        setHintText('Click to select vertices');
+                    } else {
+                        const last = Array.from(sub.vertexIds).pop();
+                        setStatusText(count === 1 ? `Vertex ID: ${last}` : `${count} Vertices`);
+                        setHintText(count === 1 ? 'Alt+Click 2nd Vertex for Loop' : 'Drag to Move Selection');
+                    }
+                } else if (meshComponentMode === 'EDGE') {
+                    const count = sub.edgeIds.size;
+                    if (count === 0) {
+                        setStatusText('Edge Mode');
+                        setHintText('Click to select edges');
+                    } else {
+                        setStatusText(count === 1 ? `Edge Selection` : `${count} Edges`);
+                        setHintText('Alt+Click for Loop');
+                    }
+                } else if (meshComponentMode === 'FACE') {
+                    const count = sub.faceIds.size;
+                    if (count === 0) {
+                        setStatusText('Face Mode');
+                        setHintText('Click to select faces');
+                    } else {
+                        const last = Array.from(sub.faceIds).pop();
+                        setStatusText(count === 1 ? `Face ID: ${last}` : `${count} Faces`);
+                        setHintText('Alt+Click edge for Strip');
+                    }
+                }
+            }
+        };
+
+        update();
+        const unsub = engineInstance.subscribe(update);
+        return unsub;
+    }, [meshComponentMode, selectedIds, simulationMode]);
+
+    return (
+        <div className="flex items-center gap-3">
+            {simulationMode === 'GAME' ? (
+                <span className="text-emerald-500 animate-pulse font-bold flex items-center gap-2"><Icon name="Gamepad2" size={12} /> GAME MODE</span>
+            ) : simulationMode === 'SIMULATE' ? (
+                <span className="text-indigo-400 animate-pulse font-bold flex items-center gap-2"><Icon name="Activity" size={12} /> SIMULATING</span>
+            ) : (
+                <>
+                    <span className="font-semibold text-white/90 text-[11px]">{statusText}</span>
+                    {hintText && <div className="h-3 w-px bg-white/10 mx-1"></div>}
+                    <span className="text-text-secondary hidden sm:inline text-[10px] opacity-70">{hintText}</span>
+                </>
+            )}
+        </div>
+    );
+};
+
 const EditorInterface: React.FC = () => {
     const wm = useContext(WindowManagerContext);
     const editor = useContext(EditorContext);
@@ -233,9 +315,7 @@ const EditorInterface: React.FC = () => {
             </div>
 
             <div className="absolute bottom-0 w-full h-6 bg-panel-header/90 backdrop-blur flex items-center px-4 justify-between text-[10px] text-text-secondary shrink-0 select-none z-50 border-t border-white/5">
-                <div className="flex items-center gap-4">
-                    {editor.simulationMode === 'GAME' ? <span className="text-emerald-500 animate-pulse font-bold">● GAME MODE</span> : (editor.simulationMode === 'SIMULATE' ? <span className="text-indigo-400 animate-pulse font-bold">● SIMULATING</span> : <span>Ready</span>)}
-                </div>
+                <StatusBarInfo />
                 <div className="flex items-center gap-4 font-mono opacity-60">
                     <span>{engineInstance.metrics.entityCount} Objects</span>
                     <span>{engineInstance.metrics.fps.toFixed(0)} FPS</span>
