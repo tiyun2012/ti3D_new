@@ -8,7 +8,7 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff } from '../types';
+import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff, SkeletalMeshAsset } from '../types';
 import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
@@ -19,6 +19,7 @@ import { moduleManager } from './ModuleManager';
 import { registerCoreModules } from './modules/CoreModules';
 import { consoleService } from './Console';
 import type { MeshRenderSystem } from './systems/MeshRenderSystem';
+import { AnimationSystem } from './systems/AnimationSystem';
 
 export type SoftSelectionMode = 'DYNAMIC' | 'FIXED';
 
@@ -27,6 +28,7 @@ export class Engine {
     sceneGraph: SceneGraph;
     physicsSystem: PhysicsSystem;
     historySystem: HistorySystem;
+    animationSystem: AnimationSystem;
     renderer: WebGLRenderer;
     debugRenderer: DebugRenderer;
     metrics: PerformanceMetrics;
@@ -50,6 +52,9 @@ export class Engine {
     softSelectionMode: SoftSelectionMode = 'FIXED';
     softSelectionFalloff: SoftSelectionFalloff = 'VOLUME'; 
     softSelectionHeatmapVisible: boolean = true;
+    
+    // Skinning State
+    selectedBoneIndex: number = -1;
     
     // Cached weights for the current selection
     softSelectionWeights: Map<number, Float32Array> = new Map();
@@ -87,6 +92,7 @@ export class Engine {
         this.sceneGraph.setContext(this.ecs);
         this.physicsSystem = new PhysicsSystem();
         this.historySystem = new HistorySystem();
+        this.animationSystem = new AnimationSystem();
         this.renderer = new WebGLRenderer();
         this.debugRenderer = new DebugRenderer();
         this.metrics = { fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
@@ -186,6 +192,83 @@ export class Engine {
         asset.geometry.colors[vertexIndex * 3] = color.r;
         asset.geometry.colors[vertexIndex * 3 + 1] = color.g;
         asset.geometry.colors[vertexIndex * 3 + 2] = color.b;
+        
+        this.registerAssetWithGPU(asset);
+    }
+
+    // --- SKIN WEIGHT PAINTING ---
+    paintSkinWeights(entityId: string, boneIndex: number, weight: number, mode: 'ADD'|'REPLACE'|'SMOOTH'|'REMOVE') {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return;
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        const asset = assetManager.getAsset(assetUuid!) as SkeletalMeshAsset;
+        
+        if (!asset || asset.type !== 'SKELETAL_MESH') return;
+        
+        const indices = asset.geometry.jointIndices;
+        const weights = asset.geometry.jointWeights;
+        
+        // Vertices affected by brush (Soft Selection)
+        const activeVerts = this.getSelectionAsVertices();
+        // If soft selection is active, use its weights to attenuate brush
+        const softWeights = this.softSelectionWeights.get(meshIntId);
+        
+        const selectionArray = Array.from(activeVerts);
+        const brushVerts = this.softSelectionEnabled ? Array.from(softWeights?.keys() || []) : selectionArray;
+        
+        const loopCount = this.softSelectionEnabled && softWeights ? softWeights.length : selectionArray.length;
+
+        for(let i=0; i<loopCount; i++) {
+            const vIdx = this.softSelectionEnabled ? i : selectionArray[i];
+            const influence = this.softSelectionEnabled && softWeights ? softWeights[i] : 1.0;
+            
+            if (influence <= 0.001) continue;
+
+            const base = vIdx * 4;
+            // Current weights for this vertex
+            let w = [weights[base], weights[base+1], weights[base+2], weights[base+3]];
+            let id = [indices[base], indices[base+1], indices[base+2], indices[base+3]];
+            
+            // Find slot for target bone
+            let slot = -1;
+            for(let k=0; k<4; k++) if(id[k] === boneIndex) slot = k;
+            
+            if (slot === -1) {
+                // Find empty or smallest
+                let minW = 2.0; let best = 0;
+                for(let k=0; k<4; k++) {
+                    if (w[k] < minW) { minW = w[k]; best = k; }
+                }
+                slot = best;
+                id[slot] = boneIndex;
+                w[slot] = 0;
+            }
+
+            const effectiveWeight = weight * influence;
+            
+            if (mode === 'REPLACE') {
+                w[slot] = effectiveWeight;
+            } else if (mode === 'ADD') {
+                w[slot] = Math.min(1.0, w[slot] + effectiveWeight);
+            } else if (mode === 'REMOVE') {
+                w[slot] = Math.max(0.0, w[slot] - effectiveWeight);
+            }
+
+            // Normalize
+            let sum = 0;
+            for(let k=0; k<4; k++) sum += w[k];
+            if (sum > 0) {
+                const scale = 1.0 / sum;
+                for(let k=0; k<4; k++) w[k] *= scale;
+            }
+
+            // Write back
+            for(let k=0; k<4; k++) {
+                indices[base+k] = id[k];
+                weights[base+k] = w[k];
+            }
+        }
         
         this.registerAssetWithGPU(asset);
     }
@@ -561,7 +644,8 @@ export class Engine {
                     this.currentHeight, 
                     this.currentCameraPos,
                     softSel,
-                    this.isPlaying && this.simulationMode === 'GAME' ? undefined : this.debugRenderer
+                    this.isPlaying && this.simulationMode === 'GAME' ? undefined : this.debugRenderer,
+                    this.selectedBoneIndex
                 );
             }
 
@@ -587,6 +671,8 @@ export class Engine {
                         this.notifyUI();
                     }
                 }
+                // Run Animation System
+                this.animationSystem.update(fixedDt, this.timeline.currentTime, this.meshSystem, this.ecs, this.sceneGraph);
             }
 
             if (this.isPlaying) {

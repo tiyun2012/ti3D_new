@@ -45,6 +45,7 @@ out vec2 v_uv;
 out float v_texIndex;
 out float v_effectIndex;
 out vec4 v_weights;
+out vec4 v_joints; 
 out float v_softWeight;
 
 // %VERTEX_LOGIC%
@@ -83,6 +84,7 @@ void main() {
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
     v_weights = a_weights;
+    v_joints = a_joints;
     
     // Pass the explicit weight from CPU
     v_softWeight = a_softWeight;
@@ -110,6 +112,7 @@ in highp vec2 v_uv;
 in highp float v_texIndex;
 in highp float v_effectIndex;
 in highp vec4 v_weights;
+in highp vec4 v_joints;
 in highp float v_softWeight;
 
 uniform sampler2DArray u_textures;
@@ -120,6 +123,7 @@ uniform vec3 u_lightColor;
 uniform float u_lightIntensity;
 uniform float u_time;
 uniform float u_showHeatmap;
+uniform int u_selectedBoneIndex;
 
 layout(location=0) out vec4 outColor;
 layout(location=1) out vec4 outData; 
@@ -155,13 +159,24 @@ void main() {
     else if (u_renderMode == 1) result = normal * 0.5 + 0.5;
     else if (u_renderMode == 2) result = albedo;
     else if (u_renderMode == 5) {
-       float w = max(v_weights.x, max(v_weights.y, max(v_weights.z, v_weights.w)));
+       // Soft Selection
+       result = heatMap(v_softWeight);
+    }
+    else if (u_renderMode == 6) {
+       // Skin Weights
+       float w = 0.0;
+       if (int(v_joints.x) == u_selectedBoneIndex) w += v_weights.x;
+       if (int(v_joints.y) == u_selectedBoneIndex) w += v_weights.y;
+       if (int(v_joints.z) == u_selectedBoneIndex) w += v_weights.z;
+       if (int(v_joints.w) == u_selectedBoneIndex) w += v_weights.w;
        result = heatMap(w);
+       // Add wireframe hint
+       if (w < 0.01) result = vec3(0.1);
     }
     else result = albedo;
     
     // --- Soft Selection Overlay ---
-    if (v_softWeight > 0.0001 && u_showHeatmap > 0.5) {
+    if (v_softWeight > 0.0001 && u_showHeatmap > 0.5 && u_renderMode != 5) {
         vec3 heat = heatMap(v_softWeight);
         float pulse = 0.5 + 0.5 * sin(u_time * 10.0);
         float blend = smoothstep(0.0, 0.2, v_softWeight) * 0.7;
@@ -238,6 +253,16 @@ export class MeshRenderSystem {
         const ctx = canvas.getContext('2d')!; ctx.drawImage(image, 0, 0, 256, 256);
         this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.textureArray);
         this.gl.texSubImage3D(this.gl.TEXTURE_2D_ARRAY, 0, 0, 0, layerIndex, 256, 256, 1, this.gl.RGBA, this.gl.UNSIGNED_BYTE, canvas);
+    }
+
+    uploadBoneMatrices(matrices: Float32Array) {
+        if (!this.gl || !this.boneTexture) return;
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.boneTexture);
+        // matrices is flat array of 16 * numBones. Each matrix is 4 rows of 4 floats (RGBA32F).
+        // Texture width is 1024 (256 bones * 4 pixels per bone).
+        // Upload logic depends on size. Assuming simple linear mapping.
+        // We uploaded 1024x1 texture. 
+        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, matrices.length / 4, 1, this.gl.RGBA, this.gl.FLOAT, matrices);
     }
 
     registerMesh(id: number, geometry: any) {
@@ -337,7 +362,7 @@ export class MeshRenderSystem {
         }
     }
 
-    render(store: ComponentStorage, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number, renderMode: number, pass: 'OPAQUE' | 'OVERLAY', softSelData?: any) {
+    render(store: ComponentStorage, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number, renderMode: number, pass: 'OPAQUE' | 'OVERLAY', softSelData?: any, selectedBoneIndex: number = -1) {
         const gl = this.gl!;
         gl.vertexAttrib3f(13, 1.0, 1.0, 1.0);
         gl.vertexAttrib1f(14, 0.0);
@@ -356,6 +381,7 @@ export class MeshRenderSystem {
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightDir'), lightDir);
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightColor'), lightColor);
             gl.uniform1f(gl.getUniformLocation(program, 'u_lightIntensity'), lightIntensity);
+            gl.uniform1i(gl.getUniformLocation(program, 'u_selectedBoneIndex'), selectedBoneIndex);
             
             // Pass Heatmap visibility uniform
             gl.uniform1f(gl.getUniformLocation(program, 'u_showHeatmap'), softSelData?.heatmapVisible ? 1.0 : 0.0);
