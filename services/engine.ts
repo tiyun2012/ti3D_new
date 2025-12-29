@@ -437,6 +437,74 @@ export class Engine {
         this.currentDeformationDelta = { x: 0, y: 0, z: 0 };
     }
 
+    // --- LOOP SELECTION API ---
+    selectLoop(mode: MeshComponentMode) {
+        if (this.selectedIndices.size === 0) return;
+        const idx = Array.from(this.selectedIndices)[0];
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
+        if (!asset || !asset.topology) return;
+
+        const topo = asset.topology;
+
+        if (mode === 'EDGE') {
+            // Need at least 1 edge
+            const edges = Array.from(this.subSelection.edgeIds);
+            if (edges.length === 0) return;
+            const lastEdge = edges[edges.length - 1];
+            const [v1, v2] = lastEdge.split('-').map(Number);
+            const loop = MeshTopologyUtils.getEdgeLoop(topo, v1, v2);
+            loop.forEach(e => {
+                const key = e.sort((a,b)=>a-b).join('-');
+                this.subSelection.edgeIds.add(key);
+            });
+        } 
+        else if (mode === 'VERTEX') {
+            // Need at least 2 vertices to define direction
+            const verts = Array.from(this.subSelection.vertexIds);
+            if (verts.length < 2) {
+                consoleService.warn('Select at least 2 vertices to define loop direction');
+                return;
+            }
+            const v1 = verts[verts.length - 2];
+            const v2 = verts[verts.length - 1];
+            // Validate connection
+            const key = [v1, v2].sort((a,b)=>a-b).join('-');
+            if (topo.graph && topo.graph.edgeKeyToHalfEdge.has(key)) {
+                const loop = MeshTopologyUtils.getVertexLoop(topo, v1, v2);
+                loop.forEach(v => this.subSelection.vertexIds.add(v));
+            } else {
+                consoleService.warn('Selected vertices are not connected');
+            }
+        } 
+        else if (mode === 'FACE') {
+            // Need 2 adjacent faces to define strip direction
+            const faces = Array.from(this.subSelection.faceIds);
+            if (faces.length < 2) {
+                consoleService.warn('Select at least 2 adjacent faces to define loop direction');
+                return;
+            }
+            const f1 = faces[faces.length - 2];
+            const f2 = faces[faces.length - 1];
+            
+            // Find shared edge vertices
+            const verts1 = topo.faces[f1];
+            const verts2 = topo.faces[f2];
+            const shared = verts1.filter(v => verts2.includes(v));
+            
+            if (shared.length === 2) {
+                const loop = MeshTopologyUtils.getFaceLoop(topo, shared[0], shared[1]);
+                loop.forEach(f => this.subSelection.faceIds.add(f));
+            } else {
+                consoleService.warn('Faces are not adjacent');
+            }
+        }
+        
+        this.recalculateSoftSelection();
+        this.notifyUI();
+    }
+
     tick(dt: number) {
             const start = performance.now();
             const clampedDt = Math.min(dt, this.maxFrameTime);
@@ -805,6 +873,13 @@ export class Engine {
         this.renderer.gridColor = [r, g, b]; this.renderer.gridExcludePP = config.excludeFromPostProcess;
     }
     setUiConfig(config: UIConfiguration) { this.uiConfig = config; }
+
+    // --- MESH OPS (STUBS FOR PIE MENU) ---
+    extrudeFaces() { consoleService.info('Extrude Faces (Mock)', 'Modeling'); }
+    bevelEdges() { consoleService.info('Bevel Edges (Mock)', 'Modeling'); }
+    weldVertices() { consoleService.info('Weld Vertices (Mock)', 'Modeling'); }
+    connectComponents() { consoleService.info('Connect Components (Mock)', 'Modeling'); }
+    deleteSelectedFaces() { consoleService.info('Delete Faces (Mock)', 'Modeling'); }
 }
 
 export const engineInstance = new Engine();

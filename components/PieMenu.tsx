@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Icon } from './Icon';
 import { MeshComponentMode } from '../types';
 
@@ -13,48 +13,91 @@ interface PieMenuProps {
     entityId?: string;
 }
 
-// Root Nodes (The 4 main circles)
-const ROOT_NODES = [
-    { id: 'SELECTION', icon: 'MousePointer2', angle: 270, label: 'Select Mode' }, // Top
-    { id: 'ACTIONS', icon: 'Menu', angle: 0, label: 'Actions' },          // Right
-    { id: 'P3', icon: 'Circle', angle: 90, label: 'Empty' },              // Bottom
-    { id: 'P4', icon: 'Circle', angle: 180, label: 'Empty' }              // Left
-];
-
-// Sub Branches configuration
-const BRANCHES: Record<string, any[]> = {
-    'SELECTION': [
-        { id: 'VERTEX', icon: 'Dot', label: 'Vertex', type: 'MODE' },
-        { id: 'EDGE', icon: 'Minus', label: 'Edge', type: 'MODE' },
-        { id: 'FACE', icon: 'Square', label: 'Face', type: 'MODE' },
-        { id: 'OBJECT', icon: 'Box', label: 'Object', type: 'MODE' }
-    ],
-    'ACTIONS': [
-        { id: 'focus', icon: 'Scan', label: 'Focus', type: 'ACTION' },
-        { id: 'delete', icon: 'Trash2', label: 'Delete', color: '#ef4444', type: 'ACTION' },
-        { id: 'duplicate', icon: 'Copy', label: 'Duplicate', type: 'ACTION' }
-    ]
+// Helper to get coords
+const getPos = (deg: number, r: number) => {
+    const rad = deg * (Math.PI / 180);
+    return { x: Math.cos(rad) * r, y: Math.sin(rad) * r };
 };
 
 export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, onClose, currentMode }) => {
     const [activeBranch, setActiveBranch] = useState<string | null>(null);
     const [hoverItem, setHoverItem] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
-    
-    // To handle "sticky" sectors, we track the last valid branch in a ref
-    // This allows us to lock the branch when the mouse moves outside the center hub
     const activeBranchRef = useRef<string | null>(null);
     
-    // Radii configuration
-    const R1 = 40; // Distance to root nodes
-    const R2 = 85; // Distance to branch nodes
-    const NODE_R = 16; // Radius of the node circles
-    const SPREAD = 80; // Degrees spread for sub-items (Fit within 90deg sector)
-    
-    // LOCK_RADIUS: Distance from center where sector switching is disabled.
-    // Set to ~60px (midpoint between Root R1 and Leaf R2) to allow 
-    // switching when scrubbing between Root nodes (R=40).
-    const LOCK_RADIUS = 60; 
+    // Config
+    const R1 = 40; 
+    const R2 = 90; 
+    const NODE_R = 18; 
+    const SPREAD = 70;
+    const LOCK_RADIUS = 60;
+
+    // --- Dynamic Configuration ---
+    const config = useMemo(() => {
+        const selectionItems = [
+            { id: 'VERTEX', icon: 'Dot', label: 'Vertex', type: 'MODE' },
+            { id: 'EDGE', icon: 'Minus', label: 'Edge', type: 'MODE' },
+            { id: 'FACE', icon: 'Square', label: 'Face', type: 'MODE' },
+            { id: 'OBJECT', icon: 'Box', label: 'Object', type: 'MODE' }
+        ];
+
+        const toolItems = [
+            { id: 'tool_select', icon: 'MousePointer2', label: 'Select', type: 'ACTION' },
+            { id: 'tool_move', icon: 'Move', label: 'Move', type: 'ACTION' },
+            { id: 'tool_rotate', icon: 'RotateCw', label: 'Rotate', type: 'ACTION' },
+            { id: 'tool_scale', icon: 'Maximize', label: 'Scale', type: 'ACTION' }
+        ];
+
+        const viewItems = [
+            { id: 'toggle_grid', icon: 'Grid', label: 'Grid', type: 'ACTION' },
+            { id: 'toggle_wire', icon: 'Codepen', label: 'Wireframe', type: 'ACTION' },
+            { id: 'reset_cam', icon: 'Camera', label: 'Reset Cam', type: 'ACTION' }
+        ];
+
+        let actionItems: any[] = [];
+        if (currentMode === 'OBJECT') {
+            actionItems = [
+                { id: 'focus', icon: 'Scan', label: 'Focus', type: 'ACTION' },
+                { id: 'duplicate', icon: 'Copy', label: 'Duplicate', type: 'ACTION' },
+                { id: 'delete', icon: 'Trash2', label: 'Delete', color: '#ef4444', type: 'ACTION' }
+            ];
+        } else if (currentMode === 'FACE') {
+            actionItems = [
+                { id: 'extrude', icon: 'ArrowUpSquare', label: 'Extrude', type: 'ACTION' },
+                { id: 'inset', icon: 'Shrink', label: 'Inset', type: 'ACTION' },
+                { id: 'loop_face', icon: 'Repeat', label: 'Face Loop', type: 'ACTION' },
+                { id: 'delete_face', icon: 'Trash', label: 'Del Face', color: '#ef4444', type: 'ACTION' }
+            ];
+        } else if (currentMode === 'EDGE') {
+            actionItems = [
+                { id: 'bevel', icon: 'Ungroup', label: 'Bevel', type: 'ACTION' },
+                { id: 'bridge', icon: 'Link', label: 'Bridge', type: 'ACTION' },
+                { id: 'loop_edge', icon: 'RefreshCw', label: 'Edge Loop', type: 'ACTION' }
+            ];
+        } else if (currentMode === 'VERTEX') {
+            actionItems = [
+                { id: 'weld', icon: 'Merge', label: 'Weld', type: 'ACTION' },
+                { id: 'connect', icon: 'GitCommit', label: 'Connect', type: 'ACTION' },
+                { id: 'loop_vert', icon: 'CircleDashed', label: 'Vert Loop', type: 'ACTION' },
+                { id: 'collapse', icon: 'Minimize2', label: 'Collapse', type: 'ACTION' }
+            ];
+        }
+
+        return {
+            roots: [
+                { id: 'SELECTION', icon: 'MousePointer2', angle: 270, label: 'Mode' },
+                { id: 'ACTIONS', icon: 'Menu', angle: 0, label: 'Actions' },
+                { id: 'TOOLS', icon: 'Tool', angle: 90, label: 'Tools' },
+                { id: 'VIEW', icon: 'Eye', angle: 180, label: 'View' }
+            ],
+            branches: {
+                'SELECTION': selectionItems,
+                'ACTIONS': actionItems,
+                'TOOLS': toolItems,
+                'VIEW': viewItems
+            } as Record<string, any[]>
+        };
+    }, [currentMode]);
 
     useEffect(() => {
         const handleGlobalClick = () => onClose();
@@ -69,46 +112,32 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
             const dy = e.clientY - centerY;
             const dist = Math.sqrt(dx*dx + dy*dy);
             
-            // Normalize angle (0-360, 0 is Right)
             let angle = Math.atan2(dy, dx) * (180 / Math.PI);
             if (angle < 0) angle += 360;
 
-            // 1. Determine which Root Sector we are in based on Angle
+            // 1. Determine Root Sector (4 quadrants)
             let angleBranch = null;
-            // 4 sectors of 90 degrees, offset by 45
             if (angle >= 315 || angle < 45) angleBranch = 'ACTIONS';
-            else if (angle >= 225 && angle < 315) angleBranch = 'SELECTION';
-            // We ignore Bottom and Left for now as they are placeholders
+            else if (angle >= 45 && angle < 135) angleBranch = 'TOOLS';
+            else if (angle >= 135 && angle < 225) angleBranch = 'VIEW';
+            else angleBranch = 'SELECTION';
             
-            // 2. Logic for Sticky/Locked Branch
+            // 2. Sticky Logic
             let effectiveBranch = activeBranchRef.current;
+            if (dist < 10) effectiveBranch = null;
+            else if (dist < LOCK_RADIUS) effectiveBranch = angleBranch;
+            else if (!effectiveBranch) effectiveBranch = angleBranch;
 
-            if (dist < 10) {
-                // Deadzone center - Reset everything
-                effectiveBranch = null;
-            } else if (dist < LOCK_RADIUS) {
-                // Inside Hub/Root Ring - Free switching based on angle
-                // This allows moving from "Selection" Root Node to "Actions" Root Node freely
-                effectiveBranch = angleBranch;
-            } else {
-                // Outside Hub (reaching for leaves) - Locked to previous branch
-                // Prevents accidental switching when aiming for sub-items
-                if (!effectiveBranch) effectiveBranch = angleBranch;
-            }
-
-            // Sync State and Ref
             if (activeBranchRef.current !== effectiveBranch) {
                 activeBranchRef.current = effectiveBranch;
                 setActiveBranch(effectiveBranch);
             }
 
-            // 3. Check for item hover using Euclidean Distance
-            // CRITICAL: Only check children of the EFFECTIVE locked branch
+            // 3. Check Sub-Item Hover
             let itemHit = null;
-
-            if (effectiveBranch && BRANCHES[effectiveBranch]) {
-                const subItems = BRANCHES[effectiveBranch];
-                const rootNode = ROOT_NODES.find(n => n.id === effectiveBranch);
+            if (effectiveBranch && config.branches[effectiveBranch]) {
+                const subItems = config.branches[effectiveBranch];
+                const rootNode = config.roots.find(n => n.id === effectiveBranch);
                 const rootAngle = rootNode?.angle || 0;
                 
                 const startAngle = rootAngle - SPREAD / 2;
@@ -117,23 +146,18 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
                 for (let i = 0; i < subItems.length; i++) {
                     const itemAngle = startAngle + (i * step);
                     const rad = itemAngle * (Math.PI / 180);
-                    
-                    // Calculate expected position of this item
                     const ix = Math.cos(rad) * R2;
                     const iy = Math.sin(rad) * R2;
                     
-                    // Distance from mouse to item center
                     const distToItem = Math.sqrt((dx - ix) ** 2 + (dy - iy) ** 2);
-                    
-                    // Hit radius slightly larger than visual radius (20 vs 14-18)
-                    if (distToItem < 22) {
+                    if (distToItem < 25) { // Hit radius
                         itemHit = subItems[i].id;
                         break;
                     }
                 }
             }
 
-            // 4. Fallback to Root Node detection (only if in valid distance range)
+            // 4. Fallback to Root
             if (!itemHit && dist < (R1 + R2) / 2 && dist > 15) {
                 if (effectiveBranch) itemHit = effectiveBranch; 
             } 
@@ -143,32 +167,20 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
 
         const handleMouseUp = () => {
              if (hoverItem) {
-                 // Check if it is a sub-item action/mode
                  let found = false;
-                 
-                 // Check SELECTION items
-                 if (BRANCHES['SELECTION']) {
-                     const selItem = BRANCHES['SELECTION'].find(i => i.id === hoverItem);
-                     if (selItem) {
-                         onSelectMode(selItem.id as MeshComponentMode);
+                 // Check all branches
+                 Object.values(config.branches).forEach((items: any[]) => {
+                     const item = items.find((i: any) => i.id === hoverItem);
+                     if (item) {
+                         if (item.type === 'MODE') onSelectMode(item.id as MeshComponentMode);
+                         else onAction(item.id);
                          found = true;
                      }
-                 }
-                 
-                 // Check ACTIONS items
-                 if (!found && BRANCHES['ACTIONS']) {
-                     const actItem = BRANCHES['ACTIONS'].find(i => i.id === hoverItem);
-                     if (actItem) {
-                         onAction(actItem.id);
-                         found = true;
-                     }
-                 }
-                 
+                 });
                  if (found) onClose();
              }
         };
         
-        // Delay global click to prevent immediate close if spawned by click
         const t = setTimeout(() => window.addEventListener('click', handleGlobalClick), 50);
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
@@ -182,13 +194,7 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
             window.removeEventListener('mouseup', handleMouseUp);
             window.removeEventListener('contextmenu', preventContext);
         };
-    }, [onClose, onSelectMode, onAction, hoverItem]); // Added hoverItem dependency for safety in closure
-
-    // Helper to get coords
-    const getPos = (deg: number, r: number) => {
-        const rad = deg * (Math.PI / 180);
-        return { x: Math.cos(rad) * r, y: Math.sin(rad) * r };
-    };
+    }, [onClose, onSelectMode, onAction, hoverItem, config]);
 
     return (
         <div 
@@ -196,128 +202,88 @@ export const PieMenu: React.FC<PieMenuProps> = ({ x, y, onSelectMode, onAction, 
             className="fixed z-[9999] select-none pointer-events-auto" 
             style={{ left: x - 150, top: y - 150, width: 300, height: 300 }}
         >
+            <div className="absolute inset-0 bg-black/20 blur-xl rounded-full scale-75 pointer-events-none" />
             <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
                 <g transform="translate(150, 150)">
-                    
-                    {/* --- ROOT LEVEL --- */}
-                    {ROOT_NODES.map(node => {
+                    {/* ROOT NODES */}
+                    {config.roots.map(node => {
                         const pos = getPos(node.angle, R1);
                         const isBranchActive = activeBranch === node.id;
                         const isHovered = hoverItem === node.id;
-                        const isPlaceholder = node.id.startsWith('P');
                         
                         return (
                             <g key={node.id} className="transition-all duration-200">
-                                {/* Connector Line */}
                                 <line 
                                     x1={0} y1={0} x2={pos.x} y2={pos.y}
-                                    stroke={isBranchActive ? '#4f80f8' : (isPlaceholder ? '#333' : '#555')}
-                                    strokeWidth={1}
-                                    className="transition-colors duration-200"
+                                    stroke={isBranchActive ? '#4f80f8' : '#333'}
+                                    strokeWidth={isBranchActive ? 2 : 1}
                                 />
-                                
-                                {/* Node Circle (Hollow) */}
                                 <circle 
                                     cx={pos.x} cy={pos.y} r={NODE_R}
-                                    fill="#101010"
-                                    fillOpacity={0.9}
-                                    stroke={isBranchActive ? '#4f80f8' : (isPlaceholder ? '#333' : '#666')}
+                                    fill="#151515"
+                                    stroke={isBranchActive ? '#4f80f8' : '#444'}
                                     strokeWidth={isBranchActive || isHovered ? 2 : 1}
-                                    className="transition-all duration-200"
                                 />
-
-                                {/* Icon */}
-                                <foreignObject 
-                                    x={pos.x - 8} y={pos.y - 8} width="16" height="16"
-                                    className="pointer-events-none"
-                                >
+                                <foreignObject x={pos.x - 8} y={pos.y - 8} width="16" height="16">
                                     <div className={`flex items-center justify-center w-full h-full ${isBranchActive ? 'text-accent' : 'text-gray-400'}`}>
                                         <Icon name={node.icon as any} size={16} />
                                     </div>
                                 </foreignObject>
-                                
-                                {/* Label (If Hovered Root) */}
-                                {isHovered && !isPlaceholder && (
-                                    <text 
-                                        x={pos.x} y={pos.y + 30} 
-                                        textAnchor="middle" fill="white" fontSize="10" fontWeight="bold"
-                                        className="drop-shadow-md"
-                                    >
-                                        {node.label}
-                                    </text>
+                                {isHovered && (
+                                    <text x={pos.x} y={pos.y + 35} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold" className="drop-shadow-md">{node.label}</text>
                                 )}
                             </g>
                         );
                     })}
 
-                    {/* --- BRANCH LEVEL --- */}
-                    {activeBranch && BRANCHES[activeBranch] && BRANCHES[activeBranch].map((item, i) => {
-                        const rootAngle = ROOT_NODES.find(n => n.id === activeBranch)?.angle || 0;
-                        const count = BRANCHES[activeBranch].length;
-                        const spread = SPREAD; 
-                        const startAngle = rootAngle - spread / 2;
-                        const step = spread / (count - 1 || 1);
+                    {/* BRANCH NODES */}
+                    {activeBranch && config.branches[activeBranch]?.map((item, i) => {
+                        const rootNode = config.roots.find(n => n.id === activeBranch)!;
+                        const count = config.branches[activeBranch].length;
+                        const startAngle = rootNode.angle - SPREAD / 2;
+                        const step = SPREAD / (count - 1 || 1);
                         const angle = startAngle + (i * step);
                         
                         const pos = getPos(angle, R2);
-                        const rootPos = getPos(rootAngle, R1);
+                        const rootPos = getPos(rootNode.angle, R1);
                         
                         const isHovered = hoverItem === item.id;
-                        const isActiveMode = currentMode === item.id;
-                        const isRelevant = isHovered || isActiveMode;
+                        const isSelected = (item.type === 'MODE' && currentMode === item.id);
                         
                         return (
                             <g key={item.id} className="animate-in fade-in zoom-in-90 duration-150">
-                                {/* Connector from Root to Branch Node */}
                                 <path 
-                                    d={`M ${rootPos.x} ${rootPos.y} Q ${rootPos.x * 1.2} ${rootPos.y * 1.2} ${pos.x} ${pos.y}`}
+                                    d={`M ${rootPos.x} ${rootPos.y} Q ${rootPos.x * 1.3} ${rootPos.y * 1.3} ${pos.x} ${pos.y}`}
                                     fill="none"
-                                    stroke={isRelevant ? '#4f80f8' : '#444'}
+                                    stroke={isHovered || isSelected ? '#4f80f8' : '#444'}
                                     strokeWidth={1}
-                                    strokeDasharray={isRelevant ? "0" : "2,2"}
+                                    strokeDasharray={isHovered || isSelected ? "0" : "2,2"}
                                 />
-
-                                {/* Sub Node Circle */}
                                 <circle 
-                                    cx={pos.x} cy={pos.y} r={isHovered ? 18 : 14}
-                                    fill="#101010"
-                                    stroke={isRelevant ? (item.color || '#4f80f8') : '#555'}
-                                    strokeWidth={isRelevant ? 2 : 1}
+                                    cx={pos.x} cy={pos.y} r={isHovered ? 22 : 18}
+                                    fill="#151515"
+                                    stroke={isSelected || isHovered ? (item.color || '#4f80f8') : '#555'}
+                                    strokeWidth={isSelected || isHovered ? 2 : 1}
                                     className="transition-all duration-150"
                                 />
-
-                                {/* Icon */}
-                                <foreignObject 
-                                    x={pos.x - 8} y={pos.y - 8} width="16" height="16"
-                                    className="pointer-events-none"
-                                >
-                                    <div className={`flex items-center justify-center w-full h-full ${isRelevant ? (item.color ? '' : 'text-white') : 'text-gray-500'}`} style={{ color: (isRelevant && item.color) ? item.color : undefined }}>
-                                        <Icon name={item.icon as any} size={14} />
+                                <foreignObject x={pos.x - 8} y={pos.y - 8} width="16" height="16">
+                                    <div className={`flex items-center justify-center w-full h-full ${isSelected || isHovered ? (item.color ? '' : 'text-white') : 'text-gray-500'}`} style={{ color: (isSelected || isHovered) ? item.color : undefined }}>
+                                        <Icon name={item.icon as any} size={16} />
                                     </div>
                                 </foreignObject>
-
-                                {/* Label on Hover or Active */}
-                                {(isHovered || isActiveMode) && (
+                                {(isHovered || isSelected) && (
                                     <g>
-                                        <rect 
-                                            x={pos.x - 30} y={pos.y + 20} width="60" height="16" rx="4"
-                                            fill="black" fillOpacity="0.8"
-                                        />
-                                        <text 
-                                            x={pos.x} y={pos.y + 31} 
-                                            textAnchor="middle" fill={item.color || "white"} fontSize="9" fontWeight="bold"
-                                        >
-                                            {item.label}
-                                        </text>
+                                        <rect x={pos.x - 30} y={pos.y + 24} width="60" height="16" rx="4" fill="black" fillOpacity="0.8" />
+                                        <text x={pos.x} y={pos.y + 35} textAnchor="middle" fill={item.color || "white"} fontSize="10" fontWeight="bold">{item.label}</text>
                                     </g>
                                 )}
                             </g>
                         );
                     })}
-
-                    {/* Center Dot (Pivot) */}
-                    <circle cx="0" cy="0" r="3" fill="white" className="drop-shadow-lg" />
-                    <circle cx="0" cy="0" r="8" fill="none" stroke="white" strokeOpacity="0.3" />
+                    
+                    {/* CENTER */}
+                    <circle cx="0" cy="0" r="4" fill="white" className="drop-shadow-lg" />
+                    <circle cx="0" cy="0" r="12" fill="none" stroke="white" strokeOpacity="0.2" />
                 </g>
             </svg>
         </div>

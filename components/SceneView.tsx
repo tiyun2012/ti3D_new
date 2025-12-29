@@ -29,7 +29,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         softSelectionRadius, setSoftSelectionRadius,
         softSelectionMode, 
         softSelectionFalloff,
-        softSelectionHeatmapVisible
+        softSelectionHeatmapVisible,
+        setTool
     } = useContext(EditorContext)!;
     
     // [FIX] Sync EditorContext state to Engine Instance
@@ -208,6 +209,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     onSelect([hitId]);
                 }
                 setPieMenuState({ x: e.clientX, y: e.clientY, entityId: hitId });
+            } else if (selectedIds.length > 0) {
+                // Open pie menu even if clicking void but having selection (for mode switch)
+                setPieMenuState({ x: e.clientX, y: e.clientY });
             }
             return;
         }
@@ -227,9 +231,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     componentHit = true;
                     
                     if (!e.shiftKey) {
-                        // For loop selection, we might keep existing selection if explicitly adding
-                        // But standard behavior: Alt+Click replaces selection with the loop unless Shift is also held?
-                        // Actually, common pattern: Alt+Click creates loop. If Shift not held, clear others.
                         engineInstance.subSelection.vertexIds.clear();
                         engineInstance.subSelection.edgeIds.clear();
                         engineInstance.subSelection.faceIds.clear();
@@ -512,6 +513,38 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         setIsViewMenuOpen(false); 
     };
 
+    const handlePieAction = (action: string) => {
+        // --- SELECTION TOOLS ---
+        if (action === 'tool_select') setTool('SELECT');
+        if (action === 'tool_move') setTool('MOVE');
+        if (action === 'tool_rotate') setTool('ROTATE');
+        if (action === 'tool_scale') setTool('SCALE');
+
+        // --- VIEW ---
+        if (action === 'toggle_grid') engineInstance.toggleGrid();
+        if (action === 'toggle_wire') handleModeSelect(3); // Wireframe
+        if (action === 'reset_cam') handleFocus();
+
+        // --- OBJECT ACTIONS ---
+        if (action === 'delete') { selectedIds.forEach(id => engineInstance.deleteEntity(id, sceneGraph)); onSelect([]); }
+        if (action === 'duplicate') { selectedIds.forEach(id => engineInstance.duplicateEntity(id)); }
+        if (action === 'focus') { handleFocus(); }
+
+        // --- MESH EDIT ACTIONS ---
+        if (action === 'extrude') engineInstance.extrudeFaces();
+        if (action === 'bevel') engineInstance.bevelEdges();
+        if (action === 'weld') engineInstance.weldVertices();
+        if (action === 'connect') engineInstance.connectComponents();
+        if (action === 'delete_face') engineInstance.deleteSelectedFaces();
+        
+        // --- LOOP SELECTION ACTIONS ---
+        if (action === 'loop_vert') engineInstance.selectLoop('VERTEX');
+        if (action === 'loop_edge') engineInstance.selectLoop('EDGE');
+        if (action === 'loop_face') engineInstance.selectLoop('FACE');
+        
+        setPieMenuState(null);
+    };
+
     return (
         <div ref={containerRef} 
              className={`w-full h-full bg-[#151515] relative overflow-hidden select-none group/scene ${isAdjustingBrush ? 'cursor-ew-resize' : (dragState ? (dragState.mode === 'PAN' ? 'cursor-move' : 'cursor-grabbing') : 'cursor-default')}`} 
@@ -582,12 +615,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     entityId={pieMenuState.entityId}
                     currentMode={meshComponentMode}
                     onSelectMode={(m) => { setMeshComponentMode(m); setPieMenuState(null); }}
-                    onAction={(a) => {
-                        if(a === 'delete') { selectedIds.forEach(id => engineInstance.deleteEntity(id, sceneGraph)); onSelect([]); }
-                        if(a === 'duplicate') { selectedIds.forEach(id => engineInstance.duplicateEntity(id)); }
-                        if(a === 'focus') { handleFocus(); }
-                        setPieMenuState(null);
-                    }}
+                    onAction={handlePieAction}
                     onClose={() => setPieMenuState(null)}
                 />, 
                 document.body
