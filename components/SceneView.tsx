@@ -171,8 +171,72 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => cancelAnimationFrame(frameId);
     }, [camera, softSelectionEnabled, softSelectionRadius]); 
 
-    // Focus Camera Logic (Enhanced for Multi-Selection)
+    // Focus Camera Logic (Enhanced for Multi-Selection and Component Modes)
     const handleFocus = useCallback(() => {
+        // 1. Component Mode Focus
+        if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
+            const entityId = selectedIds[0];
+            const idx = engineInstance.ecs.idToIndex.get(entityId);
+            if (idx === undefined) return;
+
+            const meshIntId = engineInstance.ecs.store.meshType[idx];
+            const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+            if (!assetUuid) return;
+            const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+            if (!asset) return;
+
+            const worldMat = engineInstance.sceneGraph.getWorldMatrix(entityId);
+            if (!worldMat) return;
+
+            const vertices = asset.geometry.vertices;
+            let cx = 0, cy = 0, cz = 0;
+            let count = 0;
+
+            const addVertex = (vIdx: number) => {
+                const x = vertices[vIdx*3];
+                const y = vertices[vIdx*3+1];
+                const z = vertices[vIdx*3+2];
+                // Transform to world
+                const wx = worldMat[0]*x + worldMat[4]*y + worldMat[8]*z + worldMat[12];
+                const wy = worldMat[1]*x + worldMat[5]*y + worldMat[9]*z + worldMat[13];
+                const wz = worldMat[2]*x + worldMat[6]*y + worldMat[10]*z + worldMat[14];
+                cx += wx; cy += wy; cz += wz;
+                count++;
+            };
+
+            if (meshComponentMode === 'VERTEX') {
+                engineInstance.subSelection.vertexIds.forEach(v => addVertex(v));
+            } else if (meshComponentMode === 'EDGE') {
+                engineInstance.subSelection.edgeIds.forEach(key => {
+                    const [v1, v2] = key.split('-').map(Number);
+                    addVertex(v1); addVertex(v2);
+                });
+            } else if (meshComponentMode === 'FACE') {
+                const topo = asset.topology;
+                engineInstance.subSelection.faceIds.forEach(fIdx => {
+                    if (topo) {
+                        topo.faces[fIdx].forEach(v => addVertex(v));
+                    } else {
+                        // Fallback
+                        const idxs = asset.geometry.indices;
+                        addVertex(idxs[fIdx*3]);
+                        addVertex(idxs[fIdx*3+1]);
+                        addVertex(idxs[fIdx*3+2]);
+                    }
+                });
+            }
+
+            if (count > 0) {
+                setCamera(prev => ({ 
+                    ...prev, 
+                    target: { x: cx/count, y: cy/count, z: cz/count },
+                    radius: Math.max(1.5, prev.radius * 0.4) // Closer zoom for components
+                }));
+                return;
+            }
+        }
+
+        // 2. Object Mode Focus
         if (selectedIds.length > 0) {
             let cx = 0, cy = 0, cz = 0;
             let count = 0;
@@ -188,13 +252,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 setCamera(prev => ({ 
                     ...prev, 
                     target, 
-                    radius: Math.max(3.0, prev.radius * 0.5) // Zoom somewhat but keep distance reasonable
+                    radius: Math.max(3.0, prev.radius * 0.5) 
                 }));
             }
         } else {
             setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
         }
-    }, [selectedIds, sceneGraph]);
+    }, [selectedIds, sceneGraph, meshComponentMode]);
 
     // Keyboard 'F' for Focus
     useEffect(() => {
