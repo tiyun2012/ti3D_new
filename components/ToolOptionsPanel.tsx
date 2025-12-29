@@ -2,7 +2,7 @@
 import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { Icon } from './Icon';
-import { TransformSpace } from '../types';
+import { TransformSpace, SoftSelectionFalloff } from '../types';
 import { Select } from './ui/Select';
 
 // Tool Specific Options
@@ -32,6 +32,11 @@ const SOFT_SEL_MODES = [
     { label: 'Dynamic (Volume)', value: 'DYNAMIC' }
 ];
 
+const SOFT_SEL_FALLOFF = [
+    { label: 'Volume (Euclidean)', value: 'VOLUME' },
+    { label: 'Surface (Geodesic)', value: 'SURFACE' }
+];
+
 export const ToolOptionsPanel: React.FC = () => {
     const { 
         tool,
@@ -40,6 +45,7 @@ export const ToolOptionsPanel: React.FC = () => {
         softSelectionEnabled, setSoftSelectionEnabled,
         softSelectionRadius, setSoftSelectionRadius,
         softSelectionMode, setSoftSelectionMode,
+        softSelectionFalloff, setSoftSelectionFalloff,
         softSelectionHeatmapVisible, setSoftSelectionHeatmapVisible,
         snapSettings, setSnapSettings
     } = useContext(EditorContext)!;
@@ -235,6 +241,15 @@ export const ToolOptionsPanel: React.FC = () => {
                                             value={softSelectionMode} 
                                             options={SOFT_SEL_MODES} 
                                             onChange={(v) => setSoftSelectionMode(v as any)} 
+                                            className="w-full"
+                                        />
+                                    </div>
+                                    <div className="space-y-1 pt-1">
+                                        <span className="text-[10px] text-text-secondary">Distance Type</span>
+                                        <Select 
+                                            value={softSelectionFalloff} 
+                                            options={SOFT_SEL_FALLOFF} 
+                                            onChange={(v) => setSoftSelectionFalloff(v as any)} 
                                             className="w-full"
                                         />
                                     </div>

@@ -12,6 +12,7 @@ export type RotationOrder = 'XYZ' | 'XZY' | 'YXZ' | 'YZX' | 'ZXY' | 'ZYX';
 export type TransformSpace = 'World' | 'Local' | 'Gimbal' | 'Parent' | 'VirtualPivot' | 'Normal' | 'Average' | 'Object' | 'Screen';
 export type MeshComponentMode = 'OBJECT' | 'VERTEX' | 'EDGE' | 'FACE';
 export type SimulationMode = 'STOPPED' | 'GAME' | 'SIMULATE';
+export type SoftSelectionFalloff = 'VOLUME' | 'SURFACE'; // New Type
 
 export enum ComponentType {
   TRANSFORM = 'Transform',

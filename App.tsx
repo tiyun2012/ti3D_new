@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance, SoftSelectionMode } from './services/engine';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from './types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from './types';
 import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
 import { consoleService } from './services/Console';
@@ -258,6 +258,7 @@ const App: React.FC = () => {
     const [softSelectionEnabled, setSoftSelectionEnabled] = useState(false);
     const [softSelectionRadius, setSoftSelectionRadius] = useState(2.0);
     const [softSelectionMode, setSoftSelectionMode] = useState<SoftSelectionMode>('FIXED');
+    const [softSelectionFalloff, setSoftSelectionFalloff] = useState<SoftSelectionFalloff>('VOLUME');
     const [softSelectionHeatmapVisible, setSoftSelectionHeatmapVisible] = useState(true);
 
     // New State for Simulation
@@ -322,6 +323,8 @@ const App: React.FC = () => {
         setSoftSelectionRadius,
         softSelectionMode,
         setSoftSelectionMode,
+        softSelectionFalloff,
+        setSoftSelectionFalloff,
         softSelectionHeatmapVisible,
         setSoftSelectionHeatmapVisible,
         tool,
@@ -340,7 +343,7 @@ const App: React.FC = () => {
         entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
         selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
         snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius, softSelectionMode,
-        softSelectionHeatmapVisible
+        softSelectionFalloff, softSelectionHeatmapVisible
     ]);
 
     return (

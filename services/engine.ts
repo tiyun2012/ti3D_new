@@ -8,7 +8,7 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3 } from '../types';
+import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff } from '../types';
 import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
@@ -48,6 +48,7 @@ export class Engine {
     softSelectionEnabled: boolean = false;
     softSelectionRadius: number = 2.0;
     softSelectionMode: SoftSelectionMode = 'FIXED';
+    softSelectionFalloff: SoftSelectionFalloff = 'VOLUME'; // Default to simple
     softSelectionHeatmapVisible: boolean = true;
     
     // Cached weights for the current selection
@@ -218,29 +219,6 @@ export class Engine {
         const sourceVerts = useSnapshot ? this.vertexSnapshot! : asset.geometry.vertices;
         const vertexCount = sourceVerts.length / 3;
         
-        let weights = this.softSelectionWeights.get(meshIntId);
-        if (!weights || weights.length !== vertexCount) {
-            weights = new Float32Array(vertexCount);
-            this.softSelectionWeights.set(meshIntId, weights);
-        }
-        
-        const selection = Array.from(this.subSelection.vertexIds);
-        if (selection.length === 0) {
-            weights.fill(0);
-            this.meshSystem.updateSoftSelectionBuffer(meshIntId, weights);
-            return;
-        }
-
-        // Calculate Centroid in Local Space (using source vertices)
-        const centroid = {x:0, y:0, z:0};
-        for(const vid of selection) {
-            centroid.x += sourceVerts[vid*3];
-            centroid.y += sourceVerts[vid*3+1];
-            centroid.z += sourceVerts[vid*3+2];
-        }
-        const invLen = 1.0 / selection.length;
-        centroid.x *= invLen; centroid.y *= invLen; centroid.z *= invLen;
-
         // Convert Radius to Local Space
         const sx = this.ecs.store.scaleX[idx];
         const sy = this.ecs.store.scaleY[idx];
@@ -248,28 +226,58 @@ export class Engine {
         const maxScale = Math.max(sx, Math.max(sy, sz)) || 1.0;
         const localRadius = this.softSelectionRadius / maxScale;
 
-        // Populate Weights
-        for (let i = 0; i < vertexCount; i++) {
-            if (this.subSelection.vertexIds.has(i)) {
-                weights[i] = 1.0;
-                continue;
-            }
-            const vx = sourceVerts[i*3], vy = sourceVerts[i*3+1], vz = sourceVerts[i*3+2];
-            const dist = Math.sqrt((vx-centroid.x)**2 + (vy-centroid.y)**2 + (vz-centroid.z)**2);
+        let weights: Float32Array;
+
+        if (this.softSelectionFalloff === 'SURFACE') {
+            // Geodesic Distance
+            weights = MeshTopologyUtils.computeSurfaceWeights(
+                asset.geometry.indices,
+                sourceVerts,
+                this.subSelection.vertexIds,
+                localRadius,
+                vertexCount
+            );
+        } else {
+            // Euclidean Distance (Volume)
+            weights = this.softSelectionWeights.get(meshIntId) || new Float32Array(vertexCount);
             
-            if (dist <= localRadius) {
-                const t = 1.0 - (dist / localRadius);
-                weights[i] = t * t * (3 - 2 * t); // SmoothStep falloff
+            // Calculate Centroid in Local Space (using source vertices)
+            const centroid = {x:0, y:0, z:0};
+            const selection = Array.from(this.subSelection.vertexIds);
+            if (selection.length > 0) {
+                for(const vid of selection) {
+                    centroid.x += sourceVerts[vid*3];
+                    centroid.y += sourceVerts[vid*3+1];
+                    centroid.z += sourceVerts[vid*3+2];
+                }
+                const invLen = 1.0 / selection.length;
+                centroid.x *= invLen; centroid.y *= invLen; centroid.z *= invLen;
+
+                // Populate Weights
+                for (let i = 0; i < vertexCount; i++) {
+                    if (this.subSelection.vertexIds.has(i)) {
+                        weights[i] = 1.0;
+                        continue;
+                    }
+                    const vx = sourceVerts[i*3], vy = sourceVerts[i*3+1], vz = sourceVerts[i*3+2];
+                    const dist = Math.sqrt((vx-centroid.x)**2 + (vy-centroid.y)**2 + (vz-centroid.z)**2);
+                    
+                    if (dist <= localRadius) {
+                        const t = 1.0 - (dist / localRadius);
+                        weights[i] = t * t * (3 - 2 * t); // SmoothStep falloff
+                    } else {
+                        weights[i] = 0.0;
+                    }
+                }
             } else {
-                weights[i] = 0.0;
+                weights.fill(0);
             }
         }
 
+        this.softSelectionWeights.set(meshIntId, weights);
         this.meshSystem.updateSoftSelectionBuffer(meshIntId, weights);
 
         // If dragging and triggered by radius change, update deformation immediately
-        // Only applicable for FIXED mode where we can re-apply delta to snapshot.
-        // In DYNAMIC mode, we can't re-play the history on radius change easily.
         if (triggerDeformation && this.vertexSnapshot && this.activeDeformationEntity && this.softSelectionMode === 'FIXED') {
             this.applyDeformation(this.activeDeformationEntity);
         }

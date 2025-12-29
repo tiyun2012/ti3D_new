@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from '../types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import type { SoftSelectionMode } from '../services/engine';
 
@@ -100,6 +100,8 @@ export interface EditorContextType {
   setSoftSelectionRadius: (radius: number) => void;
   softSelectionMode: SoftSelectionMode;
   setSoftSelectionMode: (mode: SoftSelectionMode) => void;
+  softSelectionFalloff: SoftSelectionFalloff; // New
+  setSoftSelectionFalloff: (type: SoftSelectionFalloff) => void; // New
   softSelectionHeatmapVisible: boolean;
   setSoftSelectionHeatmapVisible: (visible: boolean) => void;
 

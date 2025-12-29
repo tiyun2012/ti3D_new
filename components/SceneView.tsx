@@ -25,6 +25,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         softSelectionEnabled, setSoftSelectionEnabled,
         softSelectionRadius, setSoftSelectionRadius,
         softSelectionMode, // New context prop
+        softSelectionFalloff,
         softSelectionHeatmapVisible
     } = useContext(EditorContext)!;
     
@@ -34,9 +35,10 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         engineInstance.softSelectionEnabled = softSelectionEnabled;
         engineInstance.softSelectionRadius = softSelectionRadius;
         engineInstance.softSelectionMode = softSelectionMode;
+        engineInstance.softSelectionFalloff = softSelectionFalloff;
         engineInstance.softSelectionHeatmapVisible = softSelectionHeatmapVisible;
         engineInstance.recalculateSoftSelection(); // Recalculate weights on mode/radius change
-    }, [meshComponentMode, softSelectionEnabled, softSelectionRadius, softSelectionMode, softSelectionHeatmapVisible]);
+    }, [meshComponentMode, softSelectionEnabled, softSelectionRadius, softSelectionMode, softSelectionFalloff, softSelectionHeatmapVisible]);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
