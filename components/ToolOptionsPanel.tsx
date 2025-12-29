@@ -3,6 +3,29 @@ import React, { useContext } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { Icon } from './Icon';
 import { TransformSpace } from '../types';
+import { Select } from './ui/Select';
+
+// Tool Specific Options
+const MOVE_OPTIONS = [
+    { label: 'Local', value: 'Local' },
+    { label: 'Parent', value: 'Parent' },
+    { label: 'Virtual Pivot', value: 'VirtualPivot' },
+    { label: 'World', value: 'World' },
+    { label: 'Normal', value: 'Normal' },
+    { label: 'Average Component', value: 'Average' }
+];
+
+const ROTATE_OPTIONS = [
+    { label: 'World', value: 'World' },
+    { label: 'Object', value: 'Object' },
+    { label: 'Gimbal', value: 'Gimbal' },
+    { label: 'Virtual Pivot', value: 'VirtualPivot' }
+];
+
+const SCALE_OPTIONS = [
+    { label: 'World', value: 'World' },
+    { label: 'Local', value: 'Local' }
+];
 
 export const ToolOptionsPanel: React.FC = () => {
     const { 
@@ -13,6 +36,11 @@ export const ToolOptionsPanel: React.FC = () => {
         softSelectionRadius, setSoftSelectionRadius,
         snapSettings, setSnapSettings
     } = useContext(EditorContext)!;
+
+    // Helper to safely set space if current space isn't in new options
+    const handleSpaceChange = (val: string | number) => {
+        setTransformSpace(val as TransformSpace);
+    };
 
     return (
         <div className="h-full bg-panel flex flex-col font-sans">
@@ -45,19 +73,13 @@ export const ToolOptionsPanel: React.FC = () => {
                                 <div className="flex justify-between items-center mb-1">
                                     <span className="text-xs text-text-primary">Coordinate Space</span>
                                 </div>
-                                <div className="flex bg-black/40 rounded p-0.5 border border-white/5">
-                                    <button 
-                                        onClick={() => setTransformSpace('World')} 
-                                        className={`flex-1 py-1 text-[10px] rounded transition-colors ${transformSpace === 'World' ? 'bg-white/20 text-white font-bold' : 'text-text-secondary hover:text-white'}`}
-                                    >
-                                        World
-                                    </button>
-                                    <button 
-                                        onClick={() => setTransformSpace('Local')} 
-                                        className={`flex-1 py-1 text-[10px] rounded transition-colors ${transformSpace === 'Local' ? 'bg-white/20 text-white font-bold' : 'text-text-secondary hover:text-white'}`}
-                                    >
-                                        Local
-                                    </button>
+                                <div className="mt-1">
+                                    <Select 
+                                        value={transformSpace} 
+                                        options={MOVE_OPTIONS} 
+                                        onChange={handleSpaceChange} 
+                                        className="w-full"
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -72,26 +94,22 @@ export const ToolOptionsPanel: React.FC = () => {
                                 <div className="flex justify-between items-center mb-1">
                                     <span className="text-xs text-text-primary">Coordinate Space</span>
                                 </div>
-                                <div className="flex bg-black/40 rounded p-0.5 border border-white/5">
-                                    <button 
-                                        onClick={() => setTransformSpace('World')} 
-                                        className={`flex-1 py-1 text-[10px] rounded transition-colors ${transformSpace === 'World' ? 'bg-white/20 text-white font-bold' : 'text-text-secondary hover:text-white'}`}
-                                    >
-                                        World
-                                    </button>
-                                    <button 
-                                        onClick={() => setTransformSpace('Local')} 
-                                        className={`flex-1 py-1 text-[10px] rounded transition-colors ${transformSpace === 'Local' ? 'bg-white/20 text-white font-bold' : 'text-text-secondary hover:text-white'}`}
-                                    >
-                                        Local
-                                    </button>
+                                <div className="mt-1">
+                                    <Select 
+                                        value={transformSpace} 
+                                        options={ROTATE_OPTIONS} 
+                                        onChange={handleSpaceChange} 
+                                        className="w-full"
+                                    />
                                 </div>
                                 
                                 {/* Placeholder for visual feedback */}
-                                <div className="mt-2 text-[10px] text-text-secondary opacity-50 flex items-center gap-2 p-1 border border-dashed border-white/10 rounded">
-                                    <Icon name="CircleDashed" size={10} />
-                                    <span>Gimbal Lock Visualizer (Coming Soon)</span>
-                                </div>
+                                {transformSpace === 'Gimbal' && (
+                                    <div className="mt-2 text-[10px] text-accent opacity-80 flex items-center gap-2 p-1 border border-dashed border-accent/30 rounded">
+                                        <Icon name="CircleDashed" size={10} />
+                                        <span>Gimbal Rings Active</span>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -102,12 +120,19 @@ export const ToolOptionsPanel: React.FC = () => {
                                 <Icon name="Maximize" size={12} /> Scale Settings
                             </div>
                             <div className="bg-black/20 p-2 rounded border border-white/5 text-[10px] text-text-secondary">
-                                <div className="flex items-center justify-between opacity-50 cursor-not-allowed">
-                                    <span>Uniform Scale</span>
-                                    <input type="checkbox" checked disabled />
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-xs text-text-primary">Coordinate Space</span>
+                                </div>
+                                <div className="mt-1">
+                                    <Select 
+                                        value={transformSpace} 
+                                        options={SCALE_OPTIONS} 
+                                        onChange={handleSpaceChange} 
+                                        className="w-full"
+                                    />
                                 </div>
                                 <div className="mt-2 text-[9px] opacity-40">
-                                    Scale tools are currently always local.
+                                    Use 'World' to scale multiple objects relative to selection center.
                                 </div>
                             </div>
                         </div>
