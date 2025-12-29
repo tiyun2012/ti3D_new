@@ -23,9 +23,19 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const { 
         meshComponentMode, setMeshComponentMode, 
         softSelectionEnabled, setSoftSelectionEnabled,
-        softSelectionRadius, setSoftSelectionRadius
+        softSelectionRadius, setSoftSelectionRadius,
+        softSelectionMode // New context prop
     } = useContext(EditorContext)!;
     
+    // [FIX] Sync EditorContext state to Engine Instance
+    useEffect(() => {
+        engineInstance.meshComponentMode = meshComponentMode;
+        engineInstance.softSelectionEnabled = softSelectionEnabled;
+        engineInstance.softSelectionRadius = softSelectionRadius;
+        engineInstance.softSelectionMode = softSelectionMode;
+        engineInstance.recalculateSoftSelection(); // Recalculate weights on mode/radius change
+    }, [meshComponentMode, softSelectionEnabled, softSelectionRadius, softSelectionMode]);
+
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const viewMenuRef = useRef<HTMLDivElement>(null);
@@ -137,9 +147,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 // Find center of selection
                 const entityId = engineInstance.ecs.store.ids[Array.from(engineInstance.selectedIndices)[0]];
                 if (entityId) {
-                    const worldPos = engineInstance.sceneGraph.getWorldPosition(entityId); // Approximate center
-                    // Draw Sphere
-                    // Simple ring drawing logic
+                    const worldPos = engineInstance.sceneGraph.getWorldPosition(entityId); 
+                    // Note: This ring is approximate. The real weighting happens on CPU now.
+                    // But visual ring is still helpful for adjusting radius.
                     const segments = 32;
                     const rad = softSelectionRadius;
                     const prev = { x: worldPos.x + rad, y: worldPos.y, z: worldPos.z };
@@ -184,11 +194,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
         // 0. Soft Selection Radius Adjustment (Alt + B + Left Drag)
         if (e.altKey && e.button === 0 && meshComponentMode === 'VERTEX') {
-            // Check for B key (Requires window listener, but we can assume user holds B based on logic below or just use Alt+Drag if we simplify)
-            // But user asked for Alt+B specifically. 
-            // We'll handle B key via global listener, but trigger drag here.
-            // Simplified: If just Alt+Click in vertex mode, maybe trigger camera? 
-            // We need to know if B is pressed.
+            // Handled by global listeners below
         }
 
         // 1. GIZMO CHECK
@@ -226,6 +232,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     const id = engineInstance.hoveredVertex.index;
                     if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
                     else engineInstance.subSelection.vertexIds.add(id);
+                    engineInstance.recalculateSoftSelection(); // Recalculate weights on selection change
                     engineInstance.notifyUI();
                     return;
                 }
@@ -332,11 +339,10 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
         if (isAdjustingBrush) {
             const dx = e.clientX - brushStartPos.current.x;
-            // Drag Right increases, Left decreases
             const sensitivity = 0.05;
             const newRad = Math.max(0.1, brushStartPos.current.startRadius + dx * sensitivity);
             setSoftSelectionRadius(newRad);
-            return; // Consume event
+            return;
         }
 
         gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
@@ -391,21 +397,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key.toLowerCase() === 'b' && e.altKey) {
                 if (meshComponentMode === 'VERTEX') {
-                    // Activate Soft Selection if off
                     if (!softSelectionEnabled) setSoftSelectionEnabled(true);
                 }
             }
         };
-        const handleMouseDown = (e: MouseEvent) => {
-            if (e.altKey && (e.buttons & 1) && meshComponentMode === 'VERTEX') {
-               // Check if B is held? Or just Alt+Drag is mostly camera.
-               // Let's rely on a global "is B down" tracker if needed, or simplified check.
-               // For now, let's assume the user holds B then clicks.
-               // Browsers don't easily give "isKeyBDown" on mouse event without tracking.
-            }
-        };
         
-        // Track 'B' key state
         let bDown = false;
         const onDown = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = true; };
         const onUp = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = false; };
@@ -420,7 +416,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
         window.addEventListener('keydown', onDown);
         window.addEventListener('keyup', onUp);
-        window.addEventListener('mousedown', onWindowMouseDown); // Capture before SceneView logic?
+        window.addEventListener('mousedown', onWindowMouseDown); 
         
         return () => {
             window.removeEventListener('keydown', onDown);
@@ -525,7 +521,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             <div className="absolute bottom-2 right-2 text-[10px] text-text-secondary bg-black/40 px-2 py-0.5 rounded backdrop-blur border border-white/5 z-20 flex flex-col items-end">
                 <span>Cam: {camera.target.x.toFixed(1)}, {camera.target.y.toFixed(1)}, {camera.target.z.toFixed(1)}</span>
                 {softSelectionEnabled && meshComponentMode === 'VERTEX' && (
-                    <span className="text-accent">Soft Sel Radius: {softSelectionRadius.toFixed(1)}</span>
+                    <span className="text-accent">Soft Sel ({softSelectionMode === 'FIXED' ? 'Fixed' : 'Dynamic'}): {softSelectionRadius.toFixed(1)}m</span>
                 )}
             </div>
 

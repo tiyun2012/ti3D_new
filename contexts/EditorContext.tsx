@@ -2,6 +2,7 @@
 import React from 'react';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
+import type { SoftSelectionMode } from '../services/engine';
 
 export interface UIConfiguration {
     windowBorderRadius: number;
@@ -97,6 +98,8 @@ export interface EditorContextType {
   setSoftSelectionEnabled: (enabled: boolean) => void;
   softSelectionRadius: number;
   setSoftSelectionRadius: (radius: number) => void;
+  softSelectionMode: SoftSelectionMode;
+  setSoftSelectionMode: (mode: SoftSelectionMode) => void;
 
   tool: ToolType;
   setTool: (tool: ToolType) => void;

@@ -27,6 +27,11 @@ const SCALE_OPTIONS = [
     { label: 'Local', value: 'Local' }
 ];
 
+const SOFT_SEL_MODES = [
+    { label: 'Fixed (Surface)', value: 'FIXED' },
+    { label: 'Dynamic (Volume)', value: 'DYNAMIC' }
+];
+
 export const ToolOptionsPanel: React.FC = () => {
     const { 
         tool,
@@ -34,6 +39,7 @@ export const ToolOptionsPanel: React.FC = () => {
         meshComponentMode, 
         softSelectionEnabled, setSoftSelectionEnabled,
         softSelectionRadius, setSoftSelectionRadius,
+        softSelectionMode, setSoftSelectionMode,
         snapSettings, setSnapSettings
     } = useContext(EditorContext)!;
 
@@ -103,7 +109,6 @@ export const ToolOptionsPanel: React.FC = () => {
                                     />
                                 </div>
                                 
-                                {/* Placeholder for visual feedback */}
                                 {transformSpace === 'Gimbal' && (
                                     <div className="mt-2 text-[10px] text-accent opacity-80 flex items-center gap-2 p-1 border border-dashed border-accent/30 rounded">
                                         <Icon name="CircleDashed" size={10} />
@@ -209,19 +214,30 @@ export const ToolOptionsPanel: React.FC = () => {
                             </label>
                             
                             {softSelectionEnabled && (
-                                <div className="space-y-1">
-                                    <div className="flex justify-between text-[10px] text-text-secondary">
-                                        <span>Falloff Radius</span>
-                                        <span>{softSelectionRadius.toFixed(1)}m</span>
+                                <>
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between text-[10px] text-text-secondary">
+                                            <span>Falloff Radius</span>
+                                            <span>{softSelectionRadius.toFixed(1)}m</span>
+                                        </div>
+                                        <input 
+                                            type="range" 
+                                            min="0.1" max="10" step="0.1" 
+                                            value={softSelectionRadius} 
+                                            onChange={e => setSoftSelectionRadius(parseFloat(e.target.value))} 
+                                            className="w-full"
+                                        />
                                     </div>
-                                    <input 
-                                        type="range" 
-                                        min="0.1" max="10" step="0.1" 
-                                        value={softSelectionRadius} 
-                                        onChange={e => setSoftSelectionRadius(parseFloat(e.target.value))} 
-                                        className="w-full"
-                                    />
-                                </div>
+                                    <div className="space-y-1 pt-1">
+                                        <span className="text-[10px] text-text-secondary">Calculation Mode</span>
+                                        <Select 
+                                            value={softSelectionMode} 
+                                            options={SOFT_SEL_MODES} 
+                                            onChange={(v) => setSoftSelectionMode(v as any)} 
+                                            className="w-full"
+                                        />
+                                    </div>
+                                </>
                             )}
                         </div>
                     </div>

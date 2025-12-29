@@ -9,6 +9,7 @@ interface MeshBatch {
     cpuBuffer: Float32Array; 
     instanceCount: number; 
     hasSkin: boolean;
+    softWeightBuffer: WebGLBuffer; // New buffer for explicit weights
 }
 
 const VS_TEMPLATE = `#version 300 es
@@ -27,17 +28,13 @@ layout(location=10) in float a_effectIndex;
 layout(location=11) in vec4 a_joints;
 layout(location=12) in vec4 a_weights;
 layout(location=13) in vec3 a_vertexColor;
+layout(location=14) in float a_softWeight; // Explicit soft selection weight
 
 uniform mat4 u_viewProjection;
 uniform highp float u_time;
 uniform sampler2DArray u_textures;
 uniform sampler2D u_boneTexture; 
 uniform int u_hasSkinning; 
-
-// Soft Selection Uniforms
-uniform int u_softSelEnabled;
-uniform vec3 u_softSelCenter;
-uniform float u_softSelRadius;
 
 out vec3 v_normal;
 out vec3 v_worldPos;
@@ -76,31 +73,19 @@ void main() {
         localNormal = mat3(skinMatrix) * localNormal;
     }
 
-    // Calculate initial world position for distance check (before vertex shader displacement)
     vec4 initialWorldPos = model * localPos;
     v_worldPos = initialWorldPos.xyz;
     v_normal = normalize(mat3(model) * localNormal);
     v_objectPos = a_position;
     v_uv = a_uv;
-    
-    // Combine Instance Color with Vertex Color (Default white if unbound)
     v_color = a_color * a_vertexColor;
-    
     v_isSelected = a_isSelected;
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
     v_weights = a_weights;
     
-    // Soft Selection Calculation (Distance based on initial world position)
-    v_softWeight = 0.0;
-    if (u_softSelEnabled == 1) {
-        float dist = distance(v_worldPos, u_softSelCenter);
-        if (dist <= u_softSelRadius) {
-            // Smooth falloff: (1 - d/r)^2 * (smoothstep)
-            float t = 1.0 - (dist / u_softSelRadius);
-            v_softWeight = t * t * (3.0 - 2.0 * t); 
-        }
-    }
+    // Pass the explicit weight from CPU
+    v_softWeight = a_softWeight;
     
     vec3 vertexOffset = vec3(0.0);
     // %VERTEX_BODY%
@@ -109,7 +94,6 @@ void main() {
     vec4 finalWorldPos = model * localPos;
     gl_Position = u_viewProjection * finalWorldPos;
     
-    // Update world pos to final for lighting if needed
     v_worldPos = finalWorldPos.xyz;
 }`;
 
@@ -207,8 +191,8 @@ export class MeshRenderSystem {
         this.initTextureArray(gl);
         this.initBoneTexture(gl);
         
-        // Ensure default vertex color is white (1,1,1) for unbuffered attributes
         gl.vertexAttrib3f(13, 1.0, 1.0, 1.0);
+        gl.vertexAttrib1f(14, 0.0); // Default soft weight 0
     }
 
     private createProgram(gl: WebGL2RenderingContext, vsSrc: string, fsSrc: string): WebGLProgram | null {
@@ -268,7 +252,7 @@ export class MeshRenderSystem {
         createBuf(geometry.normals, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
         createBuf(geometry.uvs, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 2, gl.FLOAT, false, 0, 0);
         
-        // Vertex Colors (Location 13)
+        // Vertex Colors
         if (geometry.colors && geometry.colors.length > 0) {
             createBuf(geometry.colors, gl.ARRAY_BUFFER); 
             gl.enableVertexAttribArray(13); 
@@ -277,6 +261,13 @@ export class MeshRenderSystem {
             gl.disableVertexAttribArray(13);
         }
 
+        // Soft Selection Weights (Initialized to 0)
+        const softWeights = new Float32Array(geometry.vertices.length / 3).fill(0);
+        const swBuf = createBuf(softWeights, gl.ARRAY_BUFFER);
+        gl.enableVertexAttribArray(14);
+        gl.vertexAttribPointer(14, 1, gl.FLOAT, false, 0, 0);
+
+        // Skinning
         const hasSkin = !!(geometry.jointIndices && geometry.jointWeights);
         if (hasSkin) {
             createBuf(geometry.jointIndices, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(11); gl.vertexAttribPointer(11, 4, gl.FLOAT, false, 0, 0);
@@ -287,6 +278,8 @@ export class MeshRenderSystem {
         }
 
         createBuf(geometry.indices, gl.ELEMENT_ARRAY_BUFFER);
+        
+        // Instance Data
         const stride = 22 * 4; const inst = gl.createBuffer()!; gl.bindBuffer(gl.ARRAY_BUFFER, inst);
         gl.bufferData(gl.ARRAY_BUFFER, INITIAL_CAPACITY * stride, gl.DYNAMIC_DRAW);
         for(let k=0; k<4; k++) { gl.enableVertexAttribArray(2+k); gl.vertexAttribPointer(2+k, 4, gl.FLOAT, false, stride, k*16); gl.vertexAttribDivisor(2+k, 1); }
@@ -295,7 +288,25 @@ export class MeshRenderSystem {
         gl.enableVertexAttribArray(9); gl.vertexAttribPointer(9, 1, gl.FLOAT, false, stride, 20*4); gl.vertexAttribDivisor(9, 1);
         gl.enableVertexAttribArray(10); gl.vertexAttribPointer(10, 1, gl.FLOAT, false, stride, 21*4); gl.vertexAttribDivisor(10, 1);
         gl.bindVertexArray(null);
-        this.meshes.set(id, { vao, count: geometry.indices.length, instanceBuffer: inst, cpuBuffer: new Float32Array(INITIAL_CAPACITY * 22), instanceCount: 0, hasSkin });
+        
+        this.meshes.set(id, { 
+            vao, 
+            count: geometry.indices.length, 
+            instanceBuffer: inst, 
+            cpuBuffer: new Float32Array(INITIAL_CAPACITY * 22), 
+            instanceCount: 0, 
+            hasSkin,
+            softWeightBuffer: swBuf 
+        });
+    }
+
+    updateSoftSelectionBuffer(meshId: number, weights: Float32Array) {
+        if (!this.gl) return;
+        const mesh = this.meshes.get(meshId);
+        if (mesh) {
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.softWeightBuffer);
+            this.gl.bufferData(this.gl.ARRAY_BUFFER, weights, this.gl.DYNAMIC_DRAW);
+        }
     }
 
     updateMaterial(materialId: number, shaderData: any) {
@@ -325,11 +336,10 @@ export class MeshRenderSystem {
         }
     }
 
-    render(store: ComponentStorage, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number, renderMode: number, pass: 'OPAQUE' | 'OVERLAY', softSelData: { enabled: boolean, center: {x:number, y:number, z:number}, radius: number }) {
+    render(store: ComponentStorage, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number, renderMode: number, pass: 'OPAQUE' | 'OVERLAY', softSelData?: any) {
         const gl = this.gl!;
-        
-        // Reset default generic attribute for colors to WHITE
         gl.vertexAttrib3f(13, 1.0, 1.0, 1.0);
+        gl.vertexAttrib1f(14, 0.0);
 
         const targetBuckets = pass === 'OPAQUE' ? this.buckets : this.excludedBuckets;
 
@@ -338,7 +348,6 @@ export class MeshRenderSystem {
             const program = (matId > 0 && this.materialPrograms.has(matId)) ? this.materialPrograms.get(matId)! : this.defaultProgram!;
             gl.useProgram(program);
             
-            // Standard Uniforms
             gl.uniformMatrix4fv(gl.getUniformLocation(program, 'u_viewProjection'), false, vp);
             gl.uniform1f(gl.getUniformLocation(program, 'u_time'), time);
             gl.uniform3f(gl.getUniformLocation(program, 'u_cameraPos'), cam.x, cam.y, cam.z);
@@ -346,17 +355,6 @@ export class MeshRenderSystem {
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightDir'), lightDir);
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightColor'), lightColor);
             gl.uniform1f(gl.getUniformLocation(program, 'u_lightIntensity'), lightIntensity);
-            
-            // Soft Selection Uniforms (Must be robust)
-            const uSoftSelEnabled = gl.getUniformLocation(program, 'u_softSelEnabled');
-            const uSoftSelCenter = gl.getUniformLocation(program, 'u_softSelCenter');
-            const uSoftSelRadius = gl.getUniformLocation(program, 'u_softSelRadius');
-            
-            // If optimization removes uniforms, getUniformLocation returns null. 
-            // We check for truthy object (WebGLUniformLocation) to avoid errors.
-            if (uSoftSelEnabled) gl.uniform1i(uSoftSelEnabled, softSelData.enabled ? 1 : 0);
-            if (uSoftSelCenter) gl.uniform3f(uSoftSelCenter, softSelData.center.x, softSelData.center.y, softSelData.center.z);
-            if (uSoftSelRadius) gl.uniform1f(uSoftSelRadius, softSelData.radius);
 
             if (this.boneTexture) {
                 gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.boneTexture);

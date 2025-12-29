@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
-import { engineInstance } from './services/engine';
+import { engineInstance, SoftSelectionMode } from './services/engine';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode } from './types';
 import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from './contexts/EditorContext';
 import { assetManager } from './services/AssetManager';
@@ -257,6 +257,7 @@ const App: React.FC = () => {
     // Soft Selection State
     const [softSelectionEnabled, setSoftSelectionEnabled] = useState(false);
     const [softSelectionRadius, setSoftSelectionRadius] = useState(2.0);
+    const [softSelectionMode, setSoftSelectionMode] = useState<SoftSelectionMode>('FIXED');
 
     // New State for Simulation
     const [simulationMode, setSimulationMode] = useState<SimulationMode>('STOPPED');
@@ -318,6 +319,8 @@ const App: React.FC = () => {
         setSoftSelectionEnabled,
         softSelectionRadius,
         setSoftSelectionRadius,
+        softSelectionMode,
+        setSoftSelectionMode,
         tool,
         setTool,
         transformSpace,
@@ -333,7 +336,7 @@ const App: React.FC = () => {
     }), [
         entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
         selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
-        snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius
+        snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius, softSelectionMode
     ]);
 
     return (
