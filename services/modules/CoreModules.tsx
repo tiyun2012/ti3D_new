@@ -147,7 +147,7 @@ export const MeshModule: EngineModule = {
             return { r, g, b };
         };
         
-        const colSel = { r: 0.976, g: 0.917, b: 0.305 }; // Yellow Selection
+        const colSel = { r: 1.0, g: 1.0, b: 0.0 }; // Pure Yellow Selection
         const colObjectSelection = hexToRgb(engine.uiConfig.selectionEdgeColor || '#4f80f8');
         
         // Vertices use configurable color, but for wireframe background we use a dimmer color
@@ -339,7 +339,6 @@ export const VirtualPivotModule: EngineModule = {
             if (store.isActive[i] && (store.componentMask[i] & COMPONENT_MASKS.VIRTUAL_PIVOT)) {
                 const idx = i;
                 
-                // ✅ RESTORED: Apply 0.3 Scale Factor here
                 const length = store.vpLength[idx] * 0.3; 
                 
                 const wm = store.worldMatrix.subarray(idx * 16, idx * 16 + 16);
