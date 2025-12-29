@@ -4,13 +4,11 @@ import { Icon } from './Icon';
 import { engineInstance } from '../services/engine';
 
 export const Timeline: React.FC = () => {
-    const [timeline, setTimeline] = useState(engineInstance.timeline);
+    const [timeline, setTimeline] = useState(engineInstance.timelineSystem.state);
     const rulerRef = useRef<HTMLDivElement>(null);
     const [isScrubbing, setIsScrubbing] = useState(false);
-    // Added rulerWidth state to track the actual size of the timeline track area
     const [rulerWidth, setRulerWidth] = useState(0);
 
-    // Track the width of the ruler area to accurately position the playhead
     useLayoutEffect(() => {
         if (!rulerRef.current) return;
         const observer = new ResizeObserver(entries => {
@@ -24,7 +22,7 @@ export const Timeline: React.FC = () => {
 
     useEffect(() => {
         const update = () => {
-            setTimeline({ ...engineInstance.timeline });
+            setTimeline({ ...engineInstance.timelineSystem.state });
         };
         const unsub = engineInstance.subscribe(update);
         return unsub;
@@ -40,6 +38,7 @@ export const Timeline: React.FC = () => {
     };
 
     const onMouseDown = (e: React.MouseEvent) => {
+        engineInstance.pause(); // Pause when scrubbing starts
         setIsScrubbing(true);
         handleScrub(e);
     };
@@ -68,7 +67,7 @@ export const Timeline: React.FC = () => {
         const seconds = Math.floor(timeline.duration);
         for (let i = 0; i <= seconds; i++) {
             ticks.push(
-                <div key={i} className="absolute h-full flex flex-col items-center" style={{ left: `${(i / timeline.duration) * 100}%` }}>
+                <div key={i} className="absolute h-full flex flex-col items-center pointer-events-none" style={{ left: `${(i / timeline.duration) * 100}%` }}>
                     <div className="w-px h-2 bg-white/20"></div>
                     <span className="text-[8px] mt-0.5 opacity-40 select-none">{i}s</span>
                 </div>
@@ -77,11 +76,60 @@ export const Timeline: React.FC = () => {
         return ticks;
     };
 
+    // --- Transport Logic ---
+    const FPS = 30;
+    const FRAME_STEP = 1 / FPS;
+
+    const togglePlay = () => {
+        if (timeline.isPlaying) {
+            engineInstance.pause();
+        } else {
+            engineInstance.playTimelineOnly();
+        }
+    };
+
+    const stepFrame = (dir: 1 | -1) => {
+        engineInstance.pause(); // Pause when stepping
+        const newTime = timeline.currentTime + (dir * FRAME_STEP);
+        engineInstance.setTimelineTime(newTime);
+    };
+
+    const toStart = () => {
+        engineInstance.pause();
+        engineInstance.setTimelineTime(0);
+    };
+
+    const toEnd = () => {
+        engineInstance.pause();
+        engineInstance.setTimelineTime(timeline.duration);
+    };
+
     return (
         <div className="h-full flex flex-col bg-[#1a1a1a] font-sans border-t border-black/40">
             {/* Header / Transport */}
-            <div className="h-10 bg-panel-header flex items-center px-4 justify-between border-b border-white/5">
+            <div className="h-10 bg-panel-header flex items-center px-4 justify-between border-b border-white/5 select-none">
                 <div className="flex items-center gap-4">
+                    {/* Transport Controls */}
+                    <div className="flex items-center gap-1">
+                        <button onClick={toStart} className="p-1.5 rounded hover:bg-white/10 text-text-secondary hover:text-white transition-colors" title="Go to Start">
+                            <Icon name="SkipBack" size={14}/>
+                        </button>
+                        <button onClick={() => stepFrame(-1)} className="p-1.5 rounded hover:bg-white/10 text-text-secondary hover:text-white transition-colors" title="Previous Frame">
+                            <Icon name="ChevronLeft" size={14}/>
+                        </button>
+                        <button onClick={togglePlay} className={`p-1.5 rounded hover:bg-white/10 transition-colors ${timeline.isPlaying ? 'text-accent' : 'text-text-secondary hover:text-white'}`} title={timeline.isPlaying ? "Pause" : "Play"}>
+                            <Icon name={timeline.isPlaying ? "Pause" : "Play"} size={14} className={timeline.isPlaying ? "fill-current" : "fill-current"} />
+                        </button>
+                        <button onClick={() => stepFrame(1)} className="p-1.5 rounded hover:bg-white/10 text-text-secondary hover:text-white transition-colors" title="Next Frame">
+                            <Icon name="ChevronRight" size={14}/>
+                        </button>
+                        <button onClick={toEnd} className="p-1.5 rounded hover:bg-white/10 text-text-secondary hover:text-white transition-colors" title="Go to End">
+                            <Icon name="SkipForward" size={14}/>
+                        </button>
+                    </div>
+
+                    <div className="w-px h-4 bg-white/10"></div>
+
                     <div className="flex items-center gap-2 bg-black/30 px-3 py-1 rounded border border-white/5 font-mono text-accent">
                         <Icon name="Clock" size={12} className="opacity-50" />
                         <span className="text-[11px] font-bold">{formatTime(timeline.currentTime)}</span>
@@ -89,16 +137,18 @@ export const Timeline: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-3 text-text-secondary text-[10px] font-bold">
-                    <div className="flex items-center gap-1 opacity-60">
-                        <Icon name="Repeat" size={12} className={timeline.isLooping ? "text-accent" : ""} />
-                        <span>Loop</span>
+                    <div className="flex items-center gap-1 opacity-60 hover:opacity-100 transition-opacity cursor-pointer">
                         <input 
                             type="checkbox" 
                             checked={timeline.isLooping} 
-                            onChange={(e) => { engineInstance.timeline.isLooping = e.target.checked; engineInstance.notifyUI(); }} 
-                            className="ml-1 w-3 h-3 accent-accent"
-                            aria-label="Toggle Looping"
+                            onChange={(e) => { engineInstance.timelineSystem.state.isLooping = e.target.checked; engineInstance.notifyUI(); }} 
+                            className="mr-1 w-3 h-3 accent-accent cursor-pointer"
+                            id="timeline-loop"
                         />
+                        <label htmlFor="timeline-loop" className="cursor-pointer flex items-center gap-1">
+                            <Icon name="Repeat" size={12} className={timeline.isLooping ? "text-accent" : ""} />
+                            <span>Loop</span>
+                        </label>
                     </div>
                     <div className="w-px h-4 bg-white/10"></div>
                     <span className="opacity-40">DUR: {timeline.duration}s</span>
@@ -142,7 +192,7 @@ export const Timeline: React.FC = () => {
                         transform: 'translateX(-50%)' 
                     }}
                 >
-                    <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45 rounded-sm"></div>
+                    <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rotate-45 rounded-sm shadow-sm"></div>
                 </div>
             </div>
         </div>
