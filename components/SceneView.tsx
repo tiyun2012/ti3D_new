@@ -225,6 +225,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             // Vertex Mode
             if (meshComponentMode === 'VERTEX' && selectedIds.length > 0) {
                 if (engineInstance.hoveredVertex) {
+                    engineInstance.clearDeformation(); // Clear previous deformation state on new pick
                     componentHit = true;
                     if (!e.shiftKey) {
                         engineInstance.subSelection.vertexIds.clear();
@@ -243,6 +244,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             else if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
                 const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
                 if (result) {
+                    engineInstance.clearDeformation(); // Clear previous deformation state on new pick
                     componentHit = true;
                     if (!e.shiftKey) {
                         engineInstance.subSelection.vertexIds.clear();
@@ -269,6 +271,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 if (meshComponentMode !== 'OBJECT' && !componentHit) {
                     if (!selectedIds.includes(hitId)) setMeshComponentMode('OBJECT');
                     if (!e.shiftKey) {
+                        engineInstance.clearDeformation(); // Clear on object switch
                         engineInstance.subSelection.vertexIds.clear();
                         engineInstance.subSelection.edgeIds.clear();
                         engineInstance.subSelection.faceIds.clear();
@@ -285,6 +288,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 // Box Selection Start
                 if (!e.shiftKey) {
                     if (meshComponentMode !== 'OBJECT') {
+                        engineInstance.clearDeformation(); // Clear on deselect
                         engineInstance.subSelection.vertexIds.clear();
                         engineInstance.subSelection.edgeIds.clear();
                         engineInstance.subSelection.faceIds.clear();

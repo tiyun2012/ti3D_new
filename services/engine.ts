@@ -354,6 +354,11 @@ export class Engine {
     }
 
     endVertexDrag() {
+        // We do NOT clear deformation history here to allow for "swimming" adjustment after drag.
+        // The snapshot and delta persist until a new selection is made or explicitly cleared.
+    }
+
+    clearDeformation() {
         this.vertexSnapshot = null;
         this.activeDeformationEntity = null;
         this.currentDeformationDelta = { x: 0, y: 0, z: 0 };
@@ -466,6 +471,7 @@ export class Engine {
     }
 
     setSelected(ids: string[]) {
+        this.clearDeformation(); // Clear old deformation history on object switch
         this.selectedIndices.clear();
         ids.forEach(id => {
             const idx = this.ecs.idToIndex.get(id);
