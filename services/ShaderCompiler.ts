@@ -39,9 +39,9 @@ vec3 heatMap(float t) {
 }
 `;
 
-// Logic to blend heatmap over material
+// Logic to blend heatmap over material - NOW CHECKING u_showHeatmap
 const SOFT_SEL_LOGIC = `
-            if (v_softWeight > 0.0001) {
+            if (v_softWeight > 0.0001 && u_showHeatmap > 0.5) {
                 vec3 heat = heatMap(v_softWeight);
                 float pulse = 0.5 + 0.5 * sin(u_time * 10.0);
                 float blend = smoothstep(0.0, 0.2, v_softWeight) * 0.7;
@@ -198,6 +198,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     uniform vec3 u_lightDir; 
     uniform vec3 u_lightColor; 
     uniform float u_lightIntensity; 
+    uniform float u_showHeatmap; 
     
     in vec3 v_normal, v_worldPos, v_objectPos, v_color; 
     in float v_isSelected, v_texIndex, v_effectIndex; 

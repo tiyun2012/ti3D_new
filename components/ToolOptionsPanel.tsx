@@ -40,6 +40,7 @@ export const ToolOptionsPanel: React.FC = () => {
         softSelectionEnabled, setSoftSelectionEnabled,
         softSelectionRadius, setSoftSelectionRadius,
         softSelectionMode, setSoftSelectionMode,
+        softSelectionHeatmapVisible, setSoftSelectionHeatmapVisible,
         snapSettings, setSnapSettings
     } = useContext(EditorContext)!;
 
@@ -237,6 +238,15 @@ export const ToolOptionsPanel: React.FC = () => {
                                             className="w-full"
                                         />
                                     </div>
+                                    <label className="flex items-center justify-between cursor-pointer group pt-1">
+                                        <span className="text-[10px] text-text-secondary group-hover:text-white">Show Heatmap</span>
+                                        <input 
+                                            type="checkbox" 
+                                            checked={softSelectionHeatmapVisible} 
+                                            onChange={e => setSoftSelectionHeatmapVisible(e.target.checked)} 
+                                            className="accent-accent"
+                                        />
+                                    </label>
                                 </>
                             )}
                         </div>

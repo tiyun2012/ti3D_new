@@ -119,6 +119,7 @@ uniform vec3 u_lightDir;
 uniform vec3 u_lightColor;
 uniform float u_lightIntensity;
 uniform float u_time;
+uniform float u_showHeatmap;
 
 layout(location=0) out vec4 outColor;
 layout(location=1) out vec4 outData; 
@@ -160,7 +161,7 @@ void main() {
     else result = albedo;
     
     // --- Soft Selection Overlay ---
-    if (v_softWeight > 0.0001) {
+    if (v_softWeight > 0.0001 && u_showHeatmap > 0.5) {
         vec3 heat = heatMap(v_softWeight);
         float pulse = 0.5 + 0.5 * sin(u_time * 10.0);
         float blend = smoothstep(0.0, 0.2, v_softWeight) * 0.7;
@@ -355,6 +356,9 @@ export class MeshRenderSystem {
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightDir'), lightDir);
             gl.uniform3fv(gl.getUniformLocation(program, 'u_lightColor'), lightColor);
             gl.uniform1f(gl.getUniformLocation(program, 'u_lightIntensity'), lightIntensity);
+            
+            // Pass Heatmap visibility uniform
+            gl.uniform1f(gl.getUniformLocation(program, 'u_showHeatmap'), softSelData?.heatmapVisible ? 1.0 : 0.0);
 
             if (this.boneTexture) {
                 gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.boneTexture);
@@ -369,22 +373,44 @@ export class MeshRenderSystem {
                 gl.activeTexture(gl.TEXTURE0); 
                 gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textureArray); 
                 const loc = gl.getUniformLocation(program, 'u_textures');
-                if (loc) gl.uniform1i(loc, 0); 
+                if (loc) gl.uniform1i(loc, 0);
             }
-            
-            let instanceCount = 0; const stride = 22; const buf = mesh.cpuBuffer;
-            for (const idx of indices) {
-                if (instanceCount >= INITIAL_CAPACITY) break;
-                const off = instanceCount * stride; const wm = idx * 16;
-                for (let k = 0; k < 16; k++) buf[off+k] = store.worldMatrix[wm+k];
-                buf[off+16] = store.colorR[idx]; buf[off+17] = store.colorG[idx]; buf[off+18] = store.colorB[idx];
-                buf[off+19] = selected.has(idx) ? 1.0 : 0.0; buf[off+20] = store.textureIndex[idx]; buf[off+21] = store.effectIndex[idx];
-                instanceCount++;
+
+            let instanceIdx = 0;
+            const stride = 22; 
+            const data = mesh.cpuBuffer;
+
+            for (let i = 0; i < indices.length; i++) {
+                const idx = indices[i];
+                if (!store.isActive[idx]) continue;
+                
+                const base = idx * 16;
+                // Model Matrix (16 floats)
+                for(let k=0; k<16; k++) data[instanceIdx * stride + k] = store.worldMatrix[base + k];
+                
+                // Color (3 floats)
+                data[instanceIdx * stride + 16] = store.colorR[idx];
+                data[instanceIdx * stride + 17] = store.colorG[idx];
+                data[instanceIdx * stride + 18] = store.colorB[idx];
+                
+                // IsSelected (1 float)
+                data[instanceIdx * stride + 19] = selected.has(idx) ? 1.0 : 0.0;
+                
+                // Texture Index (1 float)
+                data[instanceIdx * stride + 20] = store.textureIndex[idx];
+                
+                // Effect Index (1 float)
+                data[instanceIdx * stride + 21] = store.effectIndex[idx];
+
+                instanceIdx++;
+                if (instanceIdx >= INITIAL_CAPACITY) break;
             }
-            if (instanceCount > 0) {
-                gl.bindVertexArray(mesh.vao); gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
-                gl.bufferSubData(gl.ARRAY_BUFFER, 0, buf.subarray(0, instanceCount * stride));
-                gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, instanceCount);
+
+            if (instanceIdx > 0) {
+                gl.bindVertexArray(mesh.vao);
+                gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, data.subarray(0, instanceIdx * stride));
+                gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, instanceIdx);
             }
         });
     }

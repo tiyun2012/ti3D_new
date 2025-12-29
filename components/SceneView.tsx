@@ -24,7 +24,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         meshComponentMode, setMeshComponentMode, 
         softSelectionEnabled, setSoftSelectionEnabled,
         softSelectionRadius, setSoftSelectionRadius,
-        softSelectionMode // New context prop
+        softSelectionMode, // New context prop
+        softSelectionHeatmapVisible
     } = useContext(EditorContext)!;
     
     // [FIX] Sync EditorContext state to Engine Instance
@@ -33,8 +34,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         engineInstance.softSelectionEnabled = softSelectionEnabled;
         engineInstance.softSelectionRadius = softSelectionRadius;
         engineInstance.softSelectionMode = softSelectionMode;
+        engineInstance.softSelectionHeatmapVisible = softSelectionHeatmapVisible;
         engineInstance.recalculateSoftSelection(); // Recalculate weights on mode/radius change
-    }, [meshComponentMode, softSelectionEnabled, softSelectionRadius, softSelectionMode]);
+    }, [meshComponentMode, softSelectionEnabled, softSelectionRadius, softSelectionMode, softSelectionHeatmapVisible]);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -364,7 +366,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             } else if (dragState.mode === 'ZOOM') {
                 setCamera(prev => ({ ...prev, radius: Math.max(1, dragState.startCamera.radius - (dx - dy) * 0.05) }));
             } else if (dragState.mode === 'PAN') {
-                const panSpeed = dragState.startCamera.radius * 0.002;
+                const panSpeed = dragState.startCamera.radius * 0.001;
                 const eyeX = dragState.startCamera.radius * Math.sin(dragState.startCamera.phi) * Math.cos(dragState.startCamera.theta);
                 const eyeY = dragState.startCamera.radius * Math.cos(dragState.startCamera.phi);
                 const eyeZ = dragState.startCamera.radius * Math.sin(dragState.startCamera.phi) * Math.sin(dragState.startCamera.theta);

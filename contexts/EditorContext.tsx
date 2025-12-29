@@ -100,6 +100,8 @@ export interface EditorContextType {
   setSoftSelectionRadius: (radius: number) => void;
   softSelectionMode: SoftSelectionMode;
   setSoftSelectionMode: (mode: SoftSelectionMode) => void;
+  softSelectionHeatmapVisible: boolean;
+  setSoftSelectionHeatmapVisible: (visible: boolean) => void;
 
   tool: ToolType;
   setTool: (tool: ToolType) => void;

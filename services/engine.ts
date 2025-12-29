@@ -48,6 +48,7 @@ export class Engine {
     softSelectionEnabled: boolean = false;
     softSelectionRadius: number = 2.0;
     softSelectionMode: SoftSelectionMode = 'FIXED';
+    softSelectionHeatmapVisible: boolean = true;
     
     // Cached weights for the current selection
     softSelectionWeights: Map<number, Float32Array> = new Map();
@@ -377,7 +378,12 @@ export class Engine {
 
             if (this.currentViewProj) {
                 // Visual Ring logic
-                const softSel = { enabled: this.softSelectionEnabled && this.meshComponentMode === 'VERTEX', center: {x:0,y:0,z:0}, radius: this.softSelectionRadius };
+                const softSel = { 
+                    enabled: this.softSelectionEnabled && this.meshComponentMode === 'VERTEX', 
+                    center: {x:0,y:0,z:0}, 
+                    radius: this.softSelectionRadius,
+                    heatmapVisible: this.softSelectionHeatmapVisible
+                };
                 
                 if (softSel.enabled && this.selectedIndices.size > 0) {
                      const idx = Array.from(this.selectedIndices)[0];

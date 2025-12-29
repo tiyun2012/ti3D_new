@@ -258,6 +258,7 @@ const App: React.FC = () => {
     const [softSelectionEnabled, setSoftSelectionEnabled] = useState(false);
     const [softSelectionRadius, setSoftSelectionRadius] = useState(2.0);
     const [softSelectionMode, setSoftSelectionMode] = useState<SoftSelectionMode>('FIXED');
+    const [softSelectionHeatmapVisible, setSoftSelectionHeatmapVisible] = useState(true);
 
     // New State for Simulation
     const [simulationMode, setSimulationMode] = useState<SimulationMode>('STOPPED');
@@ -321,6 +322,8 @@ const App: React.FC = () => {
         setSoftSelectionRadius,
         softSelectionMode,
         setSoftSelectionMode,
+        softSelectionHeatmapVisible,
+        setSoftSelectionHeatmapVisible,
         tool,
         setTool,
         transformSpace,
@@ -336,7 +339,8 @@ const App: React.FC = () => {
     }), [
         entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
         selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
-        snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius, softSelectionMode
+        snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius, softSelectionMode,
+        softSelectionHeatmapVisible
     ]);
 
     return (
