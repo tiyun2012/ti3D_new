@@ -10,6 +10,7 @@ interface MeshBatch {
     instanceCount: number; 
     hasSkin: boolean;
     softWeightBuffer: WebGLBuffer; // New buffer for explicit weights
+    weightBuffer: WebGLBuffer | null; // Keep ref to update weights dynamically
 }
 
 const VS_TEMPLATE = `#version 300 es
@@ -45,6 +46,7 @@ out vec2 v_uv;
 out float v_texIndex;
 out float v_effectIndex;
 out vec4 v_weights;
+out vec4 v_joints; // Pass joints to fragment for weight viz
 out float v_softWeight;
 
 // %VERTEX_LOGIC%
@@ -83,6 +85,7 @@ void main() {
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
     v_weights = a_weights;
+    v_joints = a_joints;
     
     // Pass the explicit weight from CPU
     v_softWeight = a_softWeight;
@@ -110,6 +113,7 @@ in highp vec2 v_uv;
 in highp float v_texIndex;
 in highp float v_effectIndex;
 in highp vec4 v_weights;
+in highp vec4 v_joints;
 in highp float v_softWeight;
 
 uniform sampler2DArray u_textures;
@@ -120,6 +124,7 @@ uniform vec3 u_lightColor;
 uniform float u_lightIntensity;
 uniform float u_time;
 uniform float u_showHeatmap;
+uniform int u_selectedBoneIndex; // For skinning editor
 
 layout(location=0) out vec4 outColor;
 layout(location=1) out vec4 outData; 
@@ -155,8 +160,23 @@ void main() {
     else if (u_renderMode == 1) result = normal * 0.5 + 0.5;
     else if (u_renderMode == 2) result = albedo;
     else if (u_renderMode == 5) {
+       // Generic Heatmap (Soft Selection)
        float w = max(v_weights.x, max(v_weights.y, max(v_weights.z, v_weights.w)));
        result = heatMap(w);
+    }
+    else if (u_renderMode == 6) {
+        // Skinning Weight Heatmap for u_selectedBoneIndex
+        float w = 0.0;
+        if (abs(v_joints.x - float(u_selectedBoneIndex)) < 0.1) w += v_weights.x;
+        if (abs(v_joints.y - float(u_selectedBoneIndex)) < 0.1) w += v_weights.y;
+        if (abs(v_joints.z - float(u_selectedBoneIndex)) < 0.1) w += v_weights.z;
+        if (abs(v_joints.w - float(u_selectedBoneIndex)) < 0.1) w += v_weights.w;
+        
+        vec3 heat = heatMap(w);
+        // Mix with wireframe-ish shading to see topology
+        float NdotL = dot(normal, -u_lightDir) * 0.5 + 0.5;
+        result = heat * NdotL;
+        if (w <= 0.001) result = vec3(0.1); // Dark grey for unweighted
     }
     else result = albedo;
     
@@ -239,6 +259,15 @@ export class MeshRenderSystem {
         this.gl.bindTexture(this.gl.TEXTURE_2D_ARRAY, this.textureArray);
         this.gl.texSubImage3D(this.gl.TEXTURE_2D_ARRAY, 0, 0, 0, layerIndex, 256, 256, 1, this.gl.RGBA, this.gl.UNSIGNED_BYTE, canvas);
     }
+    
+    updateBoneMatrices(matrices: Float32Array) {
+        if (!this.gl || !this.boneTexture) return;
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.boneTexture);
+        // matrices is flat Float32Array of all bones. Texture is 1024x1 RGBA32F.
+        // Each bone is 4 texels (16 floats).
+        // 1024 width = 256 bones max.
+        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, matrices.length / 4, 1, this.gl.RGBA, this.gl.FLOAT, matrices);
+    }
 
     registerMesh(id: number, geometry: any) {
         if (!this.gl) return;
@@ -270,9 +299,10 @@ export class MeshRenderSystem {
 
         // Skinning
         const hasSkin = !!(geometry.jointIndices && geometry.jointWeights);
+        let weightBuf: WebGLBuffer | null = null;
         if (hasSkin) {
             createBuf(geometry.jointIndices, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(11); gl.vertexAttribPointer(11, 4, gl.FLOAT, false, 0, 0);
-            createBuf(geometry.jointWeights, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(12); gl.vertexAttribPointer(12, 4, gl.FLOAT, false, 0, 0);
+            weightBuf = createBuf(geometry.jointWeights, gl.ARRAY_BUFFER); gl.enableVertexAttribArray(12); gl.vertexAttribPointer(12, 4, gl.FLOAT, false, 0, 0);
         } else {
             gl.disableVertexAttribArray(11);
             gl.disableVertexAttribArray(12);
@@ -297,7 +327,8 @@ export class MeshRenderSystem {
             cpuBuffer: new Float32Array(INITIAL_CAPACITY * 22), 
             instanceCount: 0, 
             hasSkin,
-            softWeightBuffer: swBuf 
+            softWeightBuffer: swBuf,
+            weightBuffer: weightBuf
         });
     }
 
@@ -306,6 +337,15 @@ export class MeshRenderSystem {
         const mesh = this.meshes.get(meshId);
         if (mesh) {
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.softWeightBuffer);
+            this.gl.bufferData(this.gl.ARRAY_BUFFER, weights, this.gl.DYNAMIC_DRAW);
+        }
+    }
+    
+    updateSkinWeightsBuffer(meshId: number, weights: Float32Array) {
+        if (!this.gl) return;
+        const mesh = this.meshes.get(meshId);
+        if (mesh && mesh.weightBuffer) {
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, mesh.weightBuffer);
             this.gl.bufferData(this.gl.ARRAY_BUFFER, weights, this.gl.DYNAMIC_DRAW);
         }
     }
@@ -337,7 +377,7 @@ export class MeshRenderSystem {
         }
     }
 
-    render(store: ComponentStorage, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number, renderMode: number, pass: 'OPAQUE' | 'OVERLAY', softSelData?: any) {
+    render(store: ComponentStorage, selected: Set<number>, vp: Float32Array, cam: any, time: number, lightDir: number[], lightColor: number[], lightIntensity: number, renderMode: number, pass: 'OPAQUE' | 'OVERLAY', softSelData?: any, selectedBoneIndex: number = -1) {
         const gl = this.gl!;
         gl.vertexAttrib3f(13, 1.0, 1.0, 1.0);
         gl.vertexAttrib1f(14, 0.0);
@@ -359,6 +399,9 @@ export class MeshRenderSystem {
             
             // Pass Heatmap visibility uniform
             gl.uniform1f(gl.getUniformLocation(program, 'u_showHeatmap'), softSelData?.heatmapVisible ? 1.0 : 0.0);
+            
+            // Pass Selected Bone Index for Skinning Heatmap
+            gl.uniform1i(gl.getUniformLocation(program, 'u_selectedBoneIndex'), selectedBoneIndex);
 
             if (this.boneTexture) {
                 gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.boneTexture);
