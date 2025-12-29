@@ -27,7 +27,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         meshComponentMode, setMeshComponentMode, 
         softSelectionEnabled, setSoftSelectionEnabled,
         softSelectionRadius, setSoftSelectionRadius,
-        softSelectionMode, // New context prop
+        softSelectionMode, 
         softSelectionFalloff,
         softSelectionHeatmapVisible
     } = useContext(EditorContext)!;
@@ -90,10 +90,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => obs.disconnect();
     }, []);
 
-    // Sync Camera from Engine to React State (if needed for UI display) 
+    // Sync Camera from Engine to React State
     useEffect(() => {
         const update = () => {
-            // Update camera matrix based on state
             const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
             const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
             const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
@@ -109,16 +108,11 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             Mat4Utils.multiply(proj, view, vp);
             
             engineInstance.updateCamera(vp, {x:eyeX, y:eyeY, z:eyeZ}, containerRef.current?.clientWidth || 1, containerRef.current?.clientHeight || 1);
-            
-            // Gizmo needs tool state
             gizmoSystem.setTool(tool);
-            
-            // Render Loop is managed by engine.ts tick() which calls render()
             engineInstance.tick(0);
         };
-        
         update();
-    }, [camera, tool]); // Update camera matrix when camera state changes
+    }, [camera, tool]);
 
     // Animation Loop
     useEffect(() => {
@@ -129,7 +123,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const dt = (time - lastTime) / 1000;
             lastTime = time;
             
-            // Update Camera Matrix every frame (for smooth movement if we added momentum, or just to be safe)
             const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
             const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
             const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
@@ -151,12 +144,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             
             // Visualizer for Soft Selection Radius
             if (engineInstance.meshComponentMode !== 'OBJECT' && engineInstance.subSelection.vertexIds.size > 0 && softSelectionEnabled) {
-                // Find center of selection
                 const entityId = engineInstance.ecs.store.ids[Array.from(engineInstance.selectedIndices)[0]];
                 if (entityId) {
                     const worldPos = engineInstance.sceneGraph.getWorldPosition(entityId); 
-                    // Note: This ring is approximate. The real weighting happens on CPU now.
-                    // But visual ring is still helpful for adjusting radius.
                     const segments = 32;
                     const rad = softSelectionRadius;
                     const prev = { x: worldPos.x + rad, y: worldPos.y, z: worldPos.z };
@@ -199,9 +189,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const mx = e.clientX - rect.left; 
         const my = e.clientY - rect.top;
 
-        // 0. Soft Selection Radius Adjustment (B + Left Drag - Alt not required if B is held)
+        // 0. Soft Selection Radius Adjustment
         if (e.altKey && e.button === 0 && meshComponentMode !== 'OBJECT') {
-            // Handled by global listeners below for Alt+B specifically
+            // Handled by global listeners
         }
 
         // 1. GIZMO CHECK
@@ -223,7 +213,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         }
 
         // 3. Selection
-        // Alt + Click = Loop Selection (Common convention)
+        // Alt + Click = Loop Selection
         if (e.button === 0 && !isAdjustingBrush) {
             engineInstance.isInputDown = true;
             
@@ -251,16 +241,23 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                         
                         if (asset && asset.topology) {
                             if (meshComponentMode === 'EDGE') {
-                                const edgeKey = result.edgeId.sort().join('-');
-                                const loop = MeshTopologyUtils.getEdgeLoop(asset.topology, edgeKey);
-                                loop.forEach(k => engineInstance.subSelection.edgeIds.add(k));
+                                // Edge Loop (Longitudinal)
+                                const loop = MeshTopologyUtils.getEdgeLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
+                                loop.forEach(edge => {
+                                    const key = edge.sort((a,b)=>a-b).join('-');
+                                    engineInstance.subSelection.edgeIds.add(key);
+                                });
                             } else if (meshComponentMode === 'FACE') {
-                                const loop = MeshTopologyUtils.getFaceLoop(asset.topology, result.faceId, result.edgeId);
+                                // Face Loop (Strip)
+                                const loop = MeshTopologyUtils.getFaceLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
                                 loop.forEach(f => engineInstance.subSelection.faceIds.add(f));
                             } else if (meshComponentMode === 'VERTEX') {
-                                // Vertex loop (along connected edges)
-                                const loop = MeshTopologyUtils.getVertexLoop(asset.topology, result.vertexId);
-                                loop.forEach(v => engineInstance.subSelection.vertexIds.add(v));
+                                // Vertex loop: Get edge loop through the closest edge to click, extract unique vertices
+                                const loop = MeshTopologyUtils.getEdgeLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
+                                loop.forEach(edge => {
+                                    engineInstance.subSelection.vertexIds.add(edge[0]);
+                                    engineInstance.subSelection.vertexIds.add(edge[1]);
+                                });
                             }
                         }
                     } else {
@@ -270,7 +267,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                             if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
                             else engineInstance.subSelection.vertexIds.add(id);
                         } else if (meshComponentMode === 'EDGE') {
-                            const id = result.edgeId.sort().join('-');
+                            const id = result.edgeId.sort((a,b)=>a-b).join('-');
                             if (engineInstance.subSelection.edgeIds.has(id)) engineInstance.subSelection.edgeIds.delete(id);
                             else engineInstance.subSelection.edgeIds.add(id);
                         } else if (meshComponentMode === 'FACE') {
@@ -328,7 +325,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             let mode: 'ORBIT' | 'PAN' | 'ZOOM' = 'ORBIT';
             if (e.button === 1 || (e.altKey && e.button === 1)) mode = 'PAN';
             if (e.button === 2 || (e.altKey && e.button === 2)) mode = 'ZOOM';
-            // Alt + Left Click is Orbit if not hitting gizmo/component
             if (e.altKey && e.button === 0) mode = 'ORBIT'; 
             
             setDragState({ isDragging: true, startX: e.clientX, startY: e.clientY, mode, startCamera: { ...camera } });
@@ -355,7 +351,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     onSelect(hitIds);
                 }
             } else {
-                // Clicked empty space
                 if (!e.shiftKey && e.button === 0) onSelect([]);
             }
             setSelectionBox(null);
@@ -379,8 +374,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
 
         if (meshComponentMode !== 'OBJECT') {
-            // Updated to generic vertex highlighting for all component modes logic?
-            // Engine.highlightVertexAt works for vertices. For faces/edges we might need specific highlight
             if (meshComponentMode === 'VERTEX') engineInstance.highlightVertexAt(mx, my, rect.width, rect.height);
         }
 
@@ -425,7 +418,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         setIsAdjustingBrush(false);
     };
 
-    // Global Key Listener for B interaction (Soft Selection Radius)
+    // Global Key Listener for B interaction
     useEffect(() => {
         let bDown = false;
         const onDown = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = true; };
@@ -434,7 +427,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const onWindowMouseDown = (e: MouseEvent) => {
             if (bDown && e.button === 0) {
                 e.preventDefault(); e.stopPropagation();
-                // Ensure soft selection is enabled if adjusting
                 if (!softSelectionEnabled) setSoftSelectionEnabled(true);
                 setIsAdjustingBrush(true);
                 brushStartPos.current = { x: e.clientX, y: e.clientY, startRadius: softSelectionRadius };
@@ -475,7 +467,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 const ray = RayUtils.create();
                 RayUtils.fromScreen(x, y, rect.width, rect.height, invVP, ray);
                 let pos = { x: 0, y: 0, z: 0 };
-                // Simple ground plane intersection (y=0)
                 if (Math.abs(ray.direction.y) > 0.001) {
                     const t = -ray.origin.y / ray.direction.y;
                     if (t > 0) pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});

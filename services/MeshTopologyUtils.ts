@@ -67,7 +67,6 @@ class MinHeap {
 export const MeshTopologyUtils = {
     /**
      * Builds a Half-Edge Data Structure from a LogicalMesh.
-     * This enables O(1) adjacency lookups and robust loop/ring selection.
      */
     buildTopology: (mesh: LogicalMesh, vertexCount: number): MeshTopology => {
         const halfEdges: HalfEdge[] = [];
@@ -75,7 +74,6 @@ export const MeshTopologyUtils = {
         const faces = new Array(mesh.faces.length).fill(null).map(() => ({ edge: -1 }));
         const edgeKeyToHalfEdge = new Map<string, number>();
 
-        // 1. Create Half-Edges for each face
         mesh.faces.forEach((faceVerts, faceIdx) => {
             const faceStartEdgeIdx = halfEdges.length;
             const len = faceVerts.length;
@@ -102,7 +100,6 @@ export const MeshTopologyUtils = {
                 }
 
                 // Register for pair matching
-                // Key is directed: "from-to"
                 const key = `${vCurrent}-${vNext}`;
                 edgeKeyToHalfEdge.set(key, heIdx);
             }
@@ -110,7 +107,7 @@ export const MeshTopologyUtils = {
             faces[faceIdx].edge = faceStartEdgeIdx;
         });
 
-        // 2. Link Pairs
+        // Link Pairs
         for (let i = 0; i < halfEdges.length; i++) {
             const he = halfEdges[i];
             const origin = halfEdges[he.prev].vertex;
@@ -143,7 +140,7 @@ export const MeshTopologyUtils = {
     },
 
     /**
-     * Robust raycasting using AABB pre-filtering for sub-millisecond detection on high-res meshes.
+     * Robust raycasting using AABB pre-filtering.
      */
     raycastMesh: (mesh: LogicalMesh, vertices: Float32Array, ray: Ray, tolerance: number = 0.02): MeshPickingResult | null => {
         let bestT = Infinity;
@@ -193,175 +190,183 @@ export const MeshTopologyUtils = {
         return result;
     },
 
-    // --- LOOP SELECTION ALGORITHMS ---
+    // --- SELECTION ALGORITHMS ---
 
-    getFaceLoop: (mesh: LogicalMesh, startFace: number, guideEdgeVertices: [number, number]): number[] => {
-        if (!mesh.graph) return [startFace];
-        const graph = mesh.graph;
-        
-        const vA = guideEdgeVertices[0];
-        const vB = guideEdgeVertices[1];
-        
-        let startHeIdx = -1;
-        let key = `${vA}-${vB}`;
-        
-        let candidateIdx = graph.edgeKeyToHalfEdge.get(key);
-        if (candidateIdx === undefined) {
-             key = `${vB}-${vA}`;
-             candidateIdx = graph.edgeKeyToHalfEdge.get(key);
-        }
-        if (candidateIdx === undefined) return [startFace];
-        
-        if (graph.halfEdges[candidateIdx].face === startFace) startHeIdx = candidateIdx;
-        else if (graph.halfEdges[candidateIdx].pair !== -1 && graph.halfEdges[graph.halfEdges[candidateIdx].pair].face === startFace) {
-            startHeIdx = graph.halfEdges[candidateIdx].pair;
-        }
-        
-        if (startHeIdx === -1) return [startFace];
-
-        const loop = new Set<number>();
-        loop.add(startFace);
-
-        // Walk neighbor across guide edge
-        MeshTopologyUtils.walkFaceLoop(graph, startHeIdx, loop);
-        
-        // Walk opposite direction (opposite edge of the quad)
-        const next = graph.halfEdges[startHeIdx].next;
-        const opp = graph.halfEdges[next].next;
-        MeshTopologyUtils.walkFaceLoop(graph, opp, loop);
-
-        return Array.from(loop);
+    /**
+     * Get Edge Ring: Parallel edges (Like ladder rungs).
+     */
+    getEdgeRing: (mesh: LogicalMesh, startVertexA: number, startVertexB: number): [number, number][] => {
+        const forward = MeshTopologyUtils._walkRing(mesh, startVertexA, startVertexB);
+        const backward = MeshTopologyUtils._walkRing(mesh, startVertexA, startVertexB, true);
+        return [...backward.reverse(), [startVertexA, startVertexB], ...forward];
     },
 
-    walkFaceLoop: (graph: MeshTopology, exitHeIdx: number, result: Set<number>) => {
-        let curr = exitHeIdx;
+    /**
+     * Get Face Loop: A strip of quads.
+     */
+    getFaceLoop: (mesh: LogicalMesh, edgeV1: number, edgeV2: number): number[] => {
+        const faces = (mesh.vertexToFaces.get(edgeV1) || []).filter(f => (mesh.vertexToFaces.get(edgeV2) || []).includes(f));
+        const loop: number[] = [];
+        if (faces.length > 0) {
+            loop.push(...MeshTopologyUtils._walkFaceStrip(mesh, edgeV1, edgeV2, faces[0]).reverse());
+        }
+        if (faces.length > 1) {
+            loop.push(...MeshTopologyUtils._walkFaceStrip(mesh, edgeV1, edgeV2, faces[1]));
+        }
+        return [...new Set(loop)];
+    },
+
+    /**
+     * Get Edge Loop: Connected edges in a line (Longitudinal).
+     */
+    getEdgeLoop: (mesh: LogicalMesh, startV1: number, startV2: number): [number, number][] => {
+        const forward = MeshTopologyUtils._walkEdgeLoop(mesh, startV1, startV2);
+        const backward = MeshTopologyUtils._walkEdgeLoop(mesh, startV2, startV1);
+        // Combine: backward (reversed) -> start -> forward
+        return [...backward.map(e => [e[1], e[0]] as [number, number]).reverse(), [startV1, startV2], ...forward];
+    },
+
+    /**
+     * Get Vertex Loop: For a single vertex, this is ambiguous without direction.
+     * Returns the 1-ring neighborhood (connected vertices) for now.
+     */
+    getVertexLoop: (mesh: LogicalMesh, vertexIndex: number): number[] => {
+        const neighbors = new Set<number>();
+        neighbors.add(vertexIndex);
         
-        while(true) {
-            const pair = graph.halfEdges[curr].pair;
-            if (pair === -1) break; 
-            
-            const neighborFace = graph.halfEdges[pair].face;
-            if (result.has(neighborFace)) break;
-            
-            const fEdge = graph.faces[neighborFace].edge;
-            let count = 0; let it = fEdge;
-            do { count++; it = graph.halfEdges[it].next; } while(it !== fEdge);
-            if (count !== 4) {
-                result.add(neighborFace);
-                break;
+        const faces = mesh.vertexToFaces.get(vertexIndex) || [];
+        faces.forEach(fIdx => {
+            const face = mesh.faces[fIdx];
+            const idx = face.indexOf(vertexIndex);
+            if (idx !== -1) {
+                neighbors.add(face[(idx + 1) % face.length]);
+                neighbors.add(face[(idx + face.length - 1) % face.length]);
             }
+        });
+        
+        return Array.from(neighbors);
+    },
+
+    // --- Internal Helpers ---
+
+    _walkRing: (mesh: LogicalMesh, vA: number, vB: number, reverse: boolean = false): [number, number][] => {
+        const edges: [number, number][] = [];
+        const visitedFaces = new Set<number>();
+        
+        let currA = vA; 
+        let currB = vB;
+
+        const sharedFaces = (mesh.vertexToFaces.get(vA) || []).filter(f => (mesh.vertexToFaces.get(vB) || []).includes(f));
+        if (sharedFaces.length === 0) return [];
+        
+        // Directionality
+        let startFaceIdx = reverse ? sharedFaces[1] : sharedFaces[0];
+        if (startFaceIdx === undefined) return [];
+
+        visitedFaces.add(startFaceIdx);
+
+        let next = MeshTopologyUtils._stepAcrossFace(mesh, currA, currB, startFaceIdx);
+        
+        while (next) {
+            edges.push([next.a, next.b]);
+            currA = next.a; 
+            currB = next.b;
             
-            result.add(neighborFace);
-            curr = graph.halfEdges[graph.halfEdges[pair].next].next;
+            const nextFaces = (mesh.vertexToFaces.get(currA) || []).filter(f => (mesh.vertexToFaces.get(currB) || []).includes(f));
+            const nextFaceIdx = nextFaces.find(f => !visitedFaces.has(f));
+            
+            if (nextFaceIdx === undefined) break;
+            
+            visitedFaces.add(nextFaceIdx);
+            next = MeshTopologyUtils._stepAcrossFace(mesh, currA, currB, nextFaceIdx);
         }
+        return edges;
     },
 
-    getEdgeLoop: (mesh: LogicalMesh, startEdgeKey: string): string[] => {
-        if (!mesh.graph) return [startEdgeKey];
-        
-        const graph = mesh.graph;
-        let startHeIdx = graph.edgeKeyToHalfEdge.get(startEdgeKey.split('-').join('-')); 
-        if (startHeIdx === undefined) {
-             const parts = startEdgeKey.split('-');
-             startHeIdx = graph.edgeKeyToHalfEdge.get(`${parts[1]}-${parts[0]}`);
-        }
-        if (startHeIdx === undefined) return [startEdgeKey];
-
-        const loop = new Set<string>();
-        loop.add(graph.halfEdges[startHeIdx].edgeKey);
-
-        MeshTopologyUtils.walkEdgeLoop(graph, startHeIdx, loop);
-        
-        const pairIdx = graph.halfEdges[startHeIdx].pair;
-        if (pairIdx !== -1) {
-            MeshTopologyUtils.walkEdgeLoop(graph, pairIdx, loop);
-        }
-
-        return Array.from(loop);
+    _stepAcrossFace: (mesh: LogicalMesh, vA: number, vB: number, faceIdx: number) => {
+        const face = mesh.faces[faceIdx];
+        if (face.length !== 4) return null; // Only works on quads
+        const idxA = face.indexOf(vA);
+        const idxB = face.indexOf(vB);
+        // Opposite edge in a quad: (0,1) -> (2,3)
+        const nextA = face[(idxA + 2) % 4];
+        const nextB = face[(idxB + 2) % 4];
+        return { a: nextA, b: nextB };
     },
 
-    walkEdgeLoop: (graph: MeshTopology, startHeIdx: number, result: Set<string>) => {
-        let currentHeIdx = startHeIdx;
+    _walkFaceStrip: (mesh: LogicalMesh, vA: number, vB: number, startFaceIdx: number): number[] => {
+        const faces: number[] = [startFaceIdx];
+        const visited = new Set<number>([startFaceIdx]);
+        
+        let currA = vA;
+        let currB = vB;
+        let currFace = startFaceIdx;
+
         while (true) {
-            const he = graph.halfEdges[currentHeIdx];
-            const faceEdge = graph.faces[he.face].edge;
-            let edgeCount = 0;
-            let iter = faceEdge;
-            do { edgeCount++; iter = graph.halfEdges[iter].next; } while(iter !== faceEdge);
+            const nextEdge = MeshTopologyUtils._stepAcrossFace(mesh, currA, currB, currFace);
+            if (!nextEdge) break;
 
-            if (edgeCount !== 4) break; 
+            currA = nextEdge.a;
+            currB = nextEdge.b;
 
-            const nextAcrossIdx = graph.halfEdges[graph.halfEdges[he.next].next].id;
-            const nextKey = graph.halfEdges[nextAcrossIdx].edgeKey;
-            if (result.has(nextKey)) break;
-            result.add(nextKey);
+            const candidates = (mesh.vertexToFaces.get(currA) || []).filter(f => (mesh.vertexToFaces.get(currB) || []).includes(f));
+            const nextFace = candidates.find(f => !visited.has(f));
 
-            const pairIdx = graph.halfEdges[nextAcrossIdx].pair;
-            if (pairIdx === -1) break;
+            if (nextFace === undefined) break;
             
-            currentHeIdx = pairIdx;
+            visited.add(nextFace);
+            faces.push(nextFace);
+            currFace = nextFace;
         }
+        return faces;
     },
 
-    getEdgeRing: (mesh: LogicalMesh, startEdgeKey: string): string[] => {
-        if (!mesh.graph) return [startEdgeKey];
-        const graph = mesh.graph;
+    _walkEdgeLoop: (mesh: LogicalMesh, fromV: number, currV: number): [number, number][] => {
+        const loop: [number, number][] = [];
+        let prev = fromV;
+        let current = currV;
         
-        const parts = startEdgeKey.split('-');
-        let startHeIdx = graph.edgeKeyToHalfEdge.get(`${parts[0]}-${parts[1]}`);
-        if (startHeIdx === undefined) startHeIdx = graph.edgeKeyToHalfEdge.get(`${parts[1]}-${parts[0]}`);
-        if (startHeIdx === undefined) return [startEdgeKey];
-
-        const ring = new Set<string>();
-        ring.add(graph.halfEdges[startHeIdx].edgeKey);
-
-        MeshTopologyUtils.walkEdgeRing(graph, startHeIdx, ring);
-        const pair = graph.halfEdges[startHeIdx].pair;
-        if (pair !== -1) MeshTopologyUtils.walkEdgeRing(graph, pair, ring);
-
-        return Array.from(ring);
-    },
-
-    walkEdgeRing: (graph: MeshTopology, startHeIdx: number, result: Set<string>) => {
-        let currentHeIdx = startHeIdx;
-        while(true) {
-            const he = graph.halfEdges[currentHeIdx];
-            const nextHe = graph.halfEdges[he.next];
-            const nextPair = nextHe.pair;
-            if (nextPair === -1) break; 
+        let iter = 0;
+        while(iter++ < 1000) {
+            const neighborFaces = mesh.vertexToFaces.get(current) || [];
             
-            const parallelHeIdx = graph.halfEdges[nextPair].next;
-            const faceEdge = graph.faces[graph.halfEdges[parallelHeIdx].face].edge;
-            let edgeCount = 0; let iter = faceEdge;
-            do { edgeCount++; iter = graph.halfEdges[iter].next; } while(iter !== faceEdge);
-            if (edgeCount !== 4) break;
+            // Get all directly connected neighbor vertices via edges
+            const neighbors = new Set<number>();
+            neighborFaces.forEach(fIdx => {
+                const face = mesh.faces[fIdx];
+                const idx = face.indexOf(current);
+                neighbors.add(face[(idx + 1) % face.length]);
+                neighbors.add(face[(idx + face.length - 1) % face.length]);
+            });
 
-            const nextKey = graph.halfEdges[parallelHeIdx].edgeKey;
-            if (result.has(nextKey)) break;
-            result.add(nextKey);
+            // Incoming edge is (prev, current)
+            const incomingFaces = neighborFaces.filter(fIdx => mesh.faces[fIdx].includes(prev));
+
+            // Find 'next' such that edge (current, next) shares NO faces with (prev, current)
+            let nextVertex = -1;
             
-            currentHeIdx = parallelHeIdx;
+            for (const n of Array.from(neighbors)) {
+                if (n === prev) continue;
+                
+                const outgoingFaces = neighborFaces.filter(fIdx => mesh.faces[fIdx].includes(n));
+                const shared = incomingFaces.filter(f => outgoingFaces.includes(f));
+                
+                // If 0 shared faces, this edge is topologically opposite in a valence-4 vertex
+                if (shared.length === 0) {
+                    nextVertex = n;
+                    break; 
+                }
+            }
+
+            if (nextVertex !== -1) {
+                loop.push([current, nextVertex]);
+                prev = current;
+                current = nextVertex;
+            } else {
+                break; // Pole or boundary
+            }
         }
-    },
-
-    getVertexLoop: (mesh: LogicalMesh, startVertex: number): number[] => {
-        if (!mesh.graph) return [startVertex];
-        const connected = new Set<number>();
-        const startHe = mesh.graph.vertices[startVertex].edge;
-        if (startHe === -1) return [startVertex];
-
-        let curr = startHe;
-        let safe = 0;
-        do {
-            const he = mesh.graph.halfEdges[curr];
-            connected.add(he.vertex);
-            const pair = he.pair;
-            if (pair === -1) break; 
-            curr = mesh.graph.halfEdges[pair].next;
-            safe++;
-        } while (curr !== startHe && safe < 20);
-        
-        return Array.from(connected);
+        return loop;
     },
 
     computeSurfaceWeights: (
