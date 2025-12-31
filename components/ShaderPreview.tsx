@@ -176,7 +176,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
             if (isProgramReady.current && programRef.current && vaoRef.current) {
                 gl.useProgram(programRef.current);
                 
-                const timelineRotation = autoRotate ? engineInstance.timelineSystem.state.currentTime * 0.5 : 0;
+                const timelineRotation = autoRotate ? engineInstance.timeline.currentTime * 0.5 : 0;
                 const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta + timelineRotation);
                 const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
                 const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta + timelineRotation);
@@ -194,7 +194,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
                 
                 gl.uniformMatrix4fv(gl.getUniformLocation(programRef.current, 'u_mvp'), false, mvp);
                 gl.uniformMatrix4fv(gl.getUniformLocation(programRef.current, 'u_model'), false, new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]));
-                gl.uniform1f(gl.getUniformLocation(programRef.current, 'u_time'), engineInstance.timelineSystem.state.currentTime);
+                gl.uniform1f(gl.getUniformLocation(programRef.current, 'u_time'), engineInstance.timeline.currentTime);
                 gl.uniform3f(gl.getUniformLocation(programRef.current, 'u_cameraPos'), eyeX, eyeY, eyeZ);
                 gl.uniform3f(gl.getUniformLocation(programRef.current, 'u_lightDir'), 0.5, -1.0, 0.5);
                 gl.uniform3f(gl.getUniformLocation(programRef.current, 'u_lightColor'), 1, 1, 1);

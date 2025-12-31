@@ -254,7 +254,7 @@ export class WebGLRenderer {
         }
     }
 
-    render(store: ComponentStorage, count: number, selected: Set<number>, vp: Float32Array, width: number, height: number, cam: any, softSelData: { enabled: boolean, center: {x:number,y:number,z:number}, radius: number }, debugRenderer?: DebugRenderer, selectedBoneIndex: number = -1) {
+    render(store: ComponentStorage, count: number, selectedIndices: Set<number>, vp: Float32Array, width: number, height: number, cam: any, softSelData: { enabled: boolean, center: {x:number,y:number,z:number}, radius: number }, debugRenderer?: DebugRenderer) {
         if (!this.gl) return;
         const gl = this.gl; const time = performance.now() / 1000;
         
@@ -280,7 +280,7 @@ export class WebGLRenderer {
         gl.clearColor(0.1, 0.1, 0.1, 1.0); 
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); 
         
-        this.meshSystem.render(store, selected, vp, cam, time, lightDir, lightColor, lightIntensity, this.renderMode, 'OPAQUE', softSelData, selectedBoneIndex);
+        this.meshSystem.render(store, selectedIndices, vp, cam, time, lightDir, lightColor, lightIntensity, this.renderMode, 'OPAQUE', softSelData);
         
         if (this.showGrid && !this.gridExcludePP) { 
             gl.drawBuffers([gl.COLOR_ATTACHMENT0]); 
@@ -293,7 +293,7 @@ export class WebGLRenderer {
         gl.clearColor(0, 0, 0, 0); 
         gl.clear(gl.COLOR_BUFFER_BIT); 
         
-        this.meshSystem.render(store, selected, vp, cam, time, lightDir, lightColor, lightIntensity, this.renderMode, 'OVERLAY', softSelData, selectedBoneIndex);
+        this.meshSystem.render(store, selectedIndices, vp, cam, time, lightDir, lightColor, lightIntensity, this.renderMode, 'OVERLAY', softSelData);
         
         // Render Custom Modules
         gl.drawBuffers([gl.COLOR_ATTACHMENT0]);

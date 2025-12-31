@@ -17,13 +17,13 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSave, onLoad }) => {
   // Local state for UI
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [time, setTime] = useState(0);
-  const [isLooping, setIsLooping] = useState(engineInstance.timelineSystem.state.isLooping);
+  const [isLooping, setIsLooping] = useState(engineInstance.timeline.isLooping);
 
   // Engine Sync
   useEffect(() => {
       const update = () => {
-          setTime(engineInstance.timelineSystem.state.currentTime);
-          setIsLooping(engineInstance.timelineSystem.state.isLooping);
+          setTime(engineInstance.timeline.currentTime);
+          setIsLooping(engineInstance.timeline.isLooping);
       };
       update();
       return engineInstance.subscribe(update);
@@ -167,7 +167,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSave, onLoad }) => {
                 onClick={() => {
                     const newState = !isLooping;
                     setIsLooping(newState);
-                    engineInstance.timelineSystem.state.isLooping = newState;
+                    engineInstance.timeline.isLooping = newState;
                 }} 
                 className={`transition-colors p-0.5 rounded ${isLooping ? 'text-accent bg-accent/10' : 'text-text-secondary hover:text-white hover:bg-white/5'}`}
                 title="Toggle Loop"

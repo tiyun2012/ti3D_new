@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect, useState, useLayoutEffect, useContext, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { Entity, ToolType, MeshComponentMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
@@ -98,13 +98,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
             const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
             
-            // Prevent NaN propagation
-            if (isNaN(eyeX) || isNaN(eyeY) || isNaN(eyeZ)) {
-                console.error("Invalid Camera State Detected - Resetting");
-                setCamera({ theta: 0.5, phi: 1.2, radius: 10, target: { x: 0, y: 0, z: 0 } });
-                return;
-            }
-
             const aspect = containerRef.current ? (containerRef.current.clientWidth / containerRef.current.clientHeight) : 1;
             const proj = Mat4Utils.create();
             Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0, proj);
@@ -135,8 +128,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
             const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
             
-            if (isNaN(eyeX)) return; // Skip frame if bad math
-
             const width = containerRef.current?.clientWidth || 1;
             const height = containerRef.current?.clientHeight || 1;
             const aspect = width / height;
@@ -180,130 +171,15 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => cancelAnimationFrame(frameId);
     }, [camera, softSelectionEnabled, softSelectionRadius]); 
 
-    // Focus Camera Logic (Enhanced with Robustness)
-    const handleFocus = useCallback(() => {
-        // 1. Component Mode Focus
-        if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
-            const entityId = selectedIds[0];
-            const idx = engineInstance.ecs.idToIndex.get(entityId);
-            if (idx === undefined) return;
-
-            const meshIntId = engineInstance.ecs.store.meshType[idx];
-            const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-            if (!assetUuid) return;
-            const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
-            if (!asset) return;
-
-            const worldMat = engineInstance.sceneGraph.getWorldMatrix(entityId);
-            if (!worldMat) return;
-
-            const vertices = asset.geometry.vertices;
-            let cx = 0, cy = 0, cz = 0;
-            let count = 0;
-
-            const addVertex = (vIdx: number) => {
-                // Safety: Bounds Check
-                if (vIdx < 0 || vIdx * 3 + 2 >= vertices.length) return;
-
-                const x = vertices[vIdx*3];
-                const y = vertices[vIdx*3+1];
-                const z = vertices[vIdx*3+2];
-                
-                // Safety: NaN Check
-                if (isNaN(x) || isNaN(y) || isNaN(z)) return;
-
-                // Transform to world
-                const wx = worldMat[0]*x + worldMat[4]*y + worldMat[8]*z + worldMat[12];
-                const wy = worldMat[1]*x + worldMat[5]*y + worldMat[9]*z + worldMat[13];
-                const wz = worldMat[2]*x + worldMat[6]*y + worldMat[10]*z + worldMat[14];
-                
-                // Safety: Result Check
-                if (!isNaN(wx) && !isNaN(wy) && !isNaN(wz)) {
-                    cx += wx; cy += wy; cz += wz;
-                    count++;
-                }
-            };
-
-            if (meshComponentMode === 'VERTEX') {
-                engineInstance.subSelection.vertexIds.forEach(v => addVertex(v));
-            } else if (meshComponentMode === 'EDGE') {
-                engineInstance.subSelection.edgeIds.forEach(key => {
-                    const parts = key.split('-').map(Number);
-                    if (parts.length === 2) {
-                        addVertex(parts[0]); addVertex(parts[1]);
-                    }
-                });
-            } else if (meshComponentMode === 'FACE') {
-                const topo = asset.topology;
-                engineInstance.subSelection.faceIds.forEach(fIdx => {
-                    if (topo && topo.faces[fIdx]) {
-                        topo.faces[fIdx].forEach(v => addVertex(v));
-                    } else {
-                        // Fallback
-                        const idxs = asset.geometry.indices;
-                        if (idxs && fIdx * 3 + 2 < idxs.length) {
-                            addVertex(idxs[fIdx*3]);
-                            addVertex(idxs[fIdx*3+1]);
-                            addVertex(idxs[fIdx*3+2]);
-                        }
-                    }
-                });
-            }
-
-            if (count > 0) {
-                const tx = cx/count;
-                const ty = cy/count;
-                const tz = cz/count;
-                
-                setCamera(prev => ({ 
-                    ...prev, 
-                    target: { x: tx, y: ty, z: tz },
-                    radius: Math.max(1.5, prev.radius * 0.4) // Closer zoom for components
-                }));
-                return;
-            }
-        }
-
-        // 2. Object Mode Focus
+    const handleFocus = () => {
         if (selectedIds.length > 0) {
-            let cx = 0, cy = 0, cz = 0;
-            let count = 0;
-            
-            selectedIds.forEach(id => {
-                const pos = sceneGraph.getWorldPosition(id);
-                if (!isNaN(pos.x)) {
-                    cx += pos.x; cy += pos.y; cz += pos.z;
-                    count++;
-                }
-            });
-            
-            if (count > 0) {
-                const target = { x: cx / count, y: cy / count, z: cz / count };
-                setCamera(prev => ({ 
-                    ...prev, 
-                    target, 
-                    radius: Math.max(3.0, prev.radius * 0.5) 
-                }));
-            }
+            const id = selectedIds[0];
+            const pos = sceneGraph.getWorldPosition(id);
+            setCamera(prev => ({ ...prev, target: pos, radius: 3.0 })); // Zoom in
         } else {
             setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
         }
-    }, [selectedIds, sceneGraph, meshComponentMode]);
-
-    // Keyboard 'F' for Focus
-    useEffect(() => {
-        const onKeyDown = (e: KeyboardEvent) => {
-            const active = document.activeElement;
-            const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
-            if (isInput) return;
-
-            if (e.key.toLowerCase() === 'f') {
-                handleFocus();
-            }
-        };
-        window.addEventListener('keydown', onKeyDown);
-        return () => window.removeEventListener('keydown', onKeyDown);
-    }, [handleFocus]);
+    };
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (pieMenuState && e.button !== 2) setPieMenuState(null);
@@ -490,36 +366,19 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const h = Math.abs(selectionBox.currentY - selectionBox.startY);
             
             if (w > 3 || h > 3) {
-                // Determine Mode
-                if (meshComponentMode === 'OBJECT') {
-                    const hitIds = engineInstance.selectEntitiesInRect(x, y, w, h);
-                    if (e.shiftKey) {
-                        const nextSelection = new Set(selectedIds);
-                        hitIds.forEach(id => {
-                            if (nextSelection.has(id)) nextSelection.delete(id);
-                            else nextSelection.add(id);
-                        });
-                        onSelect(Array.from(nextSelection));
-                    } else {
-                        onSelect(hitIds);
-                    }
+                const hitIds = engineInstance.selectEntitiesInRect(x, y, w, h);
+                if (e.shiftKey) {
+                    const nextSelection = new Set(selectedIds);
+                    hitIds.forEach(id => {
+                        if (nextSelection.has(id)) nextSelection.delete(id);
+                        else nextSelection.add(id);
+                    });
+                    onSelect(Array.from(nextSelection));
                 } else {
-                    // Component Marquee Selection
-                    engineInstance.selectComponentsInRect(x, y, w, h, meshComponentMode, e.shiftKey || e.ctrlKey);
+                    onSelect(hitIds);
                 }
             } else {
-                // Click (Empty Space)
-                if (!e.shiftKey && e.button === 0) {
-                    if (meshComponentMode === 'OBJECT') {
-                        onSelect([]);
-                    } else {
-                        engineInstance.subSelection.vertexIds.clear();
-                        engineInstance.subSelection.edgeIds.clear();
-                        engineInstance.subSelection.faceIds.clear();
-                        engineInstance.recalculateSoftSelection();
-                        engineInstance.notifyUI();
-                    }
-                }
+                if (!e.shiftKey && e.button === 0) onSelect([]);
             }
             setSelectionBox(null);
         }

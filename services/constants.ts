@@ -29,7 +29,5 @@ export const VIEW_MODES = [
     { id: 1, label: 'Normals', icon: 'BoxSelect' },
     { id: 2, label: 'Unlit', icon: 'Circle' },
     { id: 3, label: 'Wireframe', icon: 'Grid' },
-    { id: 4, label: 'Overdraw', icon: 'Layers' },
-    { id: 5, label: 'Soft Select', icon: 'Target' },
-    { id: 6, label: 'Skin Weights', icon: 'Bone' } // New Mode
+    { id: 4, label: 'Overdraw', icon: 'Layers' }
 ];

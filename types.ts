@@ -8,13 +8,6 @@ export interface Vector3 {
   z: number;
 }
 
-export interface Quaternion {
-  x: number;
-  y: number;
-  z: number;
-  w: number;
-}
-
 export type RotationOrder = 'XYZ' | 'XZY' | 'YXZ' | 'YZX' | 'ZXY' | 'ZYX';
 export type TransformSpace = 'World' | 'Local' | 'Gimbal' | 'Parent' | 'VirtualPivot' | 'Normal' | 'Average' | 'Object' | 'Screen';
 export type MeshComponentMode = 'OBJECT' | 'VERTEX' | 'EDGE' | 'FACE';
@@ -176,28 +169,8 @@ export interface StaticMeshAsset extends BaseAsset {
         uvs: Float32Array;
         colors: Float32Array;
         indices: Uint16Array;
-        jointIndices?: Float32Array;
-        jointWeights?: Float32Array;
     };
     topology?: LogicalMesh; // Optional CPU-side topology data
-}
-
-export interface AnimationKeyframe {
-    time: number;
-    value: Float32Array; // Vec3 or Quat
-}
-
-export interface AnimationTrack {
-    name: string;
-    type: 'position' | 'rotation' | 'scale';
-    times: Float32Array;
-    values: Float32Array; 
-}
-
-export interface AnimationClip {
-    name: string;
-    duration: number;
-    tracks: AnimationTrack[];
 }
 
 export interface SkeletalMeshAsset extends BaseAsset {
@@ -213,9 +186,8 @@ export interface SkeletalMeshAsset extends BaseAsset {
         jointWeights: Float32Array;
     };
     skeleton: {
-        bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array; inverseBindPose: Float32Array }>;
+        bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array }>;
     };
-    animations: AnimationClip[];
     topology?: LogicalMesh;
 }
 
