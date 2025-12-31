@@ -11,17 +11,21 @@ export interface MaterialTemplate {
 export const MATERIAL_TEMPLATES: MaterialTemplate[] = [
     {
         name: 'Standard Surface',
-        description: 'Standard PBR master node with default values.',
+        description: 'Standard PBR master node with default values and vertex color support.',
         nodes: [
             { id: 'out', type: 'StandardMaterial', position: { x: 800, y: 200 } },
-            { id: 'alb', type: 'Vec3', position: { x: 400, y: 150 }, data: { x: '0.8', y: '0.8', z: '0.8' } },
-            { id: 'met', type: 'Float', position: { x: 400, y: 300 }, data: { value: '0.0' } },
-            { id: 'smooth', type: 'Float', position: { x: 400, y: 400 }, data: { value: '0.5' } }
+            { id: 'alb', type: 'Vec3', position: { x: 200, y: 150 }, data: { x: '0.8', y: '0.8', z: '0.8' } },
+            { id: 'vcol', type: 'VertexColor', position: { x: 200, y: 300 } },
+            { id: 'mul', type: 'Multiply', position: { x: 500, y: 200 } },
+            { id: 'met', type: 'Float', position: { x: 500, y: 350 }, data: { value: '0.0' } },
+            { id: 'smooth', type: 'Float', position: { x: 500, y: 450 }, data: { value: '0.5' } }
         ],
         connections: [
-            { id: 'c1', fromNode: 'alb', fromPin: 'out', toNode: 'out', toPin: 'albedo' },
-            { id: 'c2', fromNode: 'met', fromPin: 'out', toNode: 'out', toPin: 'metallic' },
-            { id: 'c3', fromNode: 'smooth', fromPin: 'out', toNode: 'out', toPin: 'smoothness' }
+            { id: 'c1', fromNode: 'alb', fromPin: 'out', toNode: 'mul', toPin: 'a' },
+            { id: 'c2', fromNode: 'vcol', fromPin: 'rgb', toNode: 'mul', toPin: 'b' },
+            { id: 'c3', fromNode: 'mul', fromPin: 'out', toNode: 'out', toPin: 'albedo' },
+            { id: 'c4', fromNode: 'met', fromPin: 'out', toNode: 'out', toPin: 'metallic' },
+            { id: 'c5', fromNode: 'smooth', fromPin: 'out', toNode: 'out', toPin: 'smoothness' }
         ]
     },
     {

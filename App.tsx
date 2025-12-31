@@ -47,6 +47,7 @@ const InspectorWrapper = () => {
   let target: any = null;
   let count = 0;
 
+  // Priority: Graph Node > Entity/Asset Selection
   if (ctx.inspectedNode) {
       target = ctx.inspectedNode;
       return <InspectorPanel object={target} type="NODE" />;
@@ -377,7 +378,12 @@ const App: React.FC = () => {
         entities,
         sceneGraph: engineInstance.sceneGraph,
         selectedIds,
-        setSelectedIds: (ids) => { setSelectedIds(ids); engineInstance.setSelected(ids); },
+        setSelectedIds: (ids) => { 
+            setSelectedIds(ids); 
+            engineInstance.setSelected(ids);
+            // Auto-clear node inspection when selecting entities to restore Inspector context
+            if (ids.length > 0) setInspectedNode(null);
+        },
         selectedAssetIds,
         setSelectedAssetIds,
         inspectedNode,

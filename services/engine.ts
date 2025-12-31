@@ -215,7 +215,6 @@ export class Engine {
         const worldMat = this.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return;
 
-        // Iterate vertices (naive O(N), BVH would be better)
         const count = verts.length / 3;
         let modified = false;
 
@@ -228,11 +227,9 @@ export class Engine {
             const dist = Math.sqrt((wx - worldPos.x)**2 + (wy - worldPos.y)**2 + (wz - worldPos.z)**2);
             
             if (dist <= radius) {
-                // Determine falloff
-                const falloff = Math.pow(1.0 - (dist / radius), 2); // Quadratic falloff
+                const falloff = Math.pow(1.0 - (dist / radius), 2);
                 const effectiveWeight = weight * falloff;
 
-                // Find if bone already exists in indices
                 let slot = -1;
                 let emptySlot = -1;
                 
@@ -245,15 +242,13 @@ export class Engine {
                     slot = emptySlot;
                     jointIndices[i*4+slot] = boneIndex;
                 } else if (slot === -1) {
-                    // Replace weakest bone
                     let minW = 2.0; let minK = 0;
                     for(let k=0; k<4; k++) { if (jointWeights[i*4+k] < minW) { minW = jointWeights[i*4+k]; minK = k; } }
                     slot = minK;
                     jointIndices[i*4+slot] = boneIndex;
-                    jointWeights[i*4+slot] = 0; // Reset for addition
+                    jointWeights[i*4+slot] = 0;
                 }
 
-                // Apply logic
                 if (mode === 'ADD') {
                     jointWeights[i*4+slot] = Math.min(1.0, jointWeights[i*4+slot] + effectiveWeight * 0.1);
                 } else if (mode === 'REPLACE') {
@@ -262,7 +257,6 @@ export class Engine {
                     jointWeights[i*4+slot] = Math.max(0.0, jointWeights[i*4+slot] - effectiveWeight * 0.1);
                 }
 
-                // Normalize Weights
                 let sum = 0;
                 for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
                 if (sum > 0) {
@@ -277,6 +271,69 @@ export class Engine {
         if (modified) {
             this.registerAssetWithGPU(asset);
         }
+    }
+
+    floodSkinWeights(entityId: string, boneIndex: number, value: number) {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return;
+        const asset = assetManager.getAsset(assetManager.meshIntToUuid.get(this.ecs.store.meshType[idx])!) as SkeletalMeshAsset;
+        if(!asset || asset.type !== 'SKELETAL_MESH') return;
+
+        const count = asset.geometry.vertices.length / 3;
+        for (let i = 0; i < count; i++) {
+            // Find slot or empty
+            let slot = -1;
+            for(let k=0; k<4; k++) if(asset.geometry.jointIndices[i*4+k] === boneIndex) slot = k;
+            
+            if(slot === -1) {
+                // Find empty or min
+                let minW = 2.0; let minK = 0;
+                for(let k=0; k<4; k++) { 
+                    if(asset.geometry.jointWeights[i*4+k] < minW) { minW = asset.geometry.jointWeights[i*4+k]; minK = k; } 
+                }
+                slot = minK;
+                asset.geometry.jointIndices[i*4+slot] = boneIndex;
+            }
+            asset.geometry.jointWeights[i*4+slot] = value;
+            
+            // Normalize
+            let sum = 0;
+            for(let k=0; k<4; k++) sum += asset.geometry.jointWeights[i*4+k];
+            if(sum > 0) {
+                const s = 1.0/sum;
+                for(let k=0; k<4; k++) asset.geometry.jointWeights[i*4+k] *= s;
+            }
+        }
+        this.registerAssetWithGPU(asset);
+        consoleService.success('Flooded Skin Weights');
+    }
+
+    pruneSkinWeights(entityId: string, threshold: number) {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return;
+        const asset = assetManager.getAsset(assetManager.meshIntToUuid.get(this.ecs.store.meshType[idx])!) as SkeletalMeshAsset;
+        if(!asset || asset.type !== 'SKELETAL_MESH') return;
+
+        const count = asset.geometry.vertices.length / 3;
+        let pruned = 0;
+        for (let i = 0; i < count; i++) {
+            for(let k=0; k<4; k++) {
+                if(asset.geometry.jointWeights[i*4+k] < threshold) {
+                    asset.geometry.jointWeights[i*4+k] = 0;
+                    asset.geometry.jointIndices[i*4+k] = 0;
+                    pruned++;
+                }
+            }
+            // Normalize
+            let sum = 0;
+            for(let k=0; k<4; k++) sum += asset.geometry.jointWeights[i*4+k];
+            if(sum > 0) {
+                const s = 1.0/sum;
+                for(let k=0; k<4; k++) asset.geometry.jointWeights[i*4+k] *= s;
+            }
+        }
+        this.registerAssetWithGPU(asset);
+        consoleService.info(`Pruned ${pruned} small weights (<${threshold})`);
     }
 
     updateVertexColor(entityId: string, vertexIndex: number, color: {r: number, g: number, b: number}) {
@@ -663,7 +720,8 @@ export class Engine {
                     this.currentHeight, 
                     this.currentCameraPos,
                     softSel,
-                    this.isPlaying && this.simulationMode === 'GAME' ? undefined : this.debugRenderer
+                    this.isPlaying && this.simulationMode === 'GAME' ? undefined : this.debugRenderer,
+                    this.particleSystem
                 );
             }
 

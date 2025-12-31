@@ -7,7 +7,7 @@ import { DebugRenderer } from './DebugRenderer';
 import { moduleManager } from '../ModuleManager';
 import { MeshRenderSystem } from '../systems/MeshRenderSystem';
 import { effectRegistry } from '../EffectRegistry';
-import { engineInstance } from '../engine'; // Need to access particleSystem
+import { ParticleSystem } from '../systems/ParticleSystem';
 
 export interface PostProcessConfig {
     enabled: boolean;
@@ -273,7 +273,7 @@ export class WebGLRenderer {
         }
     }
 
-    render(store: ComponentStorage, count: number, selectedIndices: Set<number>, vp: Float32Array, width: number, height: number, cam: any, softSelData: { enabled: boolean, center: {x:number,y:number,z:number}, radius: number }, debugRenderer?: DebugRenderer) {
+    render(store: ComponentStorage, count: number, selectedIndices: Set<number>, vp: Float32Array, width: number, height: number, cam: any, softSelData: { enabled: boolean, center: {x:number,y:number,z:number}, radius: number }, debugRenderer?: DebugRenderer, particleSystem?: ParticleSystem) {
         if (!this.gl || !this.ppProgram) return;
         const gl = this.gl; const time = performance.now() / 1000;
         
@@ -294,6 +294,7 @@ export class WebGLRenderer {
         this.drawCalls = 0; this.triangleCount = 0;
         
         // --- Pass 1: Opaque Scene ---
+        // Render Particles into the Opaque pass so they interact with PP correctly
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboIncluded);
         gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
         gl.clearColor(0.1, 0.1, 0.1, 1.0); 
@@ -301,9 +302,10 @@ export class WebGLRenderer {
         
         this.meshSystem.render(store, selectedIndices, vp, cam, time, lightDir, lightColor, lightIntensity, this.renderMode, 'OPAQUE', softSelData);
         
-        // Render Particles (Pass 1)
-        // Note: For transparency, ideally render after opaque meshes
-        engineInstance.particleSystem.render(vp, cam, this.meshSystem.textureArray);
+        // Render Particles
+        if (particleSystem) {
+            particleSystem.render(vp, cam, this.meshSystem.textureArray, time);
+        }
 
         if (this.showGrid && !this.gridExcludePP) { 
             gl.drawBuffers([gl.COLOR_ATTACHMENT0]); 

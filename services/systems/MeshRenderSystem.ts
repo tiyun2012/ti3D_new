@@ -406,6 +406,9 @@ export class MeshRenderSystem {
             
             // Pass Selected Bone Index
             gl.uniform1i(gl.getUniformLocation(program, 'u_selectedBoneIndex'), this.selectedBoneIndex);
+            
+            // Disable Particle Masking for Meshes
+            gl.uniform1i(gl.getUniformLocation(program, 'u_isParticle'), 0);
 
             if (this.boneTexture) {
                 gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.boneTexture);

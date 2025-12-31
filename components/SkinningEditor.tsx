@@ -53,6 +53,16 @@ export const SkinningEditor: React.FC = () => {
         engineInstance.notifyUI();
     };
 
+    const handleFlood = () => {
+        if (selectedBoneIndex === -1 || selectedIds.length === 0) return;
+        engineInstance.floodSkinWeights(selectedIds[0], selectedBoneIndex, 1.0);
+    };
+
+    const handlePrune = () => {
+        if (selectedIds.length === 0) return;
+        engineInstance.pruneSkinWeights(selectedIds[0], 0.05); // Prune below 0.05
+    };
+
     // Global Painting Listener
     useEffect(() => {
         if (selectedBoneIndex === -1 || !asset || selectedIds.length === 0) return;
@@ -60,12 +70,10 @@ export const SkinningEditor: React.FC = () => {
         const entityId = selectedIds[0];
         
         const handleMouseMove = (e: MouseEvent) => {
-            if (e.buttons === 1 && !e.altKey && !e.shiftKey) { 
-                // Using pick from engine (assumes picking logic is exposed or we simulate it here)
+            if (e.buttons === 1 && !e.altKey && !e.shiftKey && !e.ctrlKey) { 
                 const rect = document.querySelector('canvas')?.getBoundingClientRect();
                 if (!rect) return;
                 
-                // Hack: Access Engine picking from here
                 const mx = e.clientX - rect.left;
                 const my = e.clientY - rect.top;
                 
@@ -151,6 +159,15 @@ export const SkinningEditor: React.FC = () => {
                         onChange={e => setSoftSelectionRadius(parseFloat(e.target.value))} 
                         className="w-full accent-accent h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer" 
                     />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
+                    <button onClick={handleFlood} className="py-1.5 bg-white/5 hover:bg-white/10 text-text-secondary hover:text-white rounded border border-white/10 transition-colors flex items-center justify-center gap-1">
+                        <Icon name="PaintBucket" size={12} /> Flood
+                    </button>
+                    <button onClick={handlePrune} className="py-1.5 bg-white/5 hover:bg-white/10 text-text-secondary hover:text-white rounded border border-white/10 transition-colors flex items-center justify-center gap-1">
+                        <Icon name="Scissors" size={12} /> Prune
+                    </button>
                 </div>
             </div>
 

@@ -40,7 +40,7 @@ vec3 heatMap(float t) {
 }
 `;
 
-// Logic to blend heatmap over material - NOW CHECKING u_showHeatmap
+// Logic to blend heatmap over material
 const SOFT_SEL_LOGIC = `
             if (v_softWeight > 0.0001 && u_showHeatmap > 0.5) {
                 vec3 heat = heatMap(v_softWeight);
@@ -158,38 +158,74 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
         const clearcoat = generateGraphFromInput('clearcoat');
         fsGlobals.push(...albedo.functions, ...metallic.functions, ...smoothness.functions, ...emission.functions, ...normal.functions, ...alpha.functions, ...alphaClip.functions, ...rim.functions, ...clearcoat.functions);
         fsBody.push(albedo.body, metallic.body, smoothness.body, emission.body, normal.body, alpha.body, alphaClip.body, rim.body, clearcoat.body);
+        
         fsSource = `
         void main() {
             ${fsBody.join('\n        ')}
             vec3 N = normalize(${normal.finalVar ? toVec3(normal.finalVar) : 'v_normal'});
             vec3 V = normalize(u_cameraPos - v_worldPos); vec3 L = normalize(-u_lightDir); vec3 H = normalize(V + L);
+            
             vec3 albedoVal = ${toVec3(albedo.finalVar, 'vec3(1.0)')};
+            
             float metallicVal = clamp(${toFloat(metallic.finalVar, '0.0')}, 0.0, 1.0);
             float roughnessVal = 1.0 - clamp(${toFloat(smoothness.finalVar, '0.5')}, 0.0, 1.0);
             vec3 emissionVal = ${toVec3(emission.finalVar, 'vec3(0.0)')};
             float alphaVal = clamp(${toFloat(alpha.finalVar, '1.0')}, 0.0, 1.0);
+            
+            // --- Auto-Circle Mask for Particles (if untextured) ---
+            if (u_isParticle == 1 && v_texIndex <= 0.5) {
+                float dist = length(v_uv - 0.5) * 2.0;
+                float circleAlpha = 1.0 - smoothstep(0.8, 1.0, dist);
+                alphaVal *= circleAlpha;
+            }
+            // -----------------------------------------------------
+
             float alphaClipVal = ${toFloat(alphaClip.finalVar, '0.0')};
             float rimStrengthVal = ${toFloat(rim.finalVar, '0.0')};
+            
             if (alphaVal < alphaClipVal) discard;
+            if (alphaVal < 0.01) discard;
+            
             vec3 F0 = mix(vec3(0.04), albedoVal, metallicVal);
             float NDF = DistributionGGX(N, H, roughnessVal); float G = GeometrySmith(N, V, L, roughnessVal);
             vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
             vec3 specular = (NDF * G * F) / (4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001);
             vec3 directLight = ((vec3(1.0) - F) * (1.0 - metallicVal) * albedoVal / PI + specular) * u_lightColor * u_lightIntensity * max(dot(N, L), 0.0);
+            
             vec3 finalColor = directLight + getFakeIBL(N, V, roughnessVal, F0, albedoVal, metallicVal) + emissionVal;
             finalColor += vec3(pow(1.0 - max(dot(N, V), 0.0), 4.0)) * rimStrengthVal * u_lightColor;
+            
             if (u_renderMode == 1) finalColor = N * 0.5 + 0.5;
             ${SOFT_SEL_LOGIC}
-            outColor = vec4(finalColor, alphaVal); outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
+            
+            outColor = vec4(finalColor, alphaVal); 
+            outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
         }`;
     } else {
         const rgb = generateGraphFromInput('rgb'); fsGlobals.push(...rgb.functions);
         const rgbVar = rgb.finalVar ? toVec3(rgb.finalVar) : 'vec3(1.0, 0.0, 1.0)';
-        fsSource = `void main() { ${rgb.body} vec3 finalColor = ${rgbVar}; if (u_renderMode == 1) finalColor = normalize(v_normal) * 0.5 + 0.5; ${SOFT_SEL_LOGIC} outColor = vec4(finalColor, 1.0); outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0); }`;
+        
+        fsSource = `void main() { 
+            ${rgb.body} 
+            vec3 finalColor = ${rgbVar}; 
+            if (u_renderMode == 1) finalColor = normalize(v_normal) * 0.5 + 0.5; 
+            
+            // Auto-circle mask for particles in Unlit mode too
+            float alphaVal = 1.0;
+            if (u_isParticle == 1 && v_texIndex <= 0.5) {
+                float dist = length(v_uv - 0.5) * 2.0;
+                alphaVal = 1.0 - smoothstep(0.8, 1.0, dist);
+            }
+            
+            if (alphaVal < 0.01) discard;
+
+            ${SOFT_SEL_LOGIC} 
+            outColor = vec4(finalColor, alphaVal); 
+            outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0); 
+        }`;
     }
     const vsSource = `// --- Global Functions (VS) ---\n${vsData.functions.join('\n')}\n// --- Graph Body (VS) ---\n${vsData.body}\n${vsFinalAssignment}`;
     
-    // Dynamically generate Interface Block
     const varyingHeader = SHADER_VARYINGS.map(v => `in ${v.type} ${v.name};`).join('\n    ');
 
     const fullFs = `#version 300 es
@@ -203,6 +239,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     uniform vec3 u_lightColor; 
     uniform float u_lightIntensity; 
     uniform float u_showHeatmap; 
+    uniform int u_isParticle; 
     
     // --- Generated Interface ---
     ${varyingHeader}

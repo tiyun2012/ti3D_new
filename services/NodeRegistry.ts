@@ -80,7 +80,7 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         ],
         outputs: [],
         data: {
-            albedo: '#888888',
+            albedo: '#ffffff', // Changed from #888888 to White to allow Vertex Color to tint correctly
             metallic: '0.0',
             smoothness: '0.5',
             emission: '#000000',
