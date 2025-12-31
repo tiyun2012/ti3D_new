@@ -1,3 +1,4 @@
+
 import { INITIAL_CAPACITY, ROTATION_ORDER_ZY_MAP } from '../constants';
 import { Mat4Utils } from '../math';
 
@@ -45,7 +46,20 @@ export class ComponentStorage {
     physicsMaterialIndex = new Int32Array(this.capacity); 
 
     // --- Virtual Pivot ---
-    vpLength = new Float32Array(this.capacity); // <--- ADD THIS
+    vpLength = new Float32Array(this.capacity); 
+
+    // --- Particle System ---
+    psMaxCount = new Int32Array(this.capacity);
+    psRate = new Float32Array(this.capacity);
+    psSpeed = new Float32Array(this.capacity);
+    psLife = new Float32Array(this.capacity);
+    psColorR = new Float32Array(this.capacity);
+    psColorG = new Float32Array(this.capacity);
+    psColorB = new Float32Array(this.capacity);
+    psSize = new Float32Array(this.capacity);
+    psTextureId = new Float32Array(this.capacity);
+    // 0: Point, 1: Cone, 2: Sphere
+    psShape = new Uint8Array(this.capacity); 
 
     // --- Metadata ---
     isActive = new Uint8Array(this.capacity);
@@ -58,7 +72,7 @@ export class ComponentStorage {
         this.scaleX.fill(1);
         this.scaleY.fill(1);
         this.scaleZ.fill(1);
-        this.vpLength.fill(1.0); // Default axis length
+        this.vpLength.fill(1.0); 
         
         // Initialize world matrices
         for (let i = 0; i < this.capacity; i++) {
@@ -169,8 +183,20 @@ export class ComponentStorage {
         this.useGravity = resizeUint8(this.useGravity);
         this.physicsMaterialIndex = resizeInt32(this.physicsMaterialIndex);
         
-        this.vpLength = resizeFloat(this.vpLength); // <--- ADD THIS
+        this.vpLength = resizeFloat(this.vpLength); 
         
+        // Particle Resize
+        this.psMaxCount = resizeInt32(this.psMaxCount);
+        this.psRate = resizeFloat(this.psRate);
+        this.psSpeed = resizeFloat(this.psSpeed);
+        this.psLife = resizeFloat(this.psLife);
+        this.psColorR = resizeFloat(this.psColorR);
+        this.psColorG = resizeFloat(this.psColorG);
+        this.psColorB = resizeFloat(this.psColorB);
+        this.psSize = resizeFloat(this.psSize);
+        this.psTextureId = resizeFloat(this.psTextureId);
+        this.psShape = resizeUint8(this.psShape);
+
         this.isActive = resizeUint8(this.isActive);
         this.generation = resizeUint32(this.generation);
         
@@ -204,7 +230,19 @@ export class ComponentStorage {
             mass: new Float32Array(this.mass),
             useGravity: new Uint8Array(this.useGravity),
             physicsMaterialIndex: new Int32Array(this.physicsMaterialIndex),
-            vpLength: new Float32Array(this.vpLength), // <--- ADD THIS
+            vpLength: new Float32Array(this.vpLength), 
+            
+            psMaxCount: new Int32Array(this.psMaxCount),
+            psRate: new Float32Array(this.psRate),
+            psSpeed: new Float32Array(this.psSpeed),
+            psLife: new Float32Array(this.psLife),
+            psColorR: new Float32Array(this.psColorR),
+            psColorG: new Float32Array(this.psColorG),
+            psColorB: new Float32Array(this.psColorB),
+            psSize: new Float32Array(this.psSize),
+            psTextureId: new Float32Array(this.psTextureId),
+            psShape: new Uint8Array(this.psShape),
+
             isActive: new Uint8Array(this.isActive),
             generation: new Uint32Array(this.generation),
             names: [...this.names],
@@ -236,8 +274,21 @@ export class ComponentStorage {
         this.useGravity.set(snap.useGravity);
         if(snap.physicsMaterialIndex) this.physicsMaterialIndex.set(snap.physicsMaterialIndex);
         
-        if(snap.vpLength) this.vpLength.set(snap.vpLength); // <--- ADD THIS
+        if(snap.vpLength) this.vpLength.set(snap.vpLength); 
         
+        if(snap.psMaxCount) {
+            this.psMaxCount.set(snap.psMaxCount);
+            this.psRate.set(snap.psRate);
+            this.psSpeed.set(snap.psSpeed);
+            this.psLife.set(snap.psLife);
+            this.psColorR.set(snap.psColorR);
+            this.psColorG.set(snap.psColorG);
+            this.psColorB.set(snap.psColorB);
+            this.psSize.set(snap.psSize);
+            this.psTextureId.set(snap.psTextureId);
+            this.psShape.set(snap.psShape);
+        }
+
         this.isActive.set(snap.isActive);
         this.generation.set(snap.generation);
         

@@ -19,6 +19,7 @@ import { moduleManager } from './ModuleManager';
 import { registerCoreModules } from './modules/CoreModules';
 import { consoleService } from './Console';
 import type { MeshRenderSystem } from './systems/MeshRenderSystem';
+import { ParticleSystem } from './systems/ParticleSystem';
 
 export type SoftSelectionMode = 'DYNAMIC' | 'FIXED';
 
@@ -27,6 +28,7 @@ export class Engine {
     sceneGraph: SceneGraph;
     physicsSystem: PhysicsSystem;
     historySystem: HistorySystem;
+    particleSystem: ParticleSystem; // Added
     renderer: WebGLRenderer;
     debugRenderer: DebugRenderer;
     metrics: PerformanceMetrics;
@@ -87,6 +89,7 @@ export class Engine {
         this.sceneGraph.setContext(this.ecs);
         this.physicsSystem = new PhysicsSystem();
         this.historySystem = new HistorySystem();
+        this.particleSystem = new ParticleSystem(); // Added
         this.renderer = new WebGLRenderer();
         this.debugRenderer = new DebugRenderer();
         this.metrics = { fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
@@ -107,6 +110,7 @@ export class Engine {
         this.renderer.init(canvas);
         this.renderer.initGizmo();
         this.debugRenderer.init(this.renderer.gl!);
+        this.particleSystem.init(this.renderer.gl!); // Init Particles
         this.recompileAllMaterials();
         if (this.ecs.count === 0) this.createDefaultScene();
     }
@@ -119,22 +123,41 @@ export class Engine {
 
     private createDefaultScene() {
         const standardMat = assetManager.getAssetsByType('MATERIAL').find(a => a.name === 'Standard');
+        
+        // 1. Holographic Cube
         const cubeId = this.createEntityFromAsset('SM_Cube', { x: -1.5, y: 0, z: 0 });
-        const sphereId = this.createEntityFromAsset('SM_Sphere', { x: 1.5, y: 0, z: 0 });
-        if (standardMat) {
-            const cIdx = this.ecs.idToIndex.get(cubeId!);
-            const sIdx = this.ecs.idToIndex.get(sphereId!);
-            const mIntId = assetManager.getMaterialID(standardMat.id);
-            if (cIdx !== undefined) this.ecs.store.materialIndex[cIdx] = mIntId;
-            if (sIdx !== undefined) this.ecs.store.materialIndex[sIdx] = mIntId;
+        if (cubeId && standardMat) {
+            const idx = this.ecs.idToIndex.get(cubeId);
+            if (idx !== undefined) {
+                this.ecs.store.materialIndex[idx] = assetManager.getMaterialID(standardMat.id);
+                // Apply Hologram Effect (ID 101)
+                this.ecs.store.effectIndex[idx] = 101; 
+                this.ecs.store.names[idx] = "Holo Cube";
+            }
         }
+
+        // 2. Normal Sphere
+        const sphereId = this.createEntityFromAsset('SM_Sphere', { x: 1.5, y: 0, z: 0 });
+        if (sphereId && standardMat) {
+            const idx = this.ecs.idToIndex.get(sphereId);
+            if (idx !== undefined) this.ecs.store.materialIndex[idx] = assetManager.getMaterialID(standardMat.id);
+        }
+
+        // 3. Fire Particles
+        const fire = this.ecs.createEntity('Campfire Particles');
+        this.ecs.addComponent(fire, ComponentType.TRANSFORM);
+        this.ecs.addComponent(fire, ComponentType.PARTICLE_SYSTEM);
+        const fireIdx = this.ecs.idToIndex.get(fire)!;
+        this.ecs.store.setPosition(fireIdx, 0, 0, 0);
+        this.sceneGraph.registerEntity(fire);
+        
+        // 4. Light
         const light = this.ecs.createEntity('Directional Light');
         this.ecs.addComponent(light, ComponentType.LIGHT);
         const idx = this.ecs.idToIndex.get(light)!;
         this.ecs.store.setPosition(idx, 5, 10, 5);
         this.ecs.store.setRotation(idx, -0.785, 0.785, 0); 
         this.sceneGraph.registerEntity(light);
-        this.createVirtualPivot();
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }
@@ -219,10 +242,8 @@ export class Engine {
                     topo.faces[fIdx].forEach(v => result.add(v));
                 });
             } else {
-                // Fallback for non-topo meshes (raw tris)
                 const indices = asset.geometry.indices;
                 this.subSelection.faceIds.forEach(fIdx => {
-                    // Assuming faces map to triangles directly if no topo
                     result.add(indices[fIdx * 3]);
                     result.add(indices[fIdx * 3 + 1]);
                     result.add(indices[fIdx * 3 + 2]);
@@ -260,7 +281,6 @@ export class Engine {
         const maxScale = Math.max(sx, Math.max(sy, sz)) || 1.0;
         const localRadius = this.softSelectionRadius / maxScale;
 
-        // Get unified vertex set from active mode (Edge/Face/Vertex)
         const selectedVerts = this.getSelectionAsVertices();
         let weights: Float32Array;
 
@@ -366,7 +386,6 @@ export class Engine {
         const verts = asset.geometry.vertices;
         const weights = this.softSelectionWeights.get(meshIntId);
         
-        // Use getSelectionAsVertices to support all modes
         const selectedVerts = this.getSelectionAsVertices();
 
         if (this.softSelectionEnabled && weights) {
@@ -449,7 +468,6 @@ export class Engine {
         const topo = asset.topology;
 
         if (mode === 'EDGE') {
-            // Need at least 1 edge
             const edges = Array.from(this.subSelection.edgeIds);
             if (edges.length === 0) return;
             const lastEdge = edges[edges.length - 1];
@@ -461,7 +479,6 @@ export class Engine {
             });
         } 
         else if (mode === 'VERTEX') {
-            // Need at least 2 vertices to define direction
             const verts = Array.from(this.subSelection.vertexIds);
             if (verts.length < 2) {
                 consoleService.warn('Select at least 2 vertices to define loop direction');
@@ -469,7 +486,6 @@ export class Engine {
             }
             const v1 = verts[verts.length - 2];
             const v2 = verts[verts.length - 1];
-            // Validate connection
             const key = [v1, v2].sort((a,b)=>a-b).join('-');
             if (topo.graph && topo.graph.edgeKeyToHalfEdge.has(key)) {
                 const loop = MeshTopologyUtils.getVertexLoop(topo, v1, v2);
@@ -479,7 +495,6 @@ export class Engine {
             }
         } 
         else if (mode === 'FACE') {
-            // Need 2 adjacent faces to define strip direction
             const faces = Array.from(this.subSelection.faceIds);
             if (faces.length < 2) {
                 consoleService.warn('Select at least 2 adjacent faces to define loop direction');
@@ -488,7 +503,6 @@ export class Engine {
             const f1 = faces[faces.length - 2];
             const f2 = faces[faces.length - 1];
             
-            // Find shared edge vertices
             const verts1 = topo.faces[f1];
             const verts2 = topo.faces[f2];
             const shared = verts1.filter(v => verts2.includes(v));
@@ -509,6 +523,9 @@ export class Engine {
             const start = performance.now();
             const clampedDt = Math.min(dt, this.maxFrameTime);
             if (dt > 0) this.accumulator += clampedDt;
+
+            // Run particles regardless of physics simulation, for editing
+            this.particleSystem.update(clampedDt, this.ecs.store);
 
             while (this.accumulator >= this.fixedTimeStep) {
                 this.fixedUpdate(this.fixedTimeStep);
@@ -534,10 +551,8 @@ export class Engine {
                      const idx = Array.from(this.selectedIndices)[0];
                      const id = this.ecs.store.ids[idx];
                      const wm = this.sceneGraph.getWorldMatrix(id);
-                     
                      const useSnap = (this.softSelectionMode === 'FIXED' && this.vertexSnapshot);
                      const sourceV = useSnap ? this.vertexSnapshot! : (assetManager.getAsset(assetManager.meshIntToUuid.get(this.ecs.store.meshType[idx])!) as StaticMeshAsset)?.geometry.vertices;
-                     
                      const activeVerts = this.getSelectionAsVertices();
 
                      if (sourceV && activeVerts.size > 0 && wm) {
@@ -611,7 +626,7 @@ export class Engine {
     }
 
     setSelected(ids: string[]) {
-        this.clearDeformation(); // Clear old deformation history on object switch
+        this.clearDeformation(); 
         this.selectedIndices.clear();
         ids.forEach(id => {
             const idx = this.ecs.idToIndex.get(id);
@@ -619,7 +634,7 @@ export class Engine {
         });
         this.subSelection.vertexIds.clear(); this.subSelection.edgeIds.clear(); this.subSelection.faceIds.clear();
         this.hoveredVertex = null;
-        this.recalculateSoftSelection(); // Clear weights on new selection
+        this.recalculateSoftSelection(); 
     }
 
     highlightVertexAt(mx: number, my: number, w: number, h: number) {
@@ -711,6 +726,11 @@ export class Engine {
         store.lightType[newIdx] = store.lightType[idx]; store.lightIntensity[newIdx] = store.lightIntensity[idx];
         store.vpLength[newIdx] = store.vpLength[idx];
         
+        store.psMaxCount[newIdx] = store.psMaxCount[idx]; store.psRate[newIdx] = store.psRate[idx];
+        store.psSpeed[newIdx] = store.psSpeed[idx]; store.psLife[newIdx] = store.psLife[idx];
+        store.psColorR[newIdx] = store.psColorR[idx]; store.psColorG[newIdx] = store.psColorG[idx]; store.psColorB[newIdx] = store.psColorB[idx];
+        store.psSize[newIdx] = store.psSize[idx]; store.psTextureId[newIdx] = store.psTextureId[idx]; store.psShape[newIdx] = store.psShape[idx];
+
         this.sceneGraph.registerEntity(newId);
         const parent = this.sceneGraph.getParentId(id);
         if (parent) this.sceneGraph.attach(newId, parent);
@@ -731,7 +751,6 @@ export class Engine {
             if (internalId > 0) {
                 this.meshSystem.registerMesh(internalId, asset.geometry);
                 
-                // Restore soft selection weights if they exist for this mesh
                 if (this.softSelectionWeights.has(internalId)) {
                     this.meshSystem.updateSoftSelectionBuffer(internalId, this.softSelectionWeights.get(internalId)!);
                 }

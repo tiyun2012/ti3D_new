@@ -336,6 +336,15 @@ class AssetManagerService {
         };
 
         if (type === 'SKELETAL_MESH') {
+             const defaultSkeleton = { 
+                 bones: [{ 
+                     name: 'Root', 
+                     parentIndex: -1, 
+                     bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
+                     inverseBindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1])
+                 }] 
+             };
+
              const skelAsset: SkeletalMeshAsset = {
                  ...assetBase,
                  type: 'SKELETAL_MESH',
@@ -344,7 +353,8 @@ class AssetManagerService {
                      jointIndices: new Float32Array(geometryData.jointIndices),
                      jointWeights: new Float32Array(geometryData.jointWeights)
                  },
-                 skeleton: skeletonData || { bones: [{ name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }] }
+                 skeleton: skeletonData || defaultSkeleton,
+                 animations: []
              };
              this.registerAsset(skelAsset);
              return skelAsset;
@@ -449,7 +459,12 @@ class AssetManagerService {
         // Mock implementation for the diff - assuming valid return structure
         return { 
             geometry: ProceduralGeneration.createCylinder(24), 
-            skeleton: { bones: [{ name: 'Root', parentIndex: -1, bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }] }
+            skeleton: { bones: [{ 
+                name: 'Root', 
+                parentIndex: -1, 
+                bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
+                inverseBindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1])
+            }] }
         };
     }
 

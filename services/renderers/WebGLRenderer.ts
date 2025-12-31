@@ -6,6 +6,8 @@ import { COMPONENT_MASKS } from '../constants';
 import { DebugRenderer } from './DebugRenderer';
 import { moduleManager } from '../ModuleManager';
 import { MeshRenderSystem } from '../systems/MeshRenderSystem';
+import { effectRegistry } from '../EffectRegistry';
+import { engineInstance } from '../engine'; // Need to access particleSystem
 
 export interface PostProcessConfig {
     enabled: boolean;
@@ -72,7 +74,7 @@ void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
 }`;
 
-const PP_FS = `#version 300 es
+const PP_FS_TEMPLATE = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
 uniform sampler2D u_scene;    
@@ -93,23 +95,14 @@ vec3 aces(vec3 x) {
   return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-vec3 processPerObjectEffects(vec3 color, float effectId, vec2 uv, sampler2D sceneTex) {
-    if (effectId < 0.5) return color;
-    if (effectId < 1.5) { 
-        float p = 128.0; vec2 puv = floor(uv * p) / p; return texture(sceneTex, puv).rgb;
-    }
-    if (effectId < 2.5) {
-        float g = sin(u_time * 20.0) * 0.01; return texture(sceneTex, uv + vec2(g, 0.0)).rgb;
-    }
-    if (effectId < 3.5) return 1.0 - color;
-    if (effectId < 4.5) return vec3(dot(color, vec3(0.299, 0.587, 0.114)));
-    return color;
-}
+// INJECT_EFFECTS_HERE
 
 void main() {
     vec3 baseColor = texture(u_scene, v_uv).rgb;
-    float effectId = floor(mod(texture(u_data, v_uv).r * 255.0 + 0.5, 100.0));
-    baseColor = processPerObjectEffects(baseColor, effectId, v_uv, u_scene);
+    float effectId = floor(mod(texture(u_data, v_uv).r * 255.0 + 0.5, 255.0));
+    
+    // Apply Per-Object Effect (Pass 1)
+    baseColor = processCustomEffects(baseColor, effectId, v_uv, u_time, u_scene);
 
     if (u_enabled > 0.5) {
         if (u_aberrationStrength > 0.0) {
@@ -129,9 +122,13 @@ void main() {
     vec4 exclSample = texture(u_excluded, v_uv);
     if (exclSample.a > 0.0) {
         vec3 exclColor = exclSample.rgb;
-        float exclEffectId = floor(mod(texture(u_excludedData, v_uv).r * 255.0 + 0.5, 100.0));
+        float exclEffectId = floor(mod(texture(u_excludedData, v_uv).r * 255.0 + 0.5, 255.0));
+        
         vec3 straightColor = exclColor / exclSample.a;
-        straightColor = processPerObjectEffects(straightColor, exclEffectId, v_uv, u_excluded);
+        
+        // Apply Per-Object Effect (Pass 2 - Overlay)
+        straightColor = processCustomEffects(straightColor, exclEffectId, v_uv, u_time, u_excluded);
+        
         vec3 gammaOverlay = pow(straightColor, vec3(1.0 / 2.2));
         baseColor = baseColor * (1.0 - exclSample.a) + gammaOverlay * exclSample.a;
     }
@@ -218,7 +215,23 @@ export class WebGLRenderer {
         gl.bindVertexArray(this.quadVAO); gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
         gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-        this.ppProgram = this.createProgram(gl, PP_VS, PP_FS);
+        
+        // Compile Dynamic Post Process Shader
+        this.recompilePostProcess();
+    }
+
+    recompilePostProcess() {
+        if (!this.gl) return;
+        
+        const effectLogic = effectRegistry.getShaderCode();
+        const fullSource = PP_FS_TEMPLATE.replace('// INJECT_EFFECTS_HERE', effectLogic);
+        
+        if (this.ppProgram) this.gl.deleteProgram(this.ppProgram);
+        this.ppProgram = this.createProgram(this.gl, PP_VS, fullSource);
+        
+        if (!this.ppProgram) {
+            console.error("Failed to compile Post-Process Shader");
+        }
     }
 
     private createTexture(gl: WebGL2RenderingContext, format: number, type: number) {
@@ -235,6 +248,12 @@ export class WebGLRenderer {
         const vs = gl.createShader(gl.VERTEX_SHADER)!; gl.shaderSource(vs, vsSrc); gl.compileShader(vs);
         const fs = gl.createShader(gl.FRAGMENT_SHADER)!; gl.shaderSource(fs, fsSrc); gl.compileShader(fs);
         const prog = gl.createProgram()!; gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+            console.error('Link Error', gl.getProgramInfoLog(prog));
+            console.error('VS Log', gl.getShaderInfoLog(vs));
+            console.error('FS Log', gl.getShaderInfoLog(fs));
+            return null;
+        }
         return prog;
     }
 
@@ -255,7 +274,7 @@ export class WebGLRenderer {
     }
 
     render(store: ComponentStorage, count: number, selectedIndices: Set<number>, vp: Float32Array, width: number, height: number, cam: any, softSelData: { enabled: boolean, center: {x:number,y:number,z:number}, radius: number }, debugRenderer?: DebugRenderer) {
-        if (!this.gl) return;
+        if (!this.gl || !this.ppProgram) return;
         const gl = this.gl; const time = performance.now() / 1000;
         
         // Prepare light data
@@ -282,6 +301,10 @@ export class WebGLRenderer {
         
         this.meshSystem.render(store, selectedIndices, vp, cam, time, lightDir, lightColor, lightIntensity, this.renderMode, 'OPAQUE', softSelData);
         
+        // Render Particles (Pass 1)
+        // Note: For transparency, ideally render after opaque meshes
+        engineInstance.particleSystem.render(vp, cam, this.meshSystem.textureArray);
+
         if (this.showGrid && !this.gridExcludePP) { 
             gl.drawBuffers([gl.COLOR_ATTACHMENT0]); 
             this.renderGrid(gl, vp); 
@@ -318,6 +341,7 @@ export class WebGLRenderer {
         gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.texDataExcluded); gl.uniform1i(gl.getUniformLocation(this.ppProgram!, 'u_excludedData'), 3);
         
         const setU = (n: string, v: number) => { const l = gl.getUniformLocation(this.ppProgram!, n); if(l) gl.uniform1f(l, v); };
+        setU('u_time', time);
         setU('u_enabled', this.ppConfig.enabled?1:0); setU('u_vignetteStrength', this.ppConfig.vignetteStrength);
         setU('u_aberrationStrength', this.ppConfig.aberrationStrength); setU('u_toneMapping', this.ppConfig.toneMapping?1:0);
         gl.bindVertexArray(this.quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); 

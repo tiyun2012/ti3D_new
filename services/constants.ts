@@ -21,7 +21,8 @@ export const COMPONENT_MASKS = {
     LIGHT: 4,
     PHYSICS: 8,
     SCRIPT: 16,
-    VIRTUAL_PIVOT: 32 
+    VIRTUAL_PIVOT: 32,
+    PARTICLE_SYSTEM: 64 // Added
 };
 
 export const VIEW_MODES = [

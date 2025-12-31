@@ -93,7 +93,18 @@ export class SoAEntitySystem {
         else if (type === ComponentType.VIRTUAL_PIVOT) { 
             mask = COMPONENT_MASKS.VIRTUAL_PIVOT;
             this.store.vpLength[idx] = 1.0; 
-        }  
+        } else if (type === ComponentType.PARTICLE_SYSTEM) {
+            mask = COMPONENT_MASKS.PARTICLE_SYSTEM;
+            // Defaults
+            this.store.psMaxCount[idx] = 100;
+            this.store.psRate[idx] = 10;
+            this.store.psSpeed[idx] = 2.0;
+            this.store.psLife[idx] = 2.0;
+            this.store.psColorR[idx] = 1.0; this.store.psColorG[idx] = 0.5; this.store.psColorB[idx] = 0.0; // Fire Orange
+            this.store.psSize[idx] = 0.5;
+            this.store.psShape[idx] = 1; // Cone
+            this.store.effectIndex[idx] = 0;
+        }
         this.store.componentMask[idx] |= mask;
     }
 
@@ -108,6 +119,7 @@ export class SoAEntitySystem {
         else if (type === ComponentType.PHYSICS) mask = COMPONENT_MASKS.PHYSICS;
         else if (type === ComponentType.SCRIPT) mask = COMPONENT_MASKS.SCRIPT;
         else if (type === ComponentType.VIRTUAL_PIVOT) mask = COMPONENT_MASKS.VIRTUAL_PIVOT;
+        else if (type === ComponentType.PARTICLE_SYSTEM) mask = COMPONENT_MASKS.PARTICLE_SYSTEM;
         
         this.store.componentMask[idx] &= ~mask;
     }
@@ -234,6 +246,38 @@ export class SoAEntitySystem {
             }
         };
 
+        const particleProxy = {
+            type: ComponentType.PARTICLE_SYSTEM,
+            get maxParticles() { return store.psMaxCount[index]; },
+            set maxParticles(v: number) { store.psMaxCount[index] = v; },
+            get rate() { return store.psRate[index]; },
+            set rate(v: number) { store.psRate[index] = v; },
+            get speed() { return store.psSpeed[index]; },
+            set speed(v: number) { store.psSpeed[index] = v; },
+            get lifetime() { return store.psLife[index]; },
+            set lifetime(v: number) { store.psLife[index] = v; },
+            get size() { return store.psSize[index]; },
+            set size(v: number) { store.psSize[index] = v; },
+            get textureIndex() { return store.psTextureId[index]; },
+            set textureIndex(v: number) { store.psTextureId[index] = v; },
+            get shape() { return store.psShape[index]; },
+            set shape(v: number) { store.psShape[index] = v; },
+            get effectIndex() { return store.effectIndex[index]; },
+            set effectIndex(v: number) { store.effectIndex[index] = v; },
+            get color() {
+                const r = Math.floor(store.psColorR[index] * 255);
+                const g = Math.floor(store.psColorG[index] * 255);
+                const b = Math.floor(store.psColorB[index] * 255);
+                return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+            },
+            set color(v: string) {
+                const bigint = parseInt(v.slice(1), 16);
+                store.psColorR[index] = ((bigint >> 16) & 255) / 255;
+                store.psColorG[index] = ((bigint >> 8) & 255) / 255;
+                store.psColorB[index] = (bigint & 255) / 255;
+            }
+        };
+
         const proxy: Entity = {
             id,
             get name() { return store.names[index]; },
@@ -246,6 +290,7 @@ export class SoAEntitySystem {
                 get [ComponentType.PHYSICS]() { return (store.componentMask[index] & COMPONENT_MASKS.PHYSICS) ? physicsProxy : undefined; },
                 get [ComponentType.LIGHT]() { return (store.componentMask[index] & COMPONENT_MASKS.LIGHT) ? lightProxy : undefined; },
                 get [ComponentType.SCRIPT]() { return (store.componentMask[index] & COMPONENT_MASKS.SCRIPT) ? { type: ComponentType.SCRIPT } : undefined; },
+                get [ComponentType.PARTICLE_SYSTEM]() { return (store.componentMask[index] & COMPONENT_MASKS.PARTICLE_SYSTEM) ? particleProxy : undefined; },
                 
                 get [ComponentType.VIRTUAL_PIVOT]() { 
                     return (store.componentMask[index] & COMPONENT_MASKS.VIRTUAL_PIVOT) 

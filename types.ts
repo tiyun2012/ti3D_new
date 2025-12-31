@@ -20,7 +20,8 @@ export enum ComponentType {
   LIGHT = 'Light',
   PHYSICS = 'Physics',
   SCRIPT = 'Script',
-  VIRTUAL_PIVOT = 'VirtualPivot'
+  VIRTUAL_PIVOT = 'VirtualPivot',
+  PARTICLE_SYSTEM = 'ParticleSystem' // Added
 }
 
 // --- MODULAR SYSTEM TYPES ---
@@ -145,6 +146,20 @@ export interface LogicalMesh {
     graph?: MeshTopology;
 }
 
+// Animation Types
+export interface AnimationTrack {
+    name: string; // Target bone name
+    type: 'position' | 'rotation' | 'scale';
+    times: Float32Array;
+    values: Float32Array;
+}
+
+export interface AnimationClip {
+    name: string;
+    duration: number;
+    tracks: AnimationTrack[];
+}
+
 // Asset Types
 export type AssetType = 'FOLDER' | 'MESH' | 'SKELETAL_MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT' | 'RIG';
 
@@ -186,8 +201,9 @@ export interface SkeletalMeshAsset extends BaseAsset {
         jointWeights: Float32Array;
     };
     skeleton: {
-        bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array }>;
+        bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array; inverseBindPose: Float32Array }>;
     };
+    animations: AnimationClip[];
     topology?: LogicalMesh;
 }
 
