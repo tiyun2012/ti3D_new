@@ -103,6 +103,7 @@ export class SoAEntitySystem {
             this.store.psColorR[idx] = 1.0; this.store.psColorG[idx] = 0.5; this.store.psColorB[idx] = 0.0; // Fire Orange
             this.store.psSize[idx] = 0.5;
             this.store.psShape[idx] = 1; // Cone
+            this.store.psMaterialIndex[idx] = 0; // Default
             this.store.effectIndex[idx] = 0;
         }
         this.store.componentMask[idx] |= mask;
@@ -275,6 +276,13 @@ export class SoAEntitySystem {
                 store.psColorR[index] = ((bigint >> 16) & 255) / 255;
                 store.psColorG[index] = ((bigint >> 8) & 255) / 255;
                 store.psColorB[index] = (bigint & 255) / 255;
+            },
+            get materialId() { 
+                const id = store.psMaterialIndex[index];
+                return id === 0 ? '' : assetManager.getMaterialUUID(id) || '';
+            },
+            set materialId(v: string) {
+                store.psMaterialIndex[index] = v ? assetManager.getMaterialID(v) : 0;
             }
         };
 

@@ -249,6 +249,7 @@ export const LightModule: EngineModule = {
 
 // --- PARTICLE SYSTEM MODULE ---
 const ParticleInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
+    const materials = assetManager.getAssetsByType('MATERIAL');
     const effects = effectRegistry.getOptions(); 
     return (
         <div className="space-y-2">
@@ -273,6 +274,14 @@ const ParticleInspector: React.FC<InspectorProps> = ({ component, onUpdate, onSt
                    <Select value={component.shape} options={[{label:'Cone', value:1}, {label:'Sphere', value:2}]} onChange={(v) => { onStartUpdate(); onUpdate('shape', v); onCommit(); }} />
                 </div>
             </div>
+            
+            <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Material</span>
+                <div className="flex-1">
+                   <Select icon="Palette" value={component.materialId || ""} options={[{ label: 'Default', value: "" }, ...materials.map(m => ({ label: m.name, value: m.id }))]} onChange={(v) => { onStartUpdate(); onUpdate('materialId', v); onCommit(); }} />
+                </div>
+            </div>
+
             <div className="flex items-center gap-2">
                 <span className="w-24 text-text-secondary text-[10px]">FX Layer</span>
                 <div className="flex-1">

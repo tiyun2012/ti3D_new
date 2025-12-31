@@ -7,13 +7,14 @@ import { assetManager } from '../services/AssetManager';
 import { SkeletalMeshAsset } from '../types';
 
 export const SkinningEditor: React.FC = () => {
-    const { selectedAssetIds, selectedIds } = useContext(EditorContext)!;
+    const { selectedAssetIds, selectedIds, softSelectionRadius, setSoftSelectionRadius } = useContext(EditorContext)!;
     const [bones, setBones] = useState<{name: string, index: number}[]>([]);
-    const [selectedBones, setSelectedBones] = useState<Set<number>>(new Set());
+    const [selectedBoneIndex, setSelectedBoneIndex] = useState<number>(-1);
     const [weight, setWeight] = useState(0.5);
     const [mode, setMode] = useState<'ADD' | 'REPLACE' | 'SMOOTH' | 'REMOVE'>('ADD');
     const [asset, setAsset] = useState<SkeletalMeshAsset | null>(null);
     const [search, setSearch] = useState('');
+    const [isPainting, setIsPainting] = useState(false);
 
     useEffect(() => {
         let foundAsset: SkeletalMeshAsset | null = null;
@@ -44,21 +45,44 @@ export const SkinningEditor: React.FC = () => {
         }
     }, [selectedIds, selectedAssetIds]);
 
-    const handlePaint = () => {
-        if (!asset || selectedBones.size === 0) return;
-        const boneList = Array.from(selectedBones).join(', ');
-        alert(`Painting Weight ${weight} on Bones [${boneList}] using ${mode} mode (Mock)`);
+    const selectBone = (index: number) => {
+        setSelectedBoneIndex(index);
+        engineInstance.meshSystem.selectedBoneIndex = index;
+        // Auto-switch render mode to Weights
+        engineInstance.setRenderMode(5);
+        engineInstance.notifyUI();
     };
 
-    const toggleBone = (idx: number, multi: boolean) => {
-        if (multi) {
-            const next = new Set(selectedBones);
-            if (next.has(idx)) next.delete(idx); else next.add(idx);
-            setSelectedBones(next);
-        } else {
-            setSelectedBones(new Set([idx]));
-        }
-    };
+    // Global Painting Listener
+    useEffect(() => {
+        if (selectedBoneIndex === -1 || !asset || selectedIds.length === 0) return;
+        
+        const entityId = selectedIds[0];
+        
+        const handleMouseMove = (e: MouseEvent) => {
+            if (e.buttons === 1 && !e.altKey && !e.shiftKey) { 
+                // Using pick from engine (assumes picking logic is exposed or we simulate it here)
+                const rect = document.querySelector('canvas')?.getBoundingClientRect();
+                if (!rect) return;
+                
+                // Hack: Access Engine picking from here
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+                
+                const result = engineInstance.pickMeshComponent(entityId, mx, my, rect.width, rect.height);
+                
+                if (result) {
+                    setIsPainting(true);
+                    engineInstance.paintSkinWeights(entityId, result.worldPos, selectedBoneIndex, weight, mode, softSelectionRadius);
+                }
+            } else {
+                setIsPainting(false);
+            }
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        return () => window.removeEventListener('mousemove', handleMouseMove);
+    }, [selectedBoneIndex, asset, selectedIds, weight, mode, softSelectionRadius]);
 
     const filteredBones = bones.filter(b => b.name.toLowerCase().includes(search.toLowerCase()));
 
@@ -79,7 +103,9 @@ export const SkinningEditor: React.FC = () => {
                     <Icon name="Edit3" size={14} className="text-accent" />
                     Skinning Tools
                 </div>
-                <div className="text-[10px] text-text-secondary">Maya Style</div>
+                <div className={`text-[9px] px-2 py-0.5 rounded ${isPainting ? 'bg-red-500 text-white animate-pulse' : 'text-text-secondary'}`}>
+                    {isPainting ? 'PAINTING' : 'Idle'}
+                </div>
             </div>
             
             {/* Paint Operations */}
@@ -112,14 +138,19 @@ export const SkinningEditor: React.FC = () => {
                         className="w-full accent-accent h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer" 
                     />
                 </div>
-                
-                <div className="flex gap-2 pt-1">
-                    <button className="flex-1 bg-white/5 hover:bg-white/10 py-1.5 rounded border border-white/10 text-text-secondary hover:text-white transition-colors">
-                        Flood
-                    </button>
-                    <button className="flex-1 bg-white/5 hover:bg-white/10 py-1.5 rounded border border-white/10 text-text-secondary hover:text-white transition-colors">
-                        Prune Small
-                    </button>
+
+                <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between">
+                        <span className="text-text-secondary">Radius</span>
+                        <span className="font-mono bg-black/40 px-1.5 rounded text-white">{softSelectionRadius.toFixed(2)}</span>
+                    </div>
+                    <input 
+                        type="range" 
+                        min="0.1" max="5.0" step="0.1" 
+                        value={softSelectionRadius} 
+                        onChange={e => setSoftSelectionRadius(parseFloat(e.target.value))} 
+                        className="w-full accent-accent h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer" 
+                    />
                 </div>
             </div>
 
@@ -138,11 +169,11 @@ export const SkinningEditor: React.FC = () => {
                 
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
                     {filteredBones.map(bone => {
-                        const isSelected = selectedBones.has(bone.index);
+                        const isSelected = selectedBoneIndex === bone.index;
                         return (
                             <div 
                                 key={bone.index}
-                                onClick={(e) => toggleBone(bone.index, e.shiftKey || e.ctrlKey)}
+                                onClick={() => selectBone(bone.index)}
                                 className={`px-2 py-1.5 cursor-pointer flex items-center justify-between rounded mb-0.5 border border-transparent transition-all
                                     ${isSelected ? 'bg-accent/20 border-accent/30 text-white' : 'hover:bg-white/5 text-text-secondary hover:text-white'}
                                 `}
@@ -159,16 +190,6 @@ export const SkinningEditor: React.FC = () => {
                         <div className="text-center py-4 text-text-secondary opacity-50 italic">No bones found</div>
                     )}
                 </div>
-            </div>
-            
-            {/* Footer */}
-            <div className="p-3 border-t border-white/10 bg-black/30">
-                <button 
-                    onClick={handlePaint} 
-                    className="w-full bg-accent hover:bg-accent-hover py-2 rounded font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2"
-                >
-                    <Icon name="Brush" size={14} /> Paint Weights
-                </button>
             </div>
         </div>
     );

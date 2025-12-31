@@ -8,7 +8,7 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff } from '../types';
+import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff, SkeletalMeshAsset } from '../types';
 import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
@@ -20,6 +20,7 @@ import { registerCoreModules } from './modules/CoreModules';
 import { consoleService } from './Console';
 import type { MeshRenderSystem } from './systems/MeshRenderSystem';
 import { ParticleSystem } from './systems/ParticleSystem';
+import { AnimationSystem } from './systems/AnimationSystem'; // Added
 
 export type SoftSelectionMode = 'DYNAMIC' | 'FIXED';
 
@@ -28,7 +29,8 @@ export class Engine {
     sceneGraph: SceneGraph;
     physicsSystem: PhysicsSystem;
     historySystem: HistorySystem;
-    particleSystem: ParticleSystem; // Added
+    particleSystem: ParticleSystem; 
+    animationSystem: AnimationSystem; // Added
     renderer: WebGLRenderer;
     debugRenderer: DebugRenderer;
     metrics: PerformanceMetrics;
@@ -89,7 +91,8 @@ export class Engine {
         this.sceneGraph.setContext(this.ecs);
         this.physicsSystem = new PhysicsSystem();
         this.historySystem = new HistorySystem();
-        this.particleSystem = new ParticleSystem(); // Added
+        this.particleSystem = new ParticleSystem(); 
+        this.animationSystem = new AnimationSystem(); // Added
         this.renderer = new WebGLRenderer();
         this.debugRenderer = new DebugRenderer();
         this.metrics = { fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
@@ -110,7 +113,7 @@ export class Engine {
         this.renderer.init(canvas);
         this.renderer.initGizmo();
         this.debugRenderer.init(this.renderer.gl!);
-        this.particleSystem.init(this.renderer.gl!); // Init Particles
+        this.particleSystem.init(this.renderer.gl!);
         this.recompileAllMaterials();
         if (this.ecs.count === 0) this.createDefaultScene();
     }
@@ -195,6 +198,85 @@ export class Engine {
         this.notifyUI();
         consoleService.info(`Created helper: ${name}`);
         return id;
+    }
+
+    paintSkinWeights(entityId: string, worldPos: Vector3, boneIndex: number, weight: number, mode: 'ADD'|'REPLACE'|'SMOOTH'|'REMOVE', radius: number) {
+        const idx = this.ecs.idToIndex.get(entityId);
+        if (idx === undefined) return;
+        const meshIntId = this.ecs.store.meshType[idx];
+        const uuid = assetManager.meshIntToUuid.get(meshIntId);
+        if (!uuid) return;
+        const asset = assetManager.getAsset(uuid) as SkeletalMeshAsset;
+        if (!asset || asset.type !== 'SKELETAL_MESH') return;
+
+        const verts = asset.geometry.vertices;
+        const jointIndices = asset.geometry.jointIndices;
+        const jointWeights = asset.geometry.jointWeights;
+        const worldMat = this.sceneGraph.getWorldMatrix(entityId);
+        if (!worldMat) return;
+
+        // Iterate vertices (naive O(N), BVH would be better)
+        const count = verts.length / 3;
+        let modified = false;
+
+        for (let i = 0; i < count; i++) {
+            const vx = verts[i*3], vy = verts[i*3+1], vz = verts[i*3+2];
+            const wx = worldMat[0]*vx + worldMat[4]*vy + worldMat[8]*vz + worldMat[12];
+            const wy = worldMat[1]*vx + worldMat[5]*vy + worldMat[9]*vz + worldMat[13];
+            const wz = worldMat[2]*vx + worldMat[6]*vy + worldMat[10]*vz + worldMat[14];
+            
+            const dist = Math.sqrt((wx - worldPos.x)**2 + (wy - worldPos.y)**2 + (wz - worldPos.z)**2);
+            
+            if (dist <= radius) {
+                // Determine falloff
+                const falloff = Math.pow(1.0 - (dist / radius), 2); // Quadratic falloff
+                const effectiveWeight = weight * falloff;
+
+                // Find if bone already exists in indices
+                let slot = -1;
+                let emptySlot = -1;
+                
+                for(let k=0; k<4; k++) {
+                    if (jointIndices[i*4+k] === boneIndex) slot = k;
+                    if (jointWeights[i*4+k] === 0) emptySlot = k;
+                }
+
+                if (slot === -1 && emptySlot !== -1) {
+                    slot = emptySlot;
+                    jointIndices[i*4+slot] = boneIndex;
+                } else if (slot === -1) {
+                    // Replace weakest bone
+                    let minW = 2.0; let minK = 0;
+                    for(let k=0; k<4; k++) { if (jointWeights[i*4+k] < minW) { minW = jointWeights[i*4+k]; minK = k; } }
+                    slot = minK;
+                    jointIndices[i*4+slot] = boneIndex;
+                    jointWeights[i*4+slot] = 0; // Reset for addition
+                }
+
+                // Apply logic
+                if (mode === 'ADD') {
+                    jointWeights[i*4+slot] = Math.min(1.0, jointWeights[i*4+slot] + effectiveWeight * 0.1);
+                } else if (mode === 'REPLACE') {
+                    jointWeights[i*4+slot] = MathUtils.lerp(jointWeights[i*4+slot], effectiveWeight, 0.5);
+                } else if (mode === 'REMOVE') {
+                    jointWeights[i*4+slot] = Math.max(0.0, jointWeights[i*4+slot] - effectiveWeight * 0.1);
+                }
+
+                // Normalize Weights
+                let sum = 0;
+                for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
+                if (sum > 0) {
+                    const scale = 1.0 / sum;
+                    for(let k=0; k<4; k++) jointWeights[i*4+k] *= scale;
+                }
+
+                modified = true;
+            }
+        }
+
+        if (modified) {
+            this.registerAssetWithGPU(asset);
+        }
     }
 
     updateVertexColor(entityId: string, vertexIndex: number, color: {r: number, g: number, b: number}) {
@@ -526,6 +608,11 @@ export class Engine {
 
             // Run particles regardless of physics simulation, for editing
             this.particleSystem.update(clampedDt, this.ecs.store);
+            
+            // Run animation
+            if (this.isPlaying) {
+                this.animationSystem.update(clampedDt, this.timeline.currentTime, this.meshSystem, this.ecs, this.sceneGraph);
+            }
 
             while (this.accumulator >= this.fixedTimeStep) {
                 this.fixedUpdate(this.fixedTimeStep);

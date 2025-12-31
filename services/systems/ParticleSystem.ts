@@ -2,6 +2,8 @@
 import { ComponentStorage } from '../ecs/ComponentStorage';
 import { COMPONENT_MASKS } from '../constants';
 import { Vec3Utils, Random } from '../math';
+import { assetManager } from '../AssetManager';
+import { compileShader } from '../ShaderCompiler';
 
 const PARTICLE_VS = `#version 300 es
 layout(location=0) in vec3 a_center;
@@ -15,11 +17,18 @@ uniform mat4 u_viewProjection;
 uniform vec3 u_cameraPos;
 uniform vec3 u_cameraUp;
 
+// Outputs to match Mesh Material Interface
+out vec3 v_normal;
+out vec3 v_worldPos;
+out vec3 v_objectPos;
 out vec3 v_color;
+out float v_isSelected;
 out vec2 v_uv;
-out float v_life;
 out float v_texIndex;
 out float v_effectIndex;
+out vec4 v_weights; // Dummy
+out vec4 v_joints;  // Dummy
+out float v_softWeight; // Dummy
 
 void main() {
     // Billboarding logic
@@ -28,7 +37,6 @@ void main() {
     vec3 up = cross(toCam, right);
     
     // Quad expansion (indices: 0,1,2, 0,2,3 for 4 verts)
-    // Vert ID derived from gl_VertexID 0..3
     int id = gl_VertexID % 4;
     vec2 offset = vec2(0.0);
     if(id == 0) offset = vec2(-0.5, -0.5);
@@ -40,9 +48,17 @@ void main() {
     
     v_uv = offset + 0.5;
     v_color = a_color;
-    v_life = a_life;
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
+    
+    // Fake attributes for material compatibility
+    v_worldPos = pos;
+    v_normal = toCam; // Face camera
+    v_objectPos = vec3(offset, 0.0);
+    v_isSelected = 0.0;
+    v_weights = vec4(0.0);
+    v_joints = vec4(0.0);
+    v_softWeight = 0.0;
     
     gl_Position = u_viewProjection * vec4(pos, 1.0);
 }`;
@@ -53,7 +69,6 @@ precision mediump sampler2DArray;
 
 in vec3 v_color;
 in vec2 v_uv;
-in float v_life;
 in float v_texIndex;
 in float v_effectIndex;
 
@@ -67,23 +82,15 @@ void main() {
     if (v_texIndex > 0.5) {
         texColor = texture(u_textures, vec3(v_uv, v_texIndex));
     } else {
-        // Default soft circle
         float d = length(v_uv - 0.5) * 2.0;
         float a = 1.0 - smoothstep(0.8, 1.0, d);
         texColor = vec4(1.0, 1.0, 1.0, a);
     }
     
-    // Fade out over life
-    float alpha = texColor.a * v_life;
-    if (alpha < 0.01) discard;
-    
     vec3 finalColor = v_color * texColor.rgb;
+    float alpha = texColor.a; 
     
-    // Stylized Threshold (Toon) for fire/smoke
-    // if (v_effectIndex > 0.0) {
-    //     float brightness = max(finalColor.r, max(finalColor.g, finalColor.b));
-    //     if (brightness > 0.5) finalColor += 0.2;
-    // }
+    if (alpha < 0.01) discard;
 
     outColor = vec4(finalColor, alpha);
     outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
@@ -114,7 +121,9 @@ class EmitterInstance {
 
 export class ParticleSystem {
     gl: WebGL2RenderingContext | null = null;
-    program: WebGLProgram | null = null;
+    defaultProgram: WebGLProgram | null = null;
+    materialPrograms: Map<number, WebGLProgram> = new Map();
+    
     emitters: Map<number, EmitterInstance> = new Map();
     
     vao: WebGLVertexArrayObject | null = null;
@@ -133,19 +142,22 @@ export class ParticleSystem {
     init(gl: WebGL2RenderingContext) {
         this.gl = gl;
         
-        const vs = gl.createShader(gl.VERTEX_SHADER)!; gl.shaderSource(vs, PARTICLE_VS); gl.compileShader(vs);
-        if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(vs));
+        const createProg = (vsSrc: string, fsSrc: string) => {
+            const vs = gl.createShader(gl.VERTEX_SHADER)!; gl.shaderSource(vs, vsSrc); gl.compileShader(vs);
+            if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(vs));
+            const fs = gl.createShader(gl.FRAGMENT_SHADER)!; gl.shaderSource(fs, fsSrc); gl.compileShader(fs);
+            if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(fs));
+            const p = gl.createProgram()!; gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+            return p;
+        };
 
-        const fs = gl.createShader(gl.FRAGMENT_SHADER)!; gl.shaderSource(fs, PARTICLE_FS); gl.compileShader(fs);
-        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(fs));
-
-        this.program = gl.createProgram()!; gl.attachShader(this.program, vs); gl.attachShader(this.program, fs); gl.linkProgram(this.program);
+        this.defaultProgram = createProg(PARTICLE_VS, PARTICLE_FS);
         
-        // Cache Uniforms
-        this.uniforms.viewProjection = gl.getUniformLocation(this.program, 'u_viewProjection');
-        this.uniforms.cameraPos = gl.getUniformLocation(this.program, 'u_cameraPos');
-        this.uniforms.cameraUp = gl.getUniformLocation(this.program, 'u_cameraUp');
-        this.uniforms.textures = gl.getUniformLocation(this.program, 'u_textures');
+        // Cache Default Uniforms
+        this.uniforms.viewProjection = gl.getUniformLocation(this.defaultProgram, 'u_viewProjection');
+        this.uniforms.cameraPos = gl.getUniformLocation(this.defaultProgram, 'u_cameraPos');
+        this.uniforms.cameraUp = gl.getUniformLocation(this.defaultProgram, 'u_cameraUp');
+        this.uniforms.textures = gl.getUniformLocation(this.defaultProgram, 'u_textures');
 
         this.vao = gl.createVertexArray();
         this.vbo = gl.createBuffer();
@@ -154,7 +166,6 @@ export class ParticleSystem {
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
         gl.bufferData(gl.ARRAY_BUFFER, this.MAX_BATCH * 10 * 4, gl.DYNAMIC_DRAW);
         
-        // Attrs: Center(3), Color(3), Size(1), Life(1), Tex(1), Effect(1) -> 10 floats
         const stride = 10 * 4;
         gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0); // Center
         gl.vertexAttribDivisor(0, 1);
@@ -177,32 +188,69 @@ export class ParticleSystem {
         gl.bindVertexArray(null);
     }
 
+    getMaterialProgram(materialId: number): WebGLProgram | null {
+        if (!this.gl) return null;
+        if (this.materialPrograms.has(materialId)) return this.materialPrograms.get(materialId)!;
+
+        // Compile
+        const uuid = assetManager.getMaterialUUID(materialId);
+        if (!uuid) return null;
+        const asset = assetManager.getAsset(uuid);
+        if (!asset || asset.type !== 'MATERIAL') return null;
+
+        const result = compileShader(asset.data.nodes, asset.data.connections);
+        if (typeof result === 'string') return null; // Error
+
+        // Create program using PARTICLE_VS and Generated FS
+        const vs = this.gl.createShader(this.gl.VERTEX_SHADER)!; 
+        this.gl.shaderSource(vs, PARTICLE_VS); 
+        this.gl.compileShader(vs);
+        
+        const fs = this.gl.createShader(this.gl.FRAGMENT_SHADER)!; 
+        this.gl.shaderSource(fs, result.fs); 
+        this.gl.compileShader(fs);
+
+        if (!this.gl.getShaderParameter(fs, this.gl.COMPILE_STATUS)) {
+            console.error("Particle Material FS Error:", this.gl.getShaderInfoLog(fs));
+            return null;
+        }
+
+        const prog = this.gl.createProgram()!;
+        this.gl.attachShader(prog, vs);
+        this.gl.attachShader(prog, fs);
+        this.gl.linkProgram(prog);
+
+        if (this.gl.getProgramParameter(prog, this.gl.LINK_STATUS)) {
+            this.materialPrograms.set(materialId, prog);
+            return prog;
+        } else {
+            console.error("Particle Material Link Error:", this.gl.getProgramInfoLog(prog));
+            return null;
+        }
+    }
+
     update(dt: number, store: ComponentStorage) {
-        // Safe Delta Time to prevent simulation explosions on tab resume
         const safeDt = Math.min(dt, 0.1);
 
         for (let i = 0; i < store.capacity; i++) {
             if (!store.isActive[i] || !(store.componentMask[i] & COMPONENT_MASKS.PARTICLE_SYSTEM)) {
-                if (this.emitters.has(i)) this.emitters.delete(i); // Cleanup
+                if (this.emitters.has(i)) this.emitters.delete(i); 
                 continue;
             }
 
             let emitter = this.emitters.get(i);
             const maxCount = store.psMaxCount[i];
             
-            if (!emitter || emitter.particles.length > maxCount + 100) { // Re-init if config changed significantly
+            if (!emitter || emitter.particles.length > maxCount + 100) { 
                 emitter = new EmitterInstance(maxCount);
                 this.emitters.set(i, emitter);
             }
 
             // --- SIMULATION ---
-            
-            // 1. Spawning
             emitter.spawnAccumulator += safeDt * store.psRate[i];
             const spawnCount = Math.floor(emitter.spawnAccumulator);
             emitter.spawnAccumulator -= spawnCount;
             
-            // Cap emission per frame to avoid freeze
             const actualSpawn = Math.min(spawnCount, 100);
 
             const shape = store.psShape[i];
@@ -216,16 +264,13 @@ export class ParticleSystem {
                 let vx=0, vy=1, vz=0;
                 let px=rootPos.x, py=rootPos.y, pz=rootPos.z;
                 
-                // Shape Logic
                 if (shape === 1) { // Cone
                     const theta = Math.random() * Math.PI * 2;
-                    const spread = 0.5; // Fixed spread for now
+                    const spread = 0.5;
                     vx = (Math.random() - 0.5) * spread;
                     vz = (Math.random() - 0.5) * spread;
                     vy = 1.0;
                 } else if (shape === 2) { // Sphere
-                    Random.onSphere(1, {x:0,y:0,z:0}); 
-                    // Quick sphere random
                     const phi = Math.random() * Math.PI * 2;
                     const costheta = Math.random() * 2 - 1;
                     const rho = Math.sqrt(1 - costheta * costheta);
@@ -234,7 +279,6 @@ export class ParticleSystem {
                     vz = costheta;
                 }
                 
-                // Normalize velocity
                 const len = Math.sqrt(vx*vx+vy*vy+vz*vz);
                 if (len > 0) { vx/=len; vy/=len; vz/=len; }
                 
@@ -247,12 +291,10 @@ export class ParticleSystem {
                 });
             }
 
-            // 2. Integration
             for (let pIdx = emitter.particles.length - 1; pIdx >= 0; pIdx--) {
                 const p = emitter.particles[pIdx];
                 p.life -= safeDt;
                 if (p.life <= 0) {
-                    // Fast remove
                     emitter.particles[pIdx] = emitter.particles[emitter.particles.length - 1];
                     emitter.particles.pop();
                     continue;
@@ -261,36 +303,20 @@ export class ParticleSystem {
                 p.x += p.vx * safeDt;
                 p.y += p.vy * safeDt;
                 p.z += p.vz * safeDt;
-                
-                // Physics: Buoyancy & Drag
-                p.vy += 0.5 * safeDt; 
-                p.vx *= 0.99;
-                p.vy *= 0.99;
-                p.vz *= 0.99;
+                p.vy += 0.5 * safeDt; // Buoyancy
+                p.vx *= 0.99; p.vy *= 0.99; p.vz *= 0.99; // Drag
             }
         }
     }
 
     render(viewProj: Float32Array, camPos: {x:number, y:number, z:number}, textureArray: WebGLTexture | null) {
-        if (!this.gl || !this.program || !this.vao) return;
+        if (!this.gl || !this.defaultProgram || !this.vao) return;
         const gl = this.gl;
         
-        gl.useProgram(this.program);
         gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // Additive usually looks better for fire/magic
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // Additive usually
         gl.depthMask(false); 
         
-        // Use Cached Uniforms
-        gl.uniformMatrix4fv(this.uniforms.viewProjection, false, viewProj);
-        gl.uniform3f(this.uniforms.cameraPos, camPos.x, camPos.y, camPos.z);
-        gl.uniform3f(this.uniforms.cameraUp, 0, 1, 0); // Approx
-        
-        if (textureArray) {
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D_ARRAY, textureArray);
-            gl.uniform1i(this.uniforms.textures, 0);
-        }
-
         gl.bindVertexArray(this.vao);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
 
@@ -299,13 +325,36 @@ export class ParticleSystem {
         this.emitters.forEach((emitter, idx) => {
             if (emitter.particles.length === 0) return;
             
+            // 1. Determine Program
+            const matId = store.psMaterialIndex[idx];
+            let program = this.defaultProgram!;
+            
+            if (matId > 0) {
+                const matProg = this.getMaterialProgram(matId);
+                if (matProg) program = matProg;
+            }
+
+            gl.useProgram(program);
+
+            // 2. Set Common Uniforms
+            gl.uniformMatrix4fv(gl.getUniformLocation(program, 'u_viewProjection'), false, viewProj);
+            gl.uniform3f(gl.getUniformLocation(program, 'u_cameraPos'), camPos.x, camPos.y, camPos.z);
+            gl.uniform3f(gl.getUniformLocation(program, 'u_cameraUp'), 0, 1, 0); 
+            gl.uniform3f(gl.getUniformLocation(program, 'u_lightDir'), 0.5, -1.0, 0.5); // Default Light
+            gl.uniform3f(gl.getUniformLocation(program, 'u_lightColor'), 1, 1, 1);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_lightIntensity'), 1.0);
+            
+            if (textureArray) {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D_ARRAY, textureArray);
+                gl.uniform1i(gl.getUniformLocation(program, 'u_textures'), 0);
+            }
+
             const texIdx = store.psTextureId[idx];
             const effectIdx = store.effectIndex[idx];
             
-            // Rebuild Buffer (CPU -> GPU streaming)
-            // Clamp to MAX_BATCH to prevent buffer overflow
+            // 3. Build Buffer
             const count = Math.min(emitter.particles.length, this.MAX_BATCH);
-            
             if (emitter.bufferData.length < count * 10) {
                 emitter.bufferData = new Float32Array(Math.max(count * 10, 4096));
             }
@@ -318,11 +367,16 @@ export class ParticleSystem {
                 data[ptr++] = p.x;
                 data[ptr++] = p.y;
                 data[ptr++] = p.z;
-                data[ptr++] = p.color.r;
-                data[ptr++] = p.color.g;
-                data[ptr++] = p.color.b;
+                
                 // Fade out at end
                 const lifeRatio = p.life / p.maxLife;
+                const alpha = Math.min(lifeRatio * 3.0, 1.0); // Quick fade in, slow fade out? or just linear life
+                
+                // Multiply particle color by life alpha for additive blending
+                data[ptr++] = p.color.r * alpha;
+                data[ptr++] = p.color.g * alpha;
+                data[ptr++] = p.color.b * alpha;
+                
                 data[ptr++] = p.size * Math.sin(lifeRatio * Math.PI); // Grow then shrink
                 data[ptr++] = lifeRatio;
                 data[ptr++] = texIdx;
@@ -330,8 +384,6 @@ export class ParticleSystem {
             }
             
             gl.bufferSubData(gl.ARRAY_BUFFER, 0, data.subarray(0, ptr));
-            
-            // Draw Instanced Quads
             gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, count);
         });
 

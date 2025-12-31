@@ -58,6 +58,7 @@ export class ComponentStorage {
     psColorB = new Float32Array(this.capacity);
     psSize = new Float32Array(this.capacity);
     psTextureId = new Float32Array(this.capacity);
+    psMaterialIndex = new Int32Array(this.capacity); // Added
     // 0: Point, 1: Cone, 2: Sphere
     psShape = new Uint8Array(this.capacity); 
 
@@ -195,6 +196,7 @@ export class ComponentStorage {
         this.psColorB = resizeFloat(this.psColorB);
         this.psSize = resizeFloat(this.psSize);
         this.psTextureId = resizeFloat(this.psTextureId);
+        this.psMaterialIndex = resizeInt32(this.psMaterialIndex);
         this.psShape = resizeUint8(this.psShape);
 
         this.isActive = resizeUint8(this.isActive);
@@ -241,6 +243,7 @@ export class ComponentStorage {
             psColorB: new Float32Array(this.psColorB),
             psSize: new Float32Array(this.psSize),
             psTextureId: new Float32Array(this.psTextureId),
+            psMaterialIndex: new Int32Array(this.psMaterialIndex),
             psShape: new Uint8Array(this.psShape),
 
             isActive: new Uint8Array(this.isActive),
@@ -286,6 +289,7 @@ export class ComponentStorage {
             this.psColorB.set(snap.psColorB);
             this.psSize.set(snap.psSize);
             this.psTextureId.set(snap.psTextureId);
+            if(snap.psMaterialIndex) this.psMaterialIndex.set(snap.psMaterialIndex);
             this.psShape.set(snap.psShape);
         }
 

@@ -44,6 +44,7 @@ out float v_isSelected;
 out vec2 v_uv;
 out float v_texIndex;
 out float v_effectIndex;
+out vec4 v_joints;
 out vec4 v_weights;
 out float v_softWeight;
 
@@ -82,9 +83,10 @@ void main() {
     v_isSelected = a_isSelected;
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
-    v_weights = a_weights;
     
-    // Pass the explicit weight from CPU
+    // Pass skinning data to FS
+    v_joints = a_joints;
+    v_weights = a_weights;
     v_softWeight = a_softWeight;
     
     vec3 vertexOffset = vec3(0.0);
@@ -109,6 +111,7 @@ in highp float v_isSelected;
 in highp vec2 v_uv;
 in highp float v_texIndex;
 in highp float v_effectIndex;
+in highp vec4 v_joints;
 in highp vec4 v_weights;
 in highp float v_softWeight;
 
@@ -120,6 +123,7 @@ uniform vec3 u_lightColor;
 uniform float u_lightIntensity;
 uniform float u_time;
 uniform float u_showHeatmap;
+uniform int u_selectedBoneIndex; // For skinning visualization
 
 layout(location=0) out vec4 outColor;
 layout(location=1) out vec4 outData; 
@@ -135,13 +139,15 @@ vec3 getStylizedLighting(vec3 normal, vec3 viewDir, vec3 albedo) {
     return finalLight;
 }
 
+// Robust Turbo-style Ramp Color for Heatmaps
 vec3 heatMap(float t) {
     t = clamp(t, 0.0, 1.0);
-    vec3 a = vec3(0.5, 0.5, 0.5);
-    vec3 b = vec3(0.5, 0.5, 0.5);
-    vec3 c = vec3(1.0, 1.0, 1.0);
-    vec3 d = vec3(0.00, 0.33, 0.67);
-    return a + b * cos(6.28318 * (c * t + d));
+    // Blue -> Cyan -> Green -> Yellow -> Red
+    // Simple 3-stop logic:
+    if (t < 0.25) return mix(vec3(0,0,1), vec3(0,1,1), t * 4.0);
+    if (t < 0.5) return mix(vec3(0,1,1), vec3(0,1,0), (t - 0.25) * 4.0);
+    if (t < 0.75) return mix(vec3(0,1,0), vec3(1,1,0), (t - 0.5) * 4.0);
+    return mix(vec3(1,1,0), vec3(1,0,0), (t - 0.75) * 4.0);
 }
 
 void main() {
@@ -155,8 +161,20 @@ void main() {
     else if (u_renderMode == 1) result = normal * 0.5 + 0.5;
     else if (u_renderMode == 2) result = albedo;
     else if (u_renderMode == 5) {
-       float w = max(v_weights.x, max(v_weights.y, max(v_weights.z, v_weights.w)));
-       result = heatMap(w);
+       // Skin Weight Visualization (Ramp Color)
+       float influence = 0.0;
+       if (int(v_joints.x) == u_selectedBoneIndex) influence += v_weights.x;
+       if (int(v_joints.y) == u_selectedBoneIndex) influence += v_weights.y;
+       if (int(v_joints.z) == u_selectedBoneIndex) influence += v_weights.z;
+       if (int(v_joints.w) == u_selectedBoneIndex) influence += v_weights.w;
+       
+       vec3 heat = heatMap(influence);
+       // Mix with wireframe-ish shading or base model for context
+       float lighting = 0.5 + 0.5 * dot(normal, -u_lightDir);
+       result = heat * lighting;
+       
+       // Highlight 0 weight vs tiny weight
+       if (influence <= 0.001) result = vec3(0.1); 
     }
     else result = albedo;
     
@@ -182,6 +200,9 @@ export class MeshRenderSystem {
     textureArray: WebGLTexture | null = null;
     boneTexture: WebGLTexture | null = null;
     
+    // State
+    selectedBoneIndex: number = -1;
+
     private buckets: Map<number, number[]> = new Map();
     private excludedBuckets: Map<number, number[]> = new Map();
 
@@ -240,10 +261,25 @@ export class MeshRenderSystem {
         this.gl.texSubImage3D(this.gl.TEXTURE_2D_ARRAY, 0, 0, 0, layerIndex, 256, 256, 1, this.gl.RGBA, this.gl.UNSIGNED_BYTE, canvas);
     }
 
+    uploadBoneMatrices(matrices: Float32Array) {
+        if (!this.gl || !this.boneTexture) return;
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.boneTexture);
+        // Assuming 1 skeleton for simplicity in this demo (offset 0)
+        // Texture width 1024 pixels (4 pixels per matrix * 256 bones)
+        // We just upload the valid part
+        const pixelCount = matrices.length / 4; 
+        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, pixelCount, 1, this.gl.RGBA, this.gl.FLOAT, matrices);
+    }
+
     registerMesh(id: number, geometry: any) {
         if (!this.gl) return;
         const gl = this.gl;
-        const vao = gl.createVertexArray()!; gl.bindVertexArray(vao);
+        
+        let vao = this.meshes.get(id)?.vao;
+        if (!vao) vao = gl.createVertexArray()!;
+        
+        gl.bindVertexArray(vao);
+        
         const createBuf = (data: any, type: number) => {
             const b = gl.createBuffer(); gl.bindBuffer(type, b);
             gl.bufferData(type, data instanceof Float32Array || data instanceof Uint16Array ? data : new (type===gl.ELEMENT_ARRAY_BUFFER?Uint16Array:Float32Array)(data), gl.STATIC_DRAW);
@@ -262,7 +298,7 @@ export class MeshRenderSystem {
             gl.disableVertexAttribArray(13);
         }
 
-        // Soft Selection Weights (Initialized to 0)
+        // Soft Selection Weights
         const softWeights = new Float32Array(geometry.vertices.length / 3).fill(0);
         const swBuf = createBuf(softWeights, gl.ARRAY_BUFFER);
         gl.enableVertexAttribArray(14);
@@ -280,21 +316,26 @@ export class MeshRenderSystem {
 
         createBuf(geometry.indices, gl.ELEMENT_ARRAY_BUFFER);
         
-        // Instance Data
-        const stride = 22 * 4; const inst = gl.createBuffer()!; gl.bindBuffer(gl.ARRAY_BUFFER, inst);
-        gl.bufferData(gl.ARRAY_BUFFER, INITIAL_CAPACITY * stride, gl.DYNAMIC_DRAW);
-        for(let k=0; k<4; k++) { gl.enableVertexAttribArray(2+k); gl.vertexAttribPointer(2+k, 4, gl.FLOAT, false, stride, k*16); gl.vertexAttribDivisor(2+k, 1); }
-        gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 3, gl.FLOAT, false, stride, 16*4); gl.vertexAttribDivisor(6, 1);
-        gl.enableVertexAttribArray(7); gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 19*4); gl.vertexAttribDivisor(7, 1);
-        gl.enableVertexAttribArray(9); gl.vertexAttribPointer(9, 1, gl.FLOAT, false, stride, 20*4); gl.vertexAttribDivisor(9, 1);
-        gl.enableVertexAttribArray(10); gl.vertexAttribPointer(10, 1, gl.FLOAT, false, stride, 21*4); gl.vertexAttribDivisor(10, 1);
+        // Instance Data (only create if new)
+        let inst = this.meshes.get(id)?.instanceBuffer;
+        if (!inst) {
+            const stride = 22 * 4; 
+            inst = gl.createBuffer()!; gl.bindBuffer(gl.ARRAY_BUFFER, inst);
+            gl.bufferData(gl.ARRAY_BUFFER, INITIAL_CAPACITY * stride, gl.DYNAMIC_DRAW);
+            for(let k=0; k<4; k++) { gl.enableVertexAttribArray(2+k); gl.vertexAttribPointer(2+k, 4, gl.FLOAT, false, stride, k*16); gl.vertexAttribDivisor(2+k, 1); }
+            gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 3, gl.FLOAT, false, stride, 16*4); gl.vertexAttribDivisor(6, 1);
+            gl.enableVertexAttribArray(7); gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 19*4); gl.vertexAttribDivisor(7, 1);
+            gl.enableVertexAttribArray(9); gl.vertexAttribPointer(9, 1, gl.FLOAT, false, stride, 20*4); gl.vertexAttribDivisor(9, 1);
+            gl.enableVertexAttribArray(10); gl.vertexAttribPointer(10, 1, gl.FLOAT, false, stride, 21*4); gl.vertexAttribDivisor(10, 1);
+        }
+        
         gl.bindVertexArray(null);
         
         this.meshes.set(id, { 
             vao, 
             count: geometry.indices.length, 
             instanceBuffer: inst, 
-            cpuBuffer: new Float32Array(INITIAL_CAPACITY * 22), 
+            cpuBuffer: this.meshes.get(id)?.cpuBuffer || new Float32Array(INITIAL_CAPACITY * 22), 
             instanceCount: 0, 
             hasSkin,
             softWeightBuffer: swBuf 
@@ -359,6 +400,9 @@ export class MeshRenderSystem {
             
             // Pass Heatmap visibility uniform
             gl.uniform1f(gl.getUniformLocation(program, 'u_showHeatmap'), softSelData?.heatmapVisible ? 1.0 : 0.0);
+            
+            // Pass Selected Bone Index
+            gl.uniform1i(gl.getUniformLocation(program, 'u_selectedBoneIndex'), this.selectedBoneIndex);
 
             if (this.boneTexture) {
                 gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.boneTexture);

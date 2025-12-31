@@ -1,10 +1,10 @@
-
 import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh, FolderAsset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
 import { engineInstance } from './engine';
 import { ProceduralGeneration } from './ProceduralGeneration';
 import { MeshTopologyUtils } from './MeshTopologyUtils';
+import * as THREE from 'three';
 
 export interface RigTemplate {
     name: string;
@@ -277,6 +277,7 @@ class AssetManagerService {
         const name = fileName.split('.')[0] || 'Imported_Mesh';
         let geometryData: any = { v: [], n: [], u: [], idx: [], faces: [], triToFace: [] };
         let skeletonData: any = null;
+        let animations: any[] = [];
 
         const ext = fileName.toLowerCase();
 
@@ -284,42 +285,47 @@ class AssetManagerService {
             geometryData = this.parseOBJ(typeof content === 'string' ? content : new TextDecoder().decode(content), importScale);
         } else if (ext.endsWith('.fbx')) {
             const fbxData = await this.parseFBX(content, importScale);
-            geometryData = fbxData.geometry;
-            if (type === 'SKELETAL_MESH') skeletonData = fbxData.skeleton;
+            if (fbxData) {
+                geometryData = fbxData.geometry;
+                skeletonData = fbxData.skeleton;
+                animations = fbxData.animations;
+                // Force type to SKELETAL if bones detected
+                if (skeletonData) type = 'SKELETAL_MESH';
+            }
         } else {
             console.warn("Unsupported format. Using fallback cylinder.");
             geometryData = ProceduralGeneration.createCylinder(24);
         }
 
         const v2f = new Map<number, number[]>();
-        geometryData.faces.forEach((f: number[], i: number) => {
-            f.forEach(vIdx => {
-                if(!v2f.has(vIdx)) v2f.set(vIdx, []);
-                v2f.get(vIdx)!.push(i);
+        if (geometryData.faces) {
+            geometryData.faces.forEach((f: number[], i: number) => {
+                f.forEach(vIdx => {
+                    if(!v2f.has(vIdx)) v2f.set(vIdx, []);
+                    v2f.get(vIdx)!.push(i);
+                });
             });
-        });
+        }
 
-        // 1. Basic Topology (Faces)
         const topology: LogicalMesh = {
-            faces: geometryData.faces,
-            triangleToFaceIndex: new Int32Array(geometryData.triToFace),
+            faces: geometryData.faces || [],
+            triangleToFaceIndex: new Int32Array(geometryData.triToFace || []),
             vertexToFaces: v2f
         };
         
-        // 2. Build Advanced Graph (Half-Edge)
-        // Note: vertices buffer needed for distance checking if we implemented welding, 
-        // but simple builder uses indices directly
-        topology.graph = MeshTopologyUtils.buildTopology(topology, geometryData.v.length / 3);
+        if (geometryData.v.length > 0) {
+            topology.graph = MeshTopologyUtils.buildTopology(topology, geometryData.v.length / 3);
+        }
 
-        // Create default skin weights if none exist or if it's a static mesh being imported as skeletal
         const vertexCount = geometryData.v.length / 3;
+        
+        // Ensure Skin Data Exists
         if (!geometryData.jointIndices || geometryData.jointIndices.length === 0) {
             geometryData.jointIndices = new Float32Array(vertexCount * 4).fill(0);
             geometryData.jointWeights = new Float32Array(vertexCount * 4).fill(0);
-            for(let i=0; i<vertexCount; i++) geometryData.jointWeights[i*4] = 1.0; // Weight 1.0 to root (0)
+            for(let i=0; i<vertexCount; i++) geometryData.jointWeights[i*4] = 1.0; 
         }
         
-        // Allocate Colors (Default White)
         const colors = new Float32Array(vertexCount * 3).fill(1.0);
 
         const assetBase = {
@@ -354,7 +360,7 @@ class AssetManagerService {
                      jointWeights: new Float32Array(geometryData.jointWeights)
                  },
                  skeleton: skeletonData || defaultSkeleton,
-                 animations: []
+                 animations: animations
              };
              this.registerAsset(skelAsset);
              return skelAsset;
@@ -426,58 +432,136 @@ class AssetManagerService {
         return { v: finalV, n: finalN, u: finalU, idx: finalIdx, faces: logicalFaces, triToFace };
     }
 
-    private async parseFBX(content: string | ArrayBuffer, importScale: number) {
-        if (content instanceof ArrayBuffer) {
-            const header = new Uint8Array(content.slice(0, 18));
-            const headerStr = new TextDecoder().decode(header);
-            if (headerStr.includes("Kaydara FBX Binary")) {
-                return await this.parseFBXBinary(content, importScale);
+    private async parseFBX(content: ArrayBuffer | string, importScale: number) {
+        try {
+            // Dynamic import for FBXLoader (works with esm.sh)
+            const { FBXLoader } = await import('https://esm.sh/three@0.182.0/examples/jsm/loaders/FBXLoader.js?alias=three:three');
+            const loader = new FBXLoader();
+            
+            // Parse (FBXLoader supports ArrayBuffer)
+            const group = loader.parse(content, '');
+            
+            // Extract First Skinned Mesh
+            let targetMesh: THREE.SkinnedMesh | null = null;
+            group.traverse((obj: any) => {
+                if (obj.isSkinnedMesh && !targetMesh) targetMesh = obj;
+            });
+
+            if (!targetMesh) {
+                // Fallback: look for static mesh
+                group.traverse((obj: any) => {
+                    if (obj.isMesh && !targetMesh) targetMesh = obj;
+                });
             }
-            console.warn("FBX Header Mismatch:", headerStr);
-            return this.parseFBXASCII(new TextDecoder().decode(content), importScale);
+
+            if (!targetMesh) throw new Error("No mesh found in FBX");
+
+            // --- Geometry Extraction ---
+            const geo = (targetMesh as any).geometry;
+            const pos = geo.attributes.position.array;
+            const norm = geo.attributes.normal ? geo.attributes.normal.array : null;
+            const uv = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
+            const idx: number[] = geo.index ? Array.from(geo.index.array) : [];
+            
+            const skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
+            const skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
+
+            // Apply Scale
+            const v = new Float32Array(pos.length);
+            for(let i=0; i<pos.length; i++) v[i] = pos[i] * importScale;
+
+            const n = norm ? new Float32Array(norm) : new Float32Array(pos.length);
+            // Generate normals if missing
+            if (!norm) this.generateMissingNormals(Array.from(v), Array.from(n), idx);
+
+            // --- Skeleton Extraction ---
+            let skeletonData = null;
+            const bones: any[] = [];
+            
+            if ((targetMesh as any).isSkinnedMesh) {
+                const skeleton = (targetMesh as any).skeleton;
+                if (skeleton) {
+                    skeleton.bones.forEach((b: THREE.Bone) => {
+                        const invBind = new Float32Array(16);
+                        // Find inverse bind matrix. FBXLoader calculates it.
+                        // THREE.Skeleton stores boneInverses[] matching bones[]
+                        const bIdx = skeleton.bones.indexOf(b);
+                        if (skeleton.boneInverses[bIdx]) {
+                            skeleton.boneInverses[bIdx].toArray(invBind);
+                        } else {
+                            // Identity fallback
+                            invBind[0]=1; invBind[5]=1; invBind[10]=1; invBind[15]=1;
+                        }
+
+                        // Local Transform as Bind Pose (Approximate)
+                        b.updateMatrix();
+                        const bindPose = new Float32Array(16);
+                        b.matrix.toArray(bindPose);
+
+                        bones.push({
+                            name: b.name,
+                            parentIndex: b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1,
+                            bindPose: bindPose,
+                            inverseBindPose: invBind
+                        });
+                    });
+                    skeletonData = { bones };
+                }
+            }
+
+            // --- Animation Extraction ---
+            const animations: any[] = [];
+            if (group.animations && group.animations.length > 0) {
+                group.animations.forEach((clip: THREE.AnimationClip) => {
+                    const tracks: any[] = [];
+                    clip.tracks.forEach((t) => {
+                        // Map THREE track types to engine types
+                        let type = 'position';
+                        if (t.name.endsWith('.quaternion')) type = 'rotation';
+                        if (t.name.endsWith('.scale')) type = 'scale';
+                        
+                        // Sanitize name (remove .position/quaternion suffix)
+                        const name = t.name.split('.')[0];
+                        
+                        tracks.push({
+                            name,
+                            type,
+                            times: new Float32Array(t.times),
+                            values: new Float32Array(t.values)
+                        });
+                    });
+                    animations.push({
+                        name: clip.name,
+                        duration: clip.duration,
+                        tracks
+                    });
+                });
+            }
+
+            // Build logical faces (assume triangles from THREE)
+            const logicalFaces = [];
+            const triToFace = [];
+            for (let i = 0; i < idx.length; i+=3) {
+                logicalFaces.push([idx[i], idx[i+1], idx[i+2]]);
+                triToFace.push(i/3);
+            }
+
+            return {
+                geometry: {
+                    v, n: n, u: new Float32Array(uv), idx,
+                    jointIndices: skinIndices ? new Float32Array(skinIndices) : null,
+                    jointWeights: skinWeights ? new Float32Array(skinWeights) : null,
+                    faces: logicalFaces,
+                    triToFace
+                },
+                skeleton: skeletonData,
+                animations
+            };
+
+        } catch (e) {
+            console.error("FBX Load Failed:", e);
+            return null;
         }
-        return this.parseFBXASCII(content, importScale);
-    }
-
-    private async inflate(data: Uint8Array, expectedSize: number): Promise<Uint8Array> {
-        try {
-            const ds = new DecompressionStream('deflate');
-            const writer = ds.writable.getWriter();
-            writer.write(data);
-            writer.close();
-            const reader = ds.readable.getReader();
-            const chunks = [];
-            let size = 0;
-            while(true) { const {done, value} = await reader.read(); if(done) break; chunks.push(value); size+=value.length; }
-            const res = new Uint8Array(size); let off=0;
-            for(const c of chunks) { res.set(c, off); off+=c.length; }
-            return res;
-        } catch(e) { return new Uint8Array(0); }
-    }
-
-    private async parseFBXBinary(buffer: ArrayBuffer, importScale: number) {
-        // Mock implementation for the diff - assuming valid return structure
-        return { 
-            geometry: ProceduralGeneration.createCylinder(24), 
-            skeleton: { bones: [{ 
-                name: 'Root', 
-                parentIndex: -1, 
-                bindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
-                inverseBindPose: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1])
-            }] }
-        };
-    }
-
-    private parseFBXASCII(text: string, importScale: number) {
-        try {
-            const vMatch = text.match(/Vertices:\s*\*(\d+)\s*{([^}]*)}/);
-            const iMatch = text.match(/PolygonVertexIndex:\s*\*(\d+)\s*{([^}]*)}/);
-            if (vMatch && iMatch) {
-                // For brevity, returning cylinder as placeholder in diff to avoid huge XML
-                return { geometry: ProceduralGeneration.createCylinder(24), skeleton: null };
-            }
-        } catch (e) { }
-        return { geometry: ProceduralGeneration.createCylinder(24), skeleton: null };
     }
 
     private generateMissingNormals(v: number[], n: number[], idx: number[]) {
