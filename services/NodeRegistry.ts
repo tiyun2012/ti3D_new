@@ -1,4 +1,3 @@
-
 import { GraphNode, GraphConnection } from '../types';
 import { assetManager } from './AssetManager';
 
@@ -80,7 +79,7 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         ],
         outputs: [],
         data: {
-            albedo: '#ffffff', // Changed from #888888 to White to allow Vertex Color to tint correctly
+            albedo: '#ffffff', 
             metallic: '0.0',
             smoothness: '0.5',
             emission: '#000000',
@@ -219,5 +218,44 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         type: 'Mix', category: 'Math', title: 'Lerp',
         inputs: [{id:'a', name:'A', type:'any'}, {id:'b', name:'B', type:'any'}, {id:'t', name:'T', type:'float'}], outputs: [{id:'out', name:'Out', type:'any'}],
         glsl: (i, v) => `vec3 ${v} = mix(vec3(${i[0]||'0.0'}), vec3(${i[1]||'1.0'}), ${i[2]||'0.5'});`
+    },
+    'Fresnel': {
+        type: 'Fresnel', category: 'Math', title: 'Fresnel',
+        inputs: [
+            { id: 'normal', name: 'Normal', type: 'vec3' },
+            { id: 'view', name: 'View Dir', type: 'vec3' }
+        ], 
+        outputs: [{ id: 'out', name: 'Fac', type: 'float' }],
+        data: { power: '5.0' },
+        glsl: (i, v, d) => {
+            const power = formatFloat(d.power || '5.0');
+            return `
+            vec3 ${v}_N = normalize(${i[0] || 'v_normal'});
+            vec3 ${v}_V = normalize(u_cameraPos - v_worldPos);
+            float ${v} = pow(1.0 - clamp(dot(${v}_N, ${v}_V), 0.0, 1.0), ${power});
+            `;
+        }
+    },
+    'Posterize': {
+        type: 'Posterize', category: 'Math', title: 'Posterize',
+        inputs: [{ id: 'in', name: 'In', type: 'float' }],
+        outputs: [{ id: 'out', name: 'Out', type: 'float' }],
+        data: { steps: '4.0' },
+        glsl: (i, v, d) => {
+            const steps = formatFloat(d.steps || '4.0');
+            return `float ${v} = floor(${i[0] || '0.0'} * ${steps}) / ${steps};`;
+        }
+    },
+    'Vec3Scale': {
+        type: 'Vec3Scale', category: 'Math', title: 'Scale Vector',
+        inputs: [{ id: 'a', name: 'Vec3', type: 'vec3' }, { id: 's', name: 'Scale', type: 'float' }],
+        outputs: [{ id: 'out', name: 'Out', type: 'vec3' }],
+        glsl: (i, v) => `vec3 ${v} = (${i[0] || 'vec3(0.0)'}) * (${i[1] || '1.0'});`
+    },
+    'RoughnessToSmoothness': {
+        type: 'RoughnessToSmoothness', category: 'Math', title: 'Rough -> Smooth',
+        inputs: [{ id: 'in', name: 'Roughness', type: 'float' }],
+        outputs: [{ id: 'out', name: 'Smoothness', type: 'float' }],
+        glsl: (i, v) => `float ${v} = 1.0 - (${i[0] || '0.0'});`
     }
 };

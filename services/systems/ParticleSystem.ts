@@ -7,6 +7,8 @@ import { compileShader } from '../ShaderCompiler';
 import { consoleService } from '../Console';
 
 const PARTICLE_VS = `#version 300 es
+precision highp float;
+
 layout(location=0) in vec3 a_center;
 layout(location=1) in vec3 a_color;
 layout(location=2) in float a_size;
@@ -48,7 +50,7 @@ void main() {
     vec3 pos = a_center + (right * offset.x + up * offset.y) * a_size;
     
     v_uv = offset + 0.5;
-    v_color = a_color;
+    v_color = a_color; // Raw color, not pre-multiplied
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
     v_life = a_life;
@@ -89,12 +91,18 @@ void main() {
         texColor = vec4(1.0, 1.0, 1.0, a);
     }
     
-    vec3 finalColor = v_color * texColor.rgb;
-    float alpha = texColor.a; 
+    // Calculate fade alpha from life
+    float lifeAlpha = min(v_life * 3.0, 1.0);
     
-    if (alpha < 0.01) discard;
+    // Combine texture alpha and lifecycle alpha
+    float finalAlpha = texColor.a * lifeAlpha;
+    
+    if (finalAlpha < 0.01) discard;
 
-    outColor = vec4(finalColor, alpha);
+    vec3 finalColor = v_color * texColor.rgb;
+    
+    outColor = vec4(finalColor, finalAlpha);
+    // Explicitly zero out effect index for transparent pixels to avoid blending artifacts in ID buffer
     outData = vec4(v_effectIndex / 255.0, 0.0, 0.0, 1.0);
 }`;
 
@@ -305,8 +313,12 @@ export class ParticleSystem {
         if (!this.gl || !this.defaultProgram || !this.vao) return;
         const gl = this.gl;
         
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL); 
+        
+        // Use Standard Alpha Blending for better Material compatibility
         gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(false); 
         
         gl.bindVertexArray(this.vao);
@@ -364,14 +376,13 @@ export class ParticleSystem {
                 data[ptr++] = p.y;
                 data[ptr++] = p.z;
                 
+                // Do NOT pre-multiply color. Pass pure RGB.
+                // Opacity is handled by v_life calculation in shader.
+                data[ptr++] = p.color.r;
+                data[ptr++] = p.color.g;
+                data[ptr++] = p.color.b;
+                
                 const lifeRatio = p.life / p.maxLife;
-                const alpha = Math.min(lifeRatio * 3.0, 1.0);
-                
-                // Color is pre-multiplied by alpha here
-                data[ptr++] = p.color.r * alpha;
-                data[ptr++] = p.color.g * alpha;
-                data[ptr++] = p.color.b * alpha;
-                
                 data[ptr++] = p.size * Math.sin(lifeRatio * Math.PI); 
                 data[ptr++] = lifeRatio;
                 data[ptr++] = texIdx;

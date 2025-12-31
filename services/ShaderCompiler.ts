@@ -165,19 +165,26 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
             vec3 N = normalize(${normal.finalVar ? toVec3(normal.finalVar) : 'v_normal'});
             vec3 V = normalize(u_cameraPos - v_worldPos); vec3 L = normalize(-u_lightDir); vec3 H = normalize(V + L);
             
-            // [MODIFIED] Implicitly multiply by v_color (Vertex Color / Particle Color)
+            // [MODIFIED] Correct particle color tint (Raw color, let shader handle alpha)
             vec3 albedoVal = ${toVec3(albedo.finalVar, 'vec3(1.0)')} * v_color;
             
             float metallicVal = clamp(${toFloat(metallic.finalVar, '0.0')}, 0.0, 1.0);
             float roughnessVal = 1.0 - clamp(${toFloat(smoothness.finalVar, '0.5')}, 0.0, 1.0);
-            vec3 emissionVal = ${toVec3(emission.finalVar, 'vec3(0.0)')};
+            vec3 emissionVal = ${toVec3(emission.finalVar, 'vec3(0.0)')} * v_color; 
+            
+            // Base Alpha
             float alphaVal = clamp(${toFloat(alpha.finalVar, '1.0')}, 0.0, 1.0);
             
-            // --- Auto-Circle Mask for Particles (if untextured) ---
-            if (u_isParticle == 1 && v_texIndex <= 0.5) {
-                float dist = length(v_uv - 0.5) * 2.0;
-                float circleAlpha = 1.0 - smoothstep(0.8, 1.0, dist);
-                alphaVal *= circleAlpha;
+            // --- Particle Opacity Logic ---
+            // Fade particles based on life ratio (v_life) and circle mask
+            if (u_isParticle == 1) {
+                // Circle Mask
+                if (v_texIndex <= 0.5) {
+                    float dist = length(v_uv - 0.5) * 2.0;
+                    alphaVal *= (1.0 - smoothstep(0.8, 1.0, dist));
+                }
+                // Life Fade
+                alphaVal *= min(v_life * 3.0, 1.0);
             }
             // -----------------------------------------------------
 
@@ -208,16 +215,18 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
         
         fsSource = `void main() { 
             ${rgb.body} 
-            // [MODIFIED] Implicitly multiply by v_color
+            // [MODIFIED] Correct particle color tint
             vec3 finalColor = ${rgbVar} * v_color; 
             
             if (u_renderMode == 1) finalColor = normalize(v_normal) * 0.5 + 0.5; 
             
-            // Auto-circle mask for particles in Unlit mode too
             float alphaVal = 1.0;
-            if (u_isParticle == 1 && v_texIndex <= 0.5) {
-                float dist = length(v_uv - 0.5) * 2.0;
-                alphaVal = 1.0 - smoothstep(0.8, 1.0, dist);
+            if (u_isParticle == 1) {
+                if (v_texIndex <= 0.5) {
+                    float dist = length(v_uv - 0.5) * 2.0;
+                    alphaVal = 1.0 - smoothstep(0.8, 1.0, dist);
+                }
+                alphaVal *= min(v_life * 3.0, 1.0);
             }
             
             if (alphaVal < 0.01) discard;

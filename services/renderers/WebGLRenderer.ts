@@ -277,6 +277,23 @@ export class WebGLRenderer {
         if (!this.gl || !this.ppProgram) return;
         const gl = this.gl; const time = performance.now() / 1000;
         
+        // --- State Reset ---
+        // Crucial for correcting state leakage from PostProcess (which disables Depth Test)
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        // Reset draw buffer blending states if any were modified by particles in previous frame
+        // (Though technically we do it right before particles)
+        // Check for WebGL 2 features
+        const hasDrawBuffersIndexed = (gl as any).enablei && (gl as any).disablei;
+        if (hasDrawBuffersIndexed) {
+            (gl as any).enablei(gl.BLEND, 0); 
+            (gl as any).enablei(gl.BLEND, 1);
+        }
+
         // Prepare light data
         let lightDir = [0.5, -1.0, 0.5], lightColor = [1, 1, 1], lightIntensity = 1.0;
         for (let i = 0; i < count; i++) {
@@ -304,7 +321,22 @@ export class WebGLRenderer {
         
         // Render Particles
         if (particleSystem) {
-            particleSystem.render(vp, cam, this.meshSystem.textureArray, time);
+            if (hasDrawBuffersIndexed) {
+                // [CRITICAL] Disable blending for the Data buffer (1) to prevent ID corruption
+                // Enable blending for Color buffer (0) for transparency
+                (gl as any).enablei(gl.BLEND, 0);
+                (gl as any).disablei(gl.BLEND, 1);
+                
+                particleSystem.render(vp, cam, this.meshSystem.textureArray, time);
+                
+                // Restore for standard rendering
+                (gl as any).enablei(gl.BLEND, 1);
+            } else {
+                // Fallback for systems without indexed blending (unlikely for WebGL 2 but safe)
+                // Just render standard blending to all targets
+                gl.enable(gl.BLEND);
+                particleSystem.render(vp, cam, this.meshSystem.textureArray, time);
+            }
         }
 
         if (this.showGrid && !this.gridExcludePP) { 
@@ -335,7 +367,9 @@ export class WebGLRenderer {
         }
 
         // --- Pass 3: Post Processing Composite ---
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.disable(gl.DEPTH_TEST);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null); 
+        gl.disable(gl.DEPTH_TEST); // This disables depth test for the next frame unless re-enabled!
+        
         gl.useProgram(this.ppProgram);
         gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.texColorIncluded); gl.uniform1i(gl.getUniformLocation(this.ppProgram!, 'u_scene'), 0);
         gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.texDataIncluded); gl.uniform1i(gl.getUniformLocation(this.ppProgram!, 'u_data'), 1);
@@ -347,7 +381,7 @@ export class WebGLRenderer {
         setU('u_enabled', this.ppConfig.enabled?1:0); setU('u_vignetteStrength', this.ppConfig.vignetteStrength);
         setU('u_aberrationStrength', this.ppConfig.aberrationStrength); setU('u_toneMapping', this.ppConfig.toneMapping?1:0);
         gl.bindVertexArray(this.quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); 
-        gl.enable(gl.DEPTH_TEST);
+        gl.enable(gl.DEPTH_TEST); // Restore just in case, though we do it at top of frame now too.
     }
 
     private renderGrid(gl: WebGL2RenderingContext, vp: Float32Array) {
