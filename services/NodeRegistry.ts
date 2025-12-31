@@ -32,6 +32,14 @@ export const formatFloat = (val: any): string => {
     return s.includes('.') ? s : s + '.0';
 };
 
+const hexToVec3Str = (hex: string) => {
+    if (!hex || !hex.startsWith('#')) return 'vec3(0.0)';
+    const r = parseInt(hex.slice(1,3), 16)/255;
+    const g = parseInt(hex.slice(3,5), 16)/255;
+    const b = parseInt(hex.slice(5,7), 16)/255;
+    return `vec3(${r.toFixed(3)}, ${g.toFixed(3)}, ${b.toFixed(3)})`;
+};
+
 export const getTypeColor = (type: string) => {
     switch(type) {
         case 'float': return '#a6e22e'; // Green
@@ -121,6 +129,41 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         type: 'ParticleLife', category: 'Input', title: 'Particle Life',
         inputs: [], outputs: [{ id: 'out', name: '0..1', type: 'float' }],
         glsl: (i, v) => `float ${v} = v_life;`
+    },
+    'Ramp': {
+        type: 'Ramp', category: 'Input', title: 'Ramp Color',
+        inputs: [{ id: 'in', name: 'Fac', type: 'float' }],
+        outputs: [{ id: 'out', name: 'Color', type: 'vec3' }],
+        data: { 
+            stops: [
+                { id: 's1', t: 0.0, c: '#000000' },
+                { id: 's2', t: 1.0, c: '#ffffff' }
+            ] 
+        },
+        glsl: (i, v, d) => {
+            const stops = (d.stops || [{ t:0, c:'#000000'}, {t:1, c:'#ffffff'}])
+                .sort((a:any, b:any) => a.t - b.t);
+            
+            const funcName = `ramp_${v}`;
+            let funcBody = `vec3 ${funcName}(float t) {\n`;
+            
+            // Generate linear mix chain
+            funcBody += `    if (t <= ${formatFloat(stops[0].t)}) return ${hexToVec3Str(stops[0].c)};\n`;
+            for(let k=0; k < stops.length - 1; k++) {
+                const s1 = stops[k];
+                const s2 = stops[k+1];
+                const c1 = hexToVec3Str(s1.c);
+                const c2 = hexToVec3Str(s2.c);
+                funcBody += `    if (t < ${formatFloat(s2.t)}) return mix(${c1}, ${c2}, (t - ${formatFloat(s1.t)}) / (${formatFloat(s2.t)} - ${formatFloat(s1.t)}));\n`;
+            }
+            funcBody += `    return ${hexToVec3Str(stops[stops.length-1].c)};\n`;
+            funcBody += `}\n`;
+
+            return {
+                body: `vec3 ${v} = ${funcName}(${i[0] || '0.0'});`,
+                functions: funcBody
+            };
+        }
     },
     'Float': {
         type: 'Float', category: 'Input', title: 'Float',

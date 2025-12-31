@@ -17,9 +17,14 @@ export const GraphUtils = {
         // Input rows
         h += def.inputs.length * LayoutConfig.ITEM_HEIGHT;
         
-        // Texture preview (specific to TextureSample)
+        // Texture preview
         if (node.type === 'TextureSample') {
             h += LayoutConfig.TEXTURE_PREVIEW_HEIGHT + LayoutConfig.TEXTURE_SPACING;
+        }
+
+        // Ramp preview
+        if (node.type === 'Ramp') {
+            h += LayoutConfig.RAMP_PREVIEW_HEIGHT + LayoutConfig.RAMP_TRACK_HEIGHT + LayoutConfig.RAMP_SPACING;
         }
 
         // Spacing before outputs
@@ -28,7 +33,7 @@ export const GraphUtils = {
         // Output rows
         h += def.outputs.length * LayoutConfig.ITEM_HEIGHT;
         
-        // Bottom padding (matches NodeItem.tsx paddingBottom: 6)
+        // Bottom padding
         h += 6; 
         
         return h;
@@ -58,6 +63,10 @@ export const GraphUtils = {
             
             if (node.type === 'TextureSample') {
                 yOffset += LayoutConfig.TEXTURE_PREVIEW_HEIGHT + LayoutConfig.TEXTURE_SPACING;
+            }
+
+            if (node.type === 'Ramp') {
+                yOffset += LayoutConfig.RAMP_PREVIEW_HEIGHT + LayoutConfig.RAMP_TRACK_HEIGHT + LayoutConfig.RAMP_SPACING;
             }
 
             yOffset += LayoutConfig.OUTPUTS_OFFSET;

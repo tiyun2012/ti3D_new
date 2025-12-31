@@ -1,5 +1,5 @@
 
-import React, { memo } from 'react';
+import React, { memo, useState, useRef, useEffect } from 'react';
 import { GraphNode, TextureAsset, GraphConnection } from '../../types';
 import { NodeRegistry, getTypeColor } from '../../services/NodeRegistry';
 import { LayoutConfig } from './GraphConfig';
@@ -16,7 +16,7 @@ interface NodeItemProps {
     onPinUp: (e: React.MouseEvent, nodeId: string, pinId: string, type: 'input'|'output') => void;
     onPinEnter: () => void;
     onPinLeave: () => void;
-    onDataChange: (nodeId: string, key: string, value: string) => void;
+    onDataChange: (nodeId: string, key: string, value: any) => void;
     onResize?: (nodeId: string, width: number, height: number) => void;
 }
 
@@ -30,6 +30,125 @@ const getTexturePreviewStyle = (id: string, assets: TextureAsset[]): React.CSSPr
     if (num === 2) return { backgroundColor: '#808080', backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='1'/%3E%3C/svg%3E")`, backgroundSize: '100% 100%' };
     if (num === 3) return { backgroundColor: '#8B4513', backgroundImage: `linear-gradient(335deg, rgba(255,255,255,0.1) 23px, transparent 23px), linear-gradient(155deg, rgba(255,255,255,0.1) 23px, transparent 23px), linear-gradient(335deg, rgba(255,255,255,0.1) 23px, transparent 23px), linear-gradient(155deg, rgba(255,255,255,0.1) 23px, transparent 23px)`, backgroundSize: '50% 50%', backgroundPosition: '0px 2px, 4px 35px, 29px 31px, 34px 6px' };
     return { backgroundColor: '#ffffff' };
+};
+
+const RampEditor: React.FC<{ stops: any[], onChange: (newStops: any[]) => void }> = ({ stops, onChange }) => {
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const trackRef = useRef<HTMLDivElement>(null);
+    const draggingId = useRef<string | null>(null);
+
+    const sortedStops = [...stops].sort((a,b) => a.t - b.t);
+    const gradientString = `linear-gradient(to right, ${sortedStops.map(s => `${s.c} ${s.t * 100}%`).join(', ')})`;
+
+    const handleMouseDown = (e: React.MouseEvent, id: string) => {
+        e.stopPropagation(); // Stop node dragging
+        setSelectedId(id);
+        draggingId.current = id;
+        
+        const onMove = (ev: MouseEvent) => {
+            if (!draggingId.current || !trackRef.current) return;
+            const rect = trackRef.current.getBoundingClientRect();
+            let t = (ev.clientX - rect.left) / rect.width;
+            t = Math.max(0, Math.min(1, t));
+            
+            const newStops = stops.map(s => s.id === draggingId.current ? { ...s, t } : s);
+            onChange(newStops);
+        };
+        
+        const onUp = () => {
+            draggingId.current = null;
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+        };
+        
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    };
+
+    const handleTrackClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (draggingId.current) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        
+        // Add new stop
+        const id = crypto.randomUUID();
+        const newStop = { id, t, c: '#808080' };
+        onChange([...stops, newStop]);
+        setSelectedId(id);
+    };
+
+    const handleStopDelete = (e: React.MouseEvent, id: string) => {
+        e.preventDefault(); e.stopPropagation();
+        if (stops.length <= 2) return; // Min 2 stops
+        onChange(stops.filter(s => s.id !== id));
+        if (selectedId === id) setSelectedId(null);
+    };
+
+    const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!selectedId) return;
+        const newColor = e.target.value;
+        onChange(stops.map(s => s.id === selectedId ? { ...s, c: newColor } : s));
+    };
+
+    const selStop = stops.find(s => s.id === selectedId);
+
+    return (
+        <div className="flex flex-col gap-1 select-none" onMouseDown={e => e.stopPropagation()}>
+            {/* Gradient Preview */}
+            <div 
+                className="w-full rounded border border-white/20 h-5"
+                style={{ background: gradientString }}
+            />
+            
+            {/* Track & Handles */}
+            <div 
+                ref={trackRef}
+                className="relative w-full h-4 bg-black/20 rounded cursor-crosshair"
+                onMouseDown={handleTrackClick}
+            >
+                {stops.map(stop => (
+                    <div
+                        key={stop.id}
+                        className={`absolute top-0 w-3 h-4 -ml-1.5 cursor-ew-resize group z-10`}
+                        style={{ left: `${stop.t * 100}%` }}
+                        onMouseDown={(e) => handleMouseDown(e, stop.id)}
+                        onContextMenu={(e) => handleStopDelete(e, stop.id)}
+                    >
+                        {/* Triangle Handle */}
+                        <div className={`w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-transparent 
+                            ${selectedId === stop.id ? 'border-b-accent' : 'border-b-gray-400 group-hover:border-b-white'}
+                        `} />
+                        {/* Color indicator dot */}
+                        <div className="w-full h-1 mt-0.5 rounded-full" style={{ backgroundColor: stop.c }} />
+                    </div>
+                ))}
+            </div>
+
+            {/* Selected Stop Controls */}
+            {selStop && (
+                <div className="flex items-center gap-2 mt-1 bg-black/20 p-1 rounded">
+                    <div className="w-4 h-4 rounded border border-white/20 overflow-hidden relative">
+                        <input 
+                            type="color" 
+                            className="absolute -top-1 -left-1 w-8 h-8 cursor-pointer p-0 border-0"
+                            value={selStop.c} 
+                            onChange={handleColorChange} 
+                        />
+                    </div>
+                    <span className="text-[9px] font-mono text-gray-400">{(selStop.t).toFixed(2)}</span>
+                    <button 
+                        className="ml-auto text-gray-500 hover:text-red-400"
+                        title="Delete Stop"
+                        onClick={(e) => handleStopDelete(e, selStop.id)}
+                        disabled={stops.length <= 2}
+                    >
+                        <Icon name="X" size={10} />
+                    </button>
+                </div>
+            )}
+        </div>
+    );
 };
 
 export const NodeItem = memo(({ 
@@ -82,6 +201,7 @@ export const NodeItem = memo(({
 
     const isReroute = node.type === 'Reroute';
     const isTextureSample = node.type === 'TextureSample';
+    const isRamp = node.type === 'Ramp';
     
     const borderStyle = selected ? 'ring-1 ring-accent border-accent' : 'border-white/10';
 
@@ -138,8 +258,6 @@ export const NodeItem = memo(({
                     <div className="flex-1 flex flex-col overflow-hidden" style={{ paddingTop: LayoutConfig.PADDING_TOP, paddingLeft: 8, paddingRight: 8, paddingBottom: 6 }}>
                         {def.inputs.map(input => {
                             const isConnected = connections.some(c => c.toNode === node.id && c.toPin === input.id);
-                            
-                            // IMPROVEMENT: Always show controls for values by default for easier editing
                             const isValueInput = input.type === 'float' || input.type === 'vec3';
                             const val = node.data?.[input.id] ?? def.data?.[input.id];
 
@@ -190,6 +308,15 @@ export const NodeItem = memo(({
                                     ...getTexturePreviewStyle(node.data?.textureId || '0', customTextures) 
                                 }}
                             />
+                        )}
+
+                        {isRamp && (
+                            <div className="py-2">
+                                <RampEditor 
+                                    stops={node.data?.stops || [{ id:'s1', t:0, c:'#000000'}, {id:'s2', t:1, c:'#ffffff'}]} 
+                                    onChange={(newStops) => onDataChange(node.id, 'stops', newStops)} 
+                                />
+                            </div>
                         )}
 
                         <div style={{ marginTop: LayoutConfig.OUTPUTS_OFFSET }}>

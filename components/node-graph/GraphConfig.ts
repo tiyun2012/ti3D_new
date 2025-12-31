@@ -13,8 +13,13 @@ export const LayoutConfig = {
 
     // Vertical Spacing for internal elements
     TEXTURE_PREVIEW_HEIGHT: 140,
-    TEXTURE_SPACING: 12, // Fixed spacing around texture preview
-    OUTPUTS_OFFSET: 8,   // Additional space before the outputs section starts
+    TEXTURE_SPACING: 12, 
+    OUTPUTS_OFFSET: 8,   
+
+    // Ramp Dimensions
+    RAMP_PREVIEW_HEIGHT: 20,
+    RAMP_TRACK_HEIGHT: 16,
+    RAMP_SPACING: 12,
 
     // Precise dimensions for Code/ForLoop Nodes
     CODE_NODE_WIDTH: 280,
