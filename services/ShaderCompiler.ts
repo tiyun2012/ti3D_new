@@ -165,7 +165,8 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
             vec3 N = normalize(${normal.finalVar ? toVec3(normal.finalVar) : 'v_normal'});
             vec3 V = normalize(u_cameraPos - v_worldPos); vec3 L = normalize(-u_lightDir); vec3 H = normalize(V + L);
             
-            vec3 albedoVal = ${toVec3(albedo.finalVar, 'vec3(1.0)')};
+            // [MODIFIED] Implicitly multiply by v_color (Vertex Color / Particle Color)
+            vec3 albedoVal = ${toVec3(albedo.finalVar, 'vec3(1.0)')} * v_color;
             
             float metallicVal = clamp(${toFloat(metallic.finalVar, '0.0')}, 0.0, 1.0);
             float roughnessVal = 1.0 - clamp(${toFloat(smoothness.finalVar, '0.5')}, 0.0, 1.0);
@@ -207,7 +208,9 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
         
         fsSource = `void main() { 
             ${rgb.body} 
-            vec3 finalColor = ${rgbVar}; 
+            // [MODIFIED] Implicitly multiply by v_color
+            vec3 finalColor = ${rgbVar} * v_color; 
+            
             if (u_renderMode == 1) finalColor = normalize(v_normal) * 0.5 + 0.5; 
             
             // Auto-circle mask for particles in Unlit mode too
