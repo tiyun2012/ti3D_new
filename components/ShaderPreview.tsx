@@ -1,45 +1,38 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { engineInstance } from '../services/engine';
 import { Mat4Utils, Vec3Utils } from '../services/math';
+import { SHADER_VARYINGS } from '../services/constants';
 
-const VERTEX_SHADER = `#version 300 es
+const getVertexShader = () => {
+    const outs = SHADER_VARYINGS.map(v => `out ${v.type} ${v.name};`).join('\n');
+    const inits = SHADER_VARYINGS.map(v => `    ${v.name} = ${v.default};`).join('\n');
+
+    return `#version 300 es
 layout(location=0) in vec3 a_pos;
 layout(location=1) in vec3 a_normal;
 layout(location=8) in vec2 a_uv;
 
-out vec2 v_uv;
-out vec3 v_normal;
-out vec3 v_worldPos;
-out vec3 v_objectPos; 
-out vec3 v_color;
-out float v_isSelected;
-out float v_texIndex;
-out float v_effectIndex;
-out vec4 v_weights;     // Added for compatibility
-out float v_softWeight; // Added for compatibility
-out float v_life;       // Added for compatibility
+// --- Dynamically Generated Interface ---
+${outs}
+// ---------------------------------------
 
 uniform mat4 u_mvp;
 uniform mat4 u_model;
 
 void main() {
+    // Default initializations
+${inits}
+
+    // Overrides based on attributes
     v_uv = a_uv;
     v_normal = normalize(mat3(u_model) * a_normal);
     v_worldPos = (u_model * vec4(a_pos, 1.0)).xyz;
     v_objectPos = a_pos; 
-    v_color = vec3(1.0);
-    v_isSelected = 0.0;
-    v_texIndex = 0.0;
-    v_effectIndex = 0.0;
     
-    // Initialize dummy values to match Material Fragment Shader expectations
-    v_weights = vec4(0.0);
-    v_softWeight = 0.0;
-    v_life = 1.0; 
-
     gl_Position = u_mvp * vec4(a_pos, 1.0);
 }`;
+};
 
 const FALLBACK_FRAGMENT = `#version 300 es
 precision mediump float;
@@ -64,6 +57,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
     const programRef = useRef<WebGLProgram | null>(null);
+    const VERTEX_SHADER = useMemo(() => getVertexShader(), []);
     
     // --- Unified Camera State (Parity with SceneView) ---
     const [camera, setCamera] = useState({ 
@@ -216,7 +210,7 @@ export const ShaderPreview: React.FC<ShaderPreviewProps> = ({
         };
         requestRef.current = requestAnimationFrame(render);
         return () => { cancelAnimationFrame(requestRef.current); if (vaoRef.current) gl.deleteVertexArray(vaoRef.current); };
-    }, [primitive, autoRotate, camera]); 
+    }, [primitive, autoRotate, camera, VERTEX_SHADER]); 
 
     const handleMouseDown = (e: React.MouseEvent) => {
         e.stopPropagation();

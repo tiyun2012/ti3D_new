@@ -22,7 +22,7 @@ export const COMPONENT_MASKS = {
     PHYSICS: 8,
     SCRIPT: 16,
     VIRTUAL_PIVOT: 32,
-    PARTICLE_SYSTEM: 64 // Added
+    PARTICLE_SYSTEM: 64 
 };
 
 export const VIEW_MODES = [
@@ -31,4 +31,19 @@ export const VIEW_MODES = [
     { id: 2, label: 'Unlit', icon: 'Circle' },
     { id: 3, label: 'Wireframe', icon: 'Grid' },
     { id: 4, label: 'Overdraw', icon: 'Layers' }
+];
+
+// Single source of truth for Shader Interfaces (Vertex -> Fragment)
+export const SHADER_VARYINGS = [
+    { type: 'vec3', name: 'v_normal', default: 'vec3(0.0, 1.0, 0.0)' },
+    { type: 'vec3', name: 'v_worldPos', default: 'vec3(0.0)' },
+    { type: 'vec3', name: 'v_objectPos', default: 'vec3(0.0)' },
+    { type: 'vec3', name: 'v_color', default: 'vec3(1.0)' },
+    { type: 'float', name: 'v_isSelected', default: '0.0' },
+    { type: 'vec2', name: 'v_uv', default: 'vec2(0.0)' },
+    { type: 'float', name: 'v_texIndex', default: '0.0' },
+    { type: 'float', name: 'v_effectIndex', default: '0.0' },
+    { type: 'vec4', name: 'v_weights', default: 'vec4(0.0)' },
+    { type: 'float', name: 'v_softWeight', default: '0.0' },
+    { type: 'float', name: 'v_life', default: '1.0' }
 ];

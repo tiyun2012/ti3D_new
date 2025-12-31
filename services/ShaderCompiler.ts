@@ -1,6 +1,7 @@
 
 import { GraphNode, GraphConnection } from '../types';
 import { NodeRegistry } from './NodeRegistry';
+import { SHADER_VARYINGS } from './constants';
 
 interface CompileResult {
     vs: string;
@@ -188,6 +189,9 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     }
     const vsSource = `// --- Global Functions (VS) ---\n${vsData.functions.join('\n')}\n// --- Graph Body (VS) ---\n${vsData.body}\n${vsFinalAssignment}`;
     
+    // Dynamically generate Interface Block
+    const varyingHeader = SHADER_VARYINGS.map(v => `in ${v.type} ${v.name};`).join('\n    ');
+
     const fullFs = `#version 300 es
     precision highp float; 
     precision highp sampler2DArray; 
@@ -200,12 +204,9 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     uniform float u_lightIntensity; 
     uniform float u_showHeatmap; 
     
-    in vec3 v_normal, v_worldPos, v_objectPos, v_color; 
-    in float v_isSelected, v_texIndex, v_effectIndex; 
-    in vec4 v_weights; 
-    in float v_softWeight; 
-    in vec2 v_uv; 
-    in float v_life; // Added for Particle System Compatibility
+    // --- Generated Interface ---
+    ${varyingHeader}
+    // ---------------------------
     
     layout(location=0) out vec4 outColor; 
     layout(location=1) out vec4 outData; 
