@@ -1,5 +1,5 @@
 
-import { GraphNode } from '../types';
+import { GraphNode, GraphConnection } from '../types';
 import { assetManager } from './AssetManager';
 
 export interface PortDefinition {
@@ -112,6 +112,16 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         glsl: (i, v) => `float ${v} = u_time;`,
         execute: () => performance.now() / 1000
     },
+    'VertexColor': {
+        type: 'VertexColor', category: 'Input', title: 'Vertex Color',
+        inputs: [], outputs: [{ id: 'rgb', name: 'RGB', type: 'vec3' }],
+        glsl: (i, v) => `vec3 ${v} = v_color;`
+    },
+    'ParticleLife': {
+        type: 'ParticleLife', category: 'Input', title: 'Particle Life',
+        inputs: [], outputs: [{ id: 'out', name: '0..1', type: 'float' }],
+        glsl: (i, v) => `float ${v} = v_life;`
+    },
     'Float': {
         type: 'Float', category: 'Input', title: 'Float',
         inputs: [], outputs: [{id:'out', name:'Value', type:'float'}],
@@ -161,5 +171,10 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         type: 'Add', category: 'Math', title: 'Add',
         inputs: [{id:'a', name:'A', type:'any'}, {id:'b', name:'B', type:'any'}], outputs: [{id:'out', name:'Result', type:'any'}],
         glsl: (i, v) => `vec3 ${v} = vec3(${i[0] || '0.0'}) + vec3(${i[1] || '0.0'});`
+    },
+    'Mix': {
+        type: 'Mix', category: 'Math', title: 'Lerp',
+        inputs: [{id:'a', name:'A', type:'any'}, {id:'b', name:'B', type:'any'}, {id:'t', name:'T', type:'float'}], outputs: [{id:'out', name:'Out', type:'any'}],
+        glsl: (i, v) => `vec3 ${v} = mix(vec3(${i[0]||'0.0'}), vec3(${i[1]||'1.0'}), ${i[2]||'0.5'});`
     }
 };

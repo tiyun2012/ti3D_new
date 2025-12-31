@@ -205,6 +205,7 @@ export const compileShader = (nodes: GraphNode[], connections: GraphConnection[]
     in vec4 v_weights; 
     in float v_softWeight; 
     in vec2 v_uv; 
+    in float v_life; // Added for Particle System Compatibility
     
     layout(location=0) out vec4 outColor; 
     layout(location=1) out vec4 outData; 

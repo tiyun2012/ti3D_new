@@ -16,6 +16,9 @@ out vec3 v_color;
 out float v_isSelected;
 out float v_texIndex;
 out float v_effectIndex;
+out vec4 v_weights;     // Added for compatibility
+out float v_softWeight; // Added for compatibility
+out float v_life;       // Added for compatibility
 
 uniform mat4 u_mvp;
 uniform mat4 u_model;
@@ -29,6 +32,12 @@ void main() {
     v_isSelected = 0.0;
     v_texIndex = 0.0;
     v_effectIndex = 0.0;
+    
+    // Initialize dummy values to match Material Fragment Shader expectations
+    v_weights = vec4(0.0);
+    v_softWeight = 0.0;
+    v_life = 1.0; 
+
     gl_Position = u_mvp * vec4(a_pos, 1.0);
 }`;
 

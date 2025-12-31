@@ -29,6 +29,7 @@ out float v_effectIndex;
 out vec4 v_weights; // Dummy
 out vec4 v_joints;  // Dummy
 out float v_softWeight; // Dummy
+out float v_life; // Pass life to fragment
 
 void main() {
     // Billboarding logic
@@ -50,6 +51,7 @@ void main() {
     v_color = a_color;
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
+    v_life = a_life;
     
     // Fake attributes for material compatibility
     v_worldPos = pos;
@@ -71,6 +73,7 @@ in vec3 v_color;
 in vec2 v_uv;
 in float v_texIndex;
 in float v_effectIndex;
+in float v_life;
 
 uniform sampler2DArray u_textures;
 

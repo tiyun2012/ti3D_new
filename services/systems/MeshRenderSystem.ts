@@ -47,6 +47,7 @@ out float v_effectIndex;
 out vec4 v_joints;
 out vec4 v_weights;
 out float v_softWeight;
+out float v_life;
 
 // %VERTEX_LOGIC%
 
@@ -83,6 +84,7 @@ void main() {
     v_isSelected = a_isSelected;
     v_texIndex = a_texIndex;
     v_effectIndex = a_effectIndex;
+    v_life = 1.0; // Meshes are always alive
     
     // Pass skinning data to FS
     v_joints = a_joints;
@@ -114,6 +116,7 @@ in highp float v_effectIndex;
 in highp vec4 v_joints;
 in highp vec4 v_weights;
 in highp float v_softWeight;
+in highp float v_life;
 
 uniform sampler2DArray u_textures;
 uniform int u_renderMode; 
