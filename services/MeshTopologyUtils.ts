@@ -1,7 +1,7 @@
 
 import { LogicalMesh, Vector3, MeshTopology, HalfEdge } from '../types';
 /* Ray is exported from ./math, not ../types */
-import { Vec3Utils, RayUtils, AABB, Ray } from './math';
+import { Vec3Utils, RayUtils, AABB, Ray, AABBUtils } from './math';
 
 export interface MeshPickingResult {
     t: number;
@@ -9,6 +9,14 @@ export interface MeshPickingResult {
     edgeId: [number, number];
     faceId: number;
     worldPos: Vector3;
+}
+
+// Optimized BVH Tree Node
+interface BVHNode {
+    aabb: AABB;
+    left?: BVHNode;
+    right?: BVHNode;
+    faceIndices?: number[]; // Only exists on leaves
 }
 
 // Minimal MinHeap for Dijkstra priority queue
@@ -123,76 +131,213 @@ export const MeshTopologyUtils = {
     },
 
     /**
-     * Efficiently builds face-level bounding boxes for mesh raycasting.
+     * Builds a recursive AABB Tree (BVH) for O(log N) raycasting.
      */
-    buildBVH: (mesh: LogicalMesh, vertices: Float32Array): { faceBounds: AABB[] } => {
-        const faceBounds: AABB[] = mesh.faces.map(face => {
-            let min = {x:Infinity, y:Infinity, z:Infinity};
-            let max = {x:-Infinity, y:-Infinity, z:-Infinity};
+    buildBVH: (mesh: LogicalMesh, vertices: Float32Array): BVHNode => {
+        const indices = mesh.faces.map((_, i) => i);
+        
+        // Pre-calculate face centroids and bounds to avoid re-computing during build
+        const faceData = indices.map(i => {
+            const face = mesh.faces[i];
+            const bounds = AABBUtils.create();
+            const center = { x: 0, y: 0, z: 0 };
+            
             face.forEach(vIdx => {
-                const px = vertices[vIdx*3], py = vertices[vIdx*3+1], pz = vertices[vIdx*3+2];
-                min.x = Math.min(min.x, px); min.y = Math.min(min.y, py); min.z = Math.min(min.z, pz);
-                max.x = Math.max(max.x, px); max.y = Math.max(max.y, py); max.z = Math.max(max.z, pz);
+                const x = vertices[vIdx*3], y = vertices[vIdx*3+1], z = vertices[vIdx*3+2];
+                AABBUtils.expandPoint(bounds, {x, y, z});
+                center.x += x; center.y += y; center.z += z;
             });
-            return { min, max };
+            center.x /= face.length; center.y /= face.length; center.z /= face.length;
+            return { i, bounds, center };
         });
-        return { faceBounds };
+
+        const buildRecursive = (items: typeof faceData): BVHNode => {
+            const node: BVHNode = { aabb: AABBUtils.create() };
+            
+            // Calculate Node AABB
+            items.forEach(item => AABBUtils.union(node.aabb, node.aabb, item.bounds));
+
+            // Leaf Condition (Max 8 faces per leaf)
+            if (items.length <= 8) {
+                node.faceIndices = items.map(item => item.i);
+                return node;
+            }
+
+            // Split Axis (Extent)
+            const extent = {
+                x: node.aabb.max.x - node.aabb.min.x,
+                y: node.aabb.max.y - node.aabb.min.y,
+                z: node.aabb.max.z - node.aabb.min.z
+            };
+            
+            const axis = (extent.x > extent.y && extent.x > extent.z) ? 'x' 
+                       : (extent.y > extent.z) ? 'y' : 'z';
+            
+            // Midpoint Split
+            const mid = (node.aabb.min[axis] + node.aabb.max[axis]) * 0.5;
+            
+            const leftItems: typeof faceData = [];
+            const rightItems: typeof faceData = [];
+
+            items.forEach(item => {
+                if (item.center[axis] < mid) leftItems.push(item);
+                else rightItems.push(item);
+            });
+
+            // Handle degenerate splits
+            if (leftItems.length === 0 || rightItems.length === 0) {
+                node.faceIndices = items.map(item => item.i);
+                return node;
+            }
+
+            node.left = buildRecursive(leftItems);
+            node.right = buildRecursive(rightItems);
+            return node;
+        };
+
+        return buildRecursive(faceData);
     },
 
     /**
-     * Robust raycasting using AABB pre-filtering.
+     * Accelerated Raycast using BVH Tree.
      */
-    raycastMesh: (mesh: LogicalMesh, vertices: Float32Array, ray: Ray, tolerance: number = 0.02): MeshPickingResult | null => {
-        let bestT = Infinity;
-        let result: MeshPickingResult | null = null;
-        
-        // Use cached BVH or build it
-        let bvh = mesh.bvh;
-        if (!bvh) {
-            bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
-            mesh.bvh = bvh;
-        }
+    raycastMesh: (mesh: LogicalMesh, vertices: Float32Array, ray: Ray, tolerance: number = 0.05): MeshPickingResult | null => {
+        let bestResult: MeshPickingResult | null = null;
+        let minT = Infinity;
 
-        mesh.faces.forEach((face, fIdx) => {
-            const box = bvh.faceBounds[fIdx];
-            if (RayUtils.intersectAABB(ray, box) === null) return;
+        // Ensure BVH exists
+        if (!mesh.bvh) mesh.bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
+        const root = mesh.bvh as BVHNode;
 
-            // Triangulate face for intersection test
-            for (let i = 1; i < face.length - 1; i++) {
-                const v0 = { x: vertices[face[0]*3], y: vertices[face[0]*3+1], z: vertices[face[0]*3+2] };
-                const v1 = { x: vertices[face[i]*3], y: vertices[face[i]*3+1], z: vertices[face[i]*3+2] };
-                const v2 = { x: vertices[face[i+1]*3], y: vertices[face[i+1]*3+1], z: vertices[face[i+1]*3+2] };
-                
-                const t = RayUtils.intersectTriangle(ray, v0, v1, v2);
-                if (t !== null && t < bestT) {
-                    bestT = t;
-                    const hitPos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+        const traverse = (node: BVHNode) => {
+            // 1. Check AABB overlap (Fast rejection)
+            if (RayUtils.intersectAABB(ray, node.aabb) === null) return;
+
+            // 2. Leaf Node: Check Triangles
+            if (node.faceIndices) {
+                for (const fIdx of node.faceIndices) {
+                    const face = mesh.faces[fIdx];
                     
-                    // Determine Closest Element
-                    let closestV = -1;
-                    let minDistV = tolerance;
-                    face.forEach(vIdx => {
-                        const vp = { x: vertices[vIdx*3], y: vertices[vIdx*3+1], z: vertices[vIdx*3+2] };
-                        const d = Vec3Utils.distance(hitPos, vp);
-                        if (d < minDistV) { minDistV = d; closestV = vIdx; }
-                    });
+                    // Simple Fan Triangulation for intersection
+                    for (let i = 1; i < face.length - 1; i++) {
+                        const v0Idx = face[0];
+                        const v1Idx = face[i];
+                        const v2Idx = face[i+1];
 
-                    let closestEdge: [number, number] = [face[0], face[1]];
-                    let minDistE = tolerance;
-                    for(let k=0; k<face.length; k++) {
-                        const vA = face[k]; const vB = face[(k+1)%face.length];
-                        const pA = { x: vertices[vA*3], y: vertices[vA*3+1], z: vertices[vA*3+2] };
-                        const pB = { x: vertices[vB*3], y: vertices[vB*3+1], z: vertices[vB*3+2] };
-                        const d = RayUtils.distRaySegment(ray, pA, pB);
-                        if (d < minDistE) { minDistE = d; closestEdge = [vA, vB]; }
+                        const v0 = { x: vertices[v0Idx*3], y: vertices[v0Idx*3+1], z: vertices[v0Idx*3+2] };
+                        const v1 = { x: vertices[v1Idx*3], y: vertices[v1Idx*3+1], z: vertices[v1Idx*3+2] };
+                        const v2 = { x: vertices[v2Idx*3], y: vertices[v2Idx*3+1], z: vertices[v2Idx*3+2] };
+
+                        const t = RayUtils.intersectTriangle(ray, v0, v1, v2);
+                        
+                        if (t !== null && t < minT) {
+                            minT = t;
+                            const hitPos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                            
+                            // Find closest component on this face
+                            let closestV = -1;
+                            let minDistV = Infinity; // Find absolute closest first
+                            
+                            face.forEach(vIdx => {
+                                const vp = { x: vertices[vIdx*3], y: vertices[vIdx*3+1], z: vertices[vIdx*3+2] };
+                                const d = Vec3Utils.distanceSquared(hitPos, vp);
+                                if (d < minDistV) { minDistV = d; closestV = vIdx; }
+                            });
+
+                            // Determine Edge
+                            let closestEdge: [number, number] = [face[0], face[1]];
+                            let minDistE = Infinity;
+                            for(let k=0; k<face.length; k++) {
+                                const vA = face[k]; const vB = face[(k+1)%face.length];
+                                const pA = { x: vertices[vA*3], y: vertices[vA*3+1], z: vertices[vA*3+2] };
+                                const pB = { x: vertices[vB*3], y: vertices[vB*3+1], z: vertices[vB*3+2] };
+                                const d = RayUtils.distRaySegment(ray, pA, pB);
+                                if (d < minDistE) { minDistE = d; closestEdge = [vA, vB]; }
+                            }
+                            
+                            bestResult = { t, faceId: fIdx, vertexId: closestV, edgeId: closestEdge, worldPos: hitPos };
+                        }
                     }
-
-                    result = { t, faceId: fIdx, vertexId: closestV, edgeId: closestEdge, worldPos: hitPos };
                 }
+                return;
             }
-        });
 
-        return result;
+            // 3. Branch Node: Recurse
+            // Optimization: Sort children by distance to ray origin? 
+            // For now, simple recursion is fine for O(logN)
+            if (node.left) traverse(node.left);
+            if (node.right) traverse(node.right);
+        };
+
+        traverse(root);
+        return bestResult;
+    },
+
+    /**
+     * Efficiently find the closest vertex using the BVH raycast result.
+     * MUCH faster than iterating all vertices.
+     */
+    findNearestVertexOnRay: (mesh: LogicalMesh, vertices: Float32Array, ray: Ray, threshold: number): number | null => {
+        // reuse the raycast logic to get the closest face first
+        const hit = MeshTopologyUtils.raycastMesh(mesh, vertices, ray);
+        
+        if (hit) {
+            // Check if the closest vertex on that face is within threshold
+            const vIdx = hit.vertexId;
+            const px = vertices[vIdx*3], py = vertices[vIdx*3+1], pz = vertices[vIdx*3+2];
+            
+            // Project vertex to ray to get true distance to ray line
+            const vPos = {x: px, y: py, z: pz};
+            const rayToV = Vec3Utils.subtract(vPos, ray.origin, {x:0,y:0,z:0});
+            const t = Vec3Utils.dot(rayToV, ray.direction);
+            const closestPointOnRay = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+            const dist = Vec3Utils.distance(vPos, closestPointOnRay);
+
+            // Note: Threshold here is in World Units.
+            // Screen space conversion should happen in Engine before calling this or we use a generous world tolerance.
+            if (dist < threshold) return vIdx;
+        }
+        return null;
+    },
+
+    /**
+     * Brush Selection: Finds all vertices within a 3D sphere using the BVH.
+     */
+    getVerticesInWorldSphere: (mesh: LogicalMesh, vertices: Float32Array, center: Vector3, radius: number): number[] => {
+        if (!mesh.bvh) mesh.bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
+        const root = mesh.bvh as BVHNode;
+        const results = new Set<number>();
+        const radiusSq = radius * radius;
+
+        // Sphere AABB for fast rejection
+        const sphereBox = AABBUtils.create();
+        sphereBox.min = { x: center.x - radius, y: center.y - radius, z: center.z - radius };
+        sphereBox.max = { x: center.x + radius, y: center.y + radius, z: center.z + radius };
+
+        const traverse = (node: BVHNode) => {
+            if (!AABBUtils.intersects(node.aabb, sphereBox)) return;
+
+            if (node.faceIndices) {
+                for (const fIdx of node.faceIndices) {
+                    const face = mesh.faces[fIdx];
+                    for (const vIdx of face) {
+                        if (results.has(vIdx)) continue;
+                        const vx = vertices[vIdx*3], vy = vertices[vIdx*3+1], vz = vertices[vIdx*3+2];
+                        const distSq = (vx-center.x)**2 + (vy-center.y)**2 + (vz-center.z)**2;
+                        if (distSq <= radiusSq) {
+                            results.add(vIdx);
+                        }
+                    }
+                }
+                return;
+            }
+
+            if (node.left) traverse(node.left);
+            if (node.right) traverse(node.right);
+        };
+
+        traverse(root);
+        return Array.from(results);
     },
 
     // --- SELECTION ALGORITHMS ---

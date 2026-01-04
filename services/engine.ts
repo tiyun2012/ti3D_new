@@ -116,6 +116,33 @@ export class Engine {
         return this.renderer.meshSystem;
     }
 
+    // --- Core API ---
+
+    subscribe(cb: () => void) {
+        this.listeners.push(cb);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== cb);
+        };
+    }
+
+    notifyUI() {
+        this.listeners.forEach(cb => cb());
+    }
+
+    pushUndoState() {
+        this.historySystem.pushState(this.ecs);
+    }
+
+    registerAssetWithGPU(asset: Asset) {
+        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
+            const intId = assetManager.getMeshID(asset.id);
+            if (intId > 0) {
+                // Cast to StaticMeshAsset to access geometry
+                this.meshSystem.registerMesh(intId, (asset as StaticMeshAsset).geometry);
+            }
+        }
+    }
+
     initGL(canvas: HTMLCanvasElement) {
         this.renderer.init(canvas);
         this.renderer.initGizmo();
@@ -215,6 +242,72 @@ export class Engine {
             this.pushUndoState();
         }
         return id;
+    }
+
+    deleteEntity(id: string, sceneGraph: SceneGraph) {
+        this.pushUndoState();
+        this.ecs.deleteEntity(id, sceneGraph);
+        this.notifyUI();
+    }
+
+    duplicateEntity(id: string) {
+        const idx = this.ecs.idToIndex.get(id);
+        if (idx === undefined) return;
+        
+        this.pushUndoState();
+        const newId = this.ecs.createEntity(this.ecs.store.names[idx] + " (Copy)");
+        const newIdx = this.ecs.idToIndex.get(newId)!;
+        
+        // Copy components (shallow copy of stores for now)
+        const store = this.ecs.store;
+        store.componentMask[newIdx] = store.componentMask[idx];
+        
+        // Transform
+        store.posX[newIdx] = store.posX[idx]; store.posY[newIdx] = store.posY[idx]; store.posZ[newIdx] = store.posZ[idx];
+        store.rotX[newIdx] = store.rotX[idx]; store.rotY[newIdx] = store.rotY[idx]; store.rotZ[newIdx] = store.rotZ[idx];
+        store.scaleX[newIdx] = store.scaleX[idx]; store.scaleY[newIdx] = store.scaleY[idx]; store.scaleZ[newIdx] = store.scaleZ[idx];
+        
+        // Mesh
+        store.meshType[newIdx] = store.meshType[idx];
+        store.materialIndex[newIdx] = store.materialIndex[idx];
+        
+        this.sceneGraph.registerEntity(newId);
+        this.notifyUI();
+        consoleService.info(`Duplicated entity: ${id} -> ${newId}`);
+    }
+
+    saveScene(): string {
+        return this.ecs.serialize();
+    }
+
+    loadScene(json: string) {
+        this.ecs.deserialize(json, this.sceneGraph);
+        this.notifyUI();
+    }
+
+    getPostProcessConfig() {
+        return this.renderer.ppConfig;
+    }
+
+    setPostProcessConfig(config: PostProcessConfig) {
+        this.renderer.ppConfig = config;
+        this.renderer.recompilePostProcess();
+        this.notifyUI();
+    }
+
+    setRenderMode(mode: number) {
+        this.renderer.renderMode = mode;
+        this.notifyUI();
+    }
+
+    toggleGrid() {
+        this.renderer.showGrid = !this.renderer.showGrid;
+        this.notifyUI();
+    }
+
+    syncTransforms() {
+        this.sceneGraph.update();
+        this.notifyUI();
     }
 
     private createDefaultScene() {
@@ -900,190 +993,6 @@ export class Engine {
         this.recalculateSoftSelection(); 
     }
 
-    highlightVertexAt(mx: number, my: number, w: number, h: number) {
-        if (this.meshComponentMode !== 'VERTEX' || this.selectedIndices.size === 0 || !this.currentViewProj) {
-            this.hoveredVertex = null;
-            return;
-        }
-
-        const idx = Array.from(this.selectedIndices)[0];
-        const entityId = this.ecs.store.ids[idx];
-        
-        const meshIntId = this.ecs.store.meshType[idx];
-        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-        if (!assetUuid) return;
-        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
-        if (!asset) return;
-
-        const worldMat = this.sceneGraph.getWorldMatrix(entityId);
-        if (!worldMat) return;
-
-        const mvp = Mat4Utils.create();
-        Mat4Utils.multiply(this.currentViewProj, worldMat, mvp);
-
-        const verts = asset.geometry.vertices;
-        let minDistSq = 20 * 20; 
-        let closest = -1;
-
-        for (let i = 0; i < verts.length / 3; i++) {
-            const x = verts[i*3], y = verts[i*3+1], z = verts[i*3+2];
-            const cx = mvp[0]*x + mvp[4]*y + mvp[8]*z + mvp[12];
-            const cy = mvp[1]*x + mvp[5]*y + mvp[9]*z + mvp[13];
-            const cw = mvp[3]*x + mvp[7]*y + mvp[11]*z + mvp[15];
-            
-            if (cw <= 0) continue; 
-            const invW = 1.0 / cw;
-            const sx = (cx * invW + 1) * 0.5 * w;
-            const sy = (1 - cy * invW) * 0.5 * h; 
-            
-            const dx = sx - mx;
-            const dy = sy - my;
-            const dSq = dx*dx + dy*dy;
-            
-            if (dSq < minDistSq) {
-                minDistSq = dSq;
-                closest = i;
-            }
-        }
-
-        if (closest !== -1) {
-            this.hoveredVertex = { entityId, index: closest };
-        } else {
-            this.hoveredVertex = null;
-        }
-    }
-
-    deleteEntity(id: string, sceneGraph: SceneGraph) { 
-        const idx = this.ecs.idToIndex.get(id);
-        const name = idx !== undefined ? this.ecs.store.names[idx] : 'Unknown Object';
-        this.pushUndoState(); 
-        this.ecs.deleteEntity(id, sceneGraph); 
-        this.notifyUI();
-        consoleService.info(`Deleted object: ${name}`);
-    }
-
-    duplicateEntity(id: string) {
-        const idx = this.ecs.idToIndex.get(id);
-        if (idx === undefined) return;
-        
-        const name = this.ecs.store.names[idx];
-        const newId = this.ecs.createEntity(name + ' (Copy)');
-        const newIdx = this.ecs.idToIndex.get(newId)!;
-        
-        const store = this.ecs.store;
-        
-        store.posX[newIdx] = store.posX[idx]; store.posY[newIdx] = store.posY[idx]; store.posZ[newIdx] = store.posZ[idx];
-        store.rotX[newIdx] = store.rotX[idx]; store.rotY[newIdx] = store.rotY[idx]; store.rotZ[newIdx] = store.rotZ[idx];
-        store.scaleX[newIdx] = store.scaleX[idx]; store.scaleY[newIdx] = store.scaleY[idx]; store.scaleZ[newIdx] = store.scaleZ[idx];
-        store.rotationOrder[newIdx] = store.rotationOrder[idx];
-        
-        store.componentMask[newIdx] = store.componentMask[idx];
-        store.meshType[newIdx] = store.meshType[idx]; store.materialIndex[newIdx] = store.materialIndex[idx];
-        store.textureIndex[newIdx] = store.textureIndex[idx]; store.rigIndex[newIdx] = store.rigIndex[idx];
-        store.effectIndex[newIdx] = store.effectIndex[idx];
-        store.animationIndex[newIdx] = store.animationIndex[idx];
-        
-        store.colorR[newIdx] = store.colorR[idx]; store.colorG[newIdx] = store.colorG[idx]; store.colorB[newIdx] = store.colorB[idx];
-        store.lightType[newIdx] = store.lightType[idx]; store.lightIntensity[newIdx] = store.lightIntensity[idx];
-        
-        this.sceneGraph.registerEntity(newId);
-        this.notifyUI();
-        consoleService.success(`Duplicated: ${name}`);
-    }
-
-    subscribe(cb: () => void) {
-        this.listeners.push(cb);
-        return () => {
-            this.listeners = this.listeners.filter(l => l !== cb);
-        };
-    }
-
-    notifyUI() {
-        this.listeners.forEach(cb => cb());
-    }
-
-    pushUndoState() {
-        this.historySystem.pushState(this.ecs);
-        this.notifyUI();
-    }
-
-    registerAssetWithGPU(asset: Asset) {
-        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
-            const intId = assetManager.getMeshID(asset.id);
-            if (intId > 0 && (asset as StaticMeshAsset).geometry) {
-                this.meshSystem.registerMesh(intId, (asset as StaticMeshAsset).geometry);
-                
-                // [FIX] Restore soft selection weights if they exist for this mesh
-                // This prevents the heatmap from disappearing when geometry updates (e.g. vertex drag commits)
-                if (this.softSelectionWeights.has(intId)) {
-                    const weights = this.softSelectionWeights.get(intId);
-                    const vertexCount = (asset as StaticMeshAsset).geometry.vertices.length / 3;
-                    
-                    // Safety Check: Only restore if topology size matches
-                    if (weights && weights.length === vertexCount) {
-                        this.meshSystem.updateSoftSelectionBuffer(intId, weights);
-                    } else {
-                        // Topology changed significantly, discard old weights to prevent corruption
-                        this.softSelectionWeights.delete(intId);
-                    }
-                }
-
-                // Force a render tick to update GPU buffers immediately
-                this.tick(0);
-            }
-        }
-    }
-
-    setRenderMode(mode: number) {
-        this.renderMode = mode;
-        this.notifyUI();
-    }
-
-    getPostProcessConfig() {
-        return this.renderer.ppConfig;
-    }
-
-    setPostProcessConfig(config: PostProcessConfig) {
-        this.renderer.ppConfig = config;
-        this.notifyUI();
-    }
-
-    toggleGrid() {
-        this.renderer.showGrid = !this.renderer.showGrid;
-        this.notifyUI();
-    }
-
-    // --- Mesh Actions Stubs ---
-    extrudeFaces() { consoleService.info("Extrude Face (Not Implemented)"); }
-    bevelEdges() { consoleService.info("Bevel Edge (Not Implemented)"); }
-    weldVertices() { consoleService.info("Weld Vertices (Not Implemented)"); }
-    connectComponents() { consoleService.info("Connect (Not Implemented)"); }
-    deleteSelectedFaces() { consoleService.info("Delete Face (Not Implemented)"); }
-
-    executeAssetGraph(entityId: string, assetId: string) {
-        const asset = assetManager.getAsset(assetId);
-        if (!asset || (asset.type !== 'SCRIPT' && asset.type !== 'RIG')) return;
-        // Placeholder for graph execution
-    }
-
-    syncTransforms() {
-        this.sceneGraph.update();
-    }
-
-    // [ADD THESE METHODS]
-    
-    saveScene(): string {
-        return this.ecs.serialize();
-    }
-
-    loadScene(json: string) {
-        this.stop();
-        this.ecs.deserialize(json, this.sceneGraph);
-        this.recompileAllMaterials();
-        this.notifyUI();
-        consoleService.success("Scene Loaded");
-    }
-
     selectEntityAt(mx: number, my: number, width: number, height: number): string | null {
         if (!this.currentViewProj) return null;
         
@@ -1111,7 +1020,6 @@ export class Engine {
             let t: number | null = null;
 
             if (hasMesh) {
-                // Precise Mesh Picking using AABB
                 const meshIntId = this.ecs.store.meshType[i];
                 const uuid = assetManager.meshIntToUuid.get(meshIntId);
                 const asset = uuid ? assetManager.getAsset(uuid) as StaticMeshAsset : null;
@@ -1124,39 +1032,31 @@ export class Engine {
                         Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
                         Vec3Utils.normalize(localRay.direction, localRay.direction);
                         
+                        // 1. Fast AABB Check
                         const aabbT = RayUtils.intersectAABB(localRay, asset.geometry.aabb);
+                        
                         if (aabbT !== null) {
-                            // Hit AABB, now try precise geometry if desired, or accept approximation
-                            // For selection, usually AABB is 'good enough' for complex meshes, but precise is better.
-                            // Let's do precise if topology exists.
+                            // 2. Precise BVH Triangle Check
                             if (asset.topology) {
-                                // Optimized BVH Raycast
+                                // Now extremely fast O(logN)
                                 const res = MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay);
                                 if (res) {
-                                    // Transform hit distance back to world scale approximation
-                                    // Just use distance from camera to world hit pos
+                                    // Transform hit distance back to world
                                     const worldHit = Vec3Utils.transformMat4(res.worldPos, worldMat, {x:0,y:0,z:0});
                                     t = Vec3Utils.distance(ray.origin, worldHit);
                                 }
+                                // If topology exists but raycastMesh returns null, we intentionally leave t as null (Precision enforced)
                             } else {
-                                // Fallback to AABB hit distance (scaled roughly)
+                                // Fallback for meshes without topology (legacy/simple)
                                 const hitLocal = Vec3Utils.add(localRay.origin, Vec3Utils.scale(localRay.direction, aabbT, {x:0,y:0,z:0}), {x:0,y:0,z:0});
                                 const worldHit = Vec3Utils.transformMat4(hitLocal, worldMat, {x:0,y:0,z:0});
                                 t = Vec3Utils.distance(ray.origin, worldHit);
                             }
                         }
                     }
-                } else {
-                    // Fallback to Sphere
-                    const pos = { x: worldMat[12], y: worldMat[13], z: worldMat[14] };
-                    const sx = this.ecs.store.scaleX[i];
-                    const sy = this.ecs.store.scaleY[i];
-                    const sz = this.ecs.store.scaleZ[i];
-                    const radius = Math.max(sx, Math.max(sy, sz)) * 0.75; 
-                    t = RayUtils.intersectSphere(ray, pos, Math.max(0.5, radius));
                 }
             } else {
-                // Non-Mesh Entities (Lights, etc) -> Sphere Pick
+                // Sphere pick for non-mesh entities
                 const pos = { x: worldMat[12], y: worldMat[13], z: worldMat[14] };
                 t = RayUtils.intersectSphere(ray, pos, 0.5);
             }
@@ -1172,30 +1072,88 @@ export class Engine {
     selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
         if (!this.currentViewProj) return [];
         const ids: string[] = [];
-        const left = x, right = x + w, top = y, bottom = y + h;
+        
+        // Marquee bounds
+        const selLeft = x;
+        const selRight = x + w;
+        const selTop = y;
+        const selBottom = y + h;
 
         for (let i = 0; i < this.ecs.count; i++) {
             if (!this.ecs.store.isActive[i]) continue;
             
             const id = this.ecs.store.ids[i];
-            const wmOffset = i * 16;
-            const pos = { 
-                x: this.ecs.store.worldMatrix[wmOffset + 12], 
-                y: this.ecs.store.worldMatrix[wmOffset + 13], 
-                z: this.ecs.store.worldMatrix[wmOffset + 14] 
-            };
-
-            const clip = Vec3Utils.transformMat4(pos, this.currentViewProj, {x:0, y:0, z:0});
+            const mask = this.ecs.store.componentMask[i];
+            const hasMesh = !!(mask & COMPONENT_MASKS.MESH);
             
+            const wmOffset = i * 16;
+            const worldMatrix = this.ecs.store.worldMatrix.subarray(wmOffset, wmOffset + 16);
+
+            // We will project points to screen space to form a 2D bounding box
+            let screenMinX = Infinity, screenMinY = Infinity;
+            let screenMaxX = -Infinity, screenMaxY = -Infinity;
+            let pointsToCheck: {x:number, y:number, z:number}[] = [];
+
+            if (hasMesh) {
+                // 1. Get Mesh AABB corners
+                const meshIntId = this.ecs.store.meshType[i];
+                const uuid = assetManager.meshIntToUuid.get(meshIntId);
+                const asset = uuid ? assetManager.getAsset(uuid) as StaticMeshAsset : null;
+                
+                if (asset && asset.geometry.aabb) {
+                    const { min, max } = asset.geometry.aabb;
+                    // Local Space Corners
+                    const localCorners = [
+                        {x: min.x, y: min.y, z: min.z}, {x: max.x, y: min.y, z: min.z},
+                        {x: min.x, y: max.y, z: min.z}, {x: max.x, y: max.y, z: min.z},
+                        {x: min.x, y: min.y, z: max.z}, {x: max.x, y: min.y, z: max.z},
+                        {x: min.x, y: max.y, z: max.z}, {x: max.x, y: max.y, z: max.z}
+                    ];
+                    // Transform to World Space
+                    pointsToCheck = localCorners.map(p => Vec3Utils.transformMat4(p, worldMatrix, {x:0,y:0,z:0}));
+                }
+            }
+
+            // Fallback: If no mesh or AABB, just check the center position
+            if (pointsToCheck.length === 0) {
+                pointsToCheck.push({ 
+                    x: worldMatrix[12], 
+                    y: worldMatrix[13], 
+                    z: worldMatrix[14] 
+                });
+            }
+
+            // 2. Project World Points to Screen Space
+            let visiblePoints = 0;
             const m = this.currentViewProj;
-            const wVal = m[3]*pos.x + m[7]*pos.y + m[11]*pos.z + m[15];
-            if (wVal <= 0) continue;
 
-            const ndcX = clip.x; const ndcY = clip.y;
-            const sx = (ndcX * 0.5 + 0.5) * this.currentWidth;
-            const sy = (1.0 - (ndcY * 0.5 + 0.5)) * this.currentHeight;
+            for (const p of pointsToCheck) {
+                // Check if point is in front of camera (W > 0)
+                const wVal = m[3]*p.x + m[7]*p.y + m[11]*p.z + m[15];
+                if (wVal <= 0.001) continue; // Skip points behind camera
 
-            if (sx >= left && sx <= right && sy >= top && sy <= bottom) {
+                const clip = Vec3Utils.transformMat4(p, m, {x:0, y:0, z:0});
+                
+                // Convert NDC to Screen Coords
+                // Note: transformMat4 does the perspective divide, so clip.x/y are -1 to 1
+                const sx = (clip.x * 0.5 + 0.5) * this.currentWidth;
+                const sy = (1.0 - (clip.y * 0.5 + 0.5)) * this.currentHeight; // Invert Y for screen space
+
+                screenMinX = Math.min(screenMinX, sx);
+                screenMinY = Math.min(screenMinY, sy);
+                screenMaxX = Math.max(screenMaxX, sx);
+                screenMaxY = Math.max(screenMaxY, sy);
+                visiblePoints++;
+            }
+
+            // If entire object is behind camera, skip
+            if (visiblePoints === 0) continue;
+
+            // 3. Check for Overlap (AABB vs Rect Intersection)
+            // If the 2D projected box overlaps the marquee box at all, select it.
+            const overlaps = !(screenMaxX < selLeft || screenMinX > selRight || screenMaxY < selTop || screenMinY > selBottom);
+
+            if (overlaps) {
                 ids.push(id);
             }
         }
@@ -1240,6 +1198,100 @@ export class Engine {
         }
         return null;
     }
+
+    // Optimized Vertex Highlighting (No linear scan)
+    highlightVertexAt(mx: number, my: number, w: number, h: number) {
+        if (this.meshComponentMode !== 'VERTEX' || this.selectedIndices.size === 0 || !this.currentViewProj) {
+            this.hoveredVertex = null;
+            return;
+        }
+
+        const idx = Array.from(this.selectedIndices)[0];
+        const entityId = this.ecs.store.ids[idx];
+        const meshIntId = this.ecs.store.meshType[idx];
+        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
+        
+        if (!asset || !asset.topology) return;
+
+        // Use pickMeshComponent which uses the BVH
+        const pick = this.pickMeshComponent(entityId, mx, my, w, h);
+        
+        if (pick) {
+            // Check distance to closest vertex on the hit face
+            // We use a generous screen-space feel by checking 3D distance to the precise hit point
+            const vPos = {
+                x: asset.geometry.vertices[pick.vertexId*3],
+                y: asset.geometry.vertices[pick.vertexId*3+1],
+                z: asset.geometry.vertices[pick.vertexId*3+2]
+            };
+            
+            // Check world distance between precise ray hit and the vertex
+            const dist = Vec3Utils.distance(pick.worldPos, vPos); // Note: worldPos here is Local Space from pickMeshComponent
+            
+            // Simple threshold in local units (approx 0.1 units)
+            // For better UX, you might want to project to screen space, but this is much faster
+            if (dist < 0.2) { 
+                this.hoveredVertex = { entityId, index: pick.vertexId };
+                return;
+            }
+        }
+        
+        this.hoveredVertex = null;
+    }
+
+    // New: Brush Selection Logic
+    // Call this when dragging mouse with a "Paint" tool active
+    selectVerticesInBrush(mx: number, my: number, width: number, height: number, add: boolean = true) {
+        if (this.selectedIndices.size === 0 || !this.currentViewProj) return;
+
+        const idx = Array.from(this.selectedIndices)[0];
+        const entityId = this.ecs.store.ids[idx];
+        const meshIntId = this.ecs.store.meshType[idx];
+        const asset = assetManager.getAsset(assetManager.meshIntToUuid.get(meshIntId)!) as StaticMeshAsset;
+
+        if (!asset || !asset.topology) return;
+
+        const worldMat = this.sceneGraph.getWorldMatrix(entityId);
+        if (!worldMat) return;
+
+        // 1. Raycast to find brush center on mesh surface
+        const pick = this.pickMeshComponent(entityId, mx, my, width, height);
+        if (!pick) return;
+
+        // 2. Find all vertices in radius (using the new BVH helper)
+        // Transform radius to local space (approximate)
+        const scale = Math.max(this.ecs.store.scaleX[idx], this.ecs.store.scaleY[idx]);
+        const localRadius = (this.softSelectionRadius * 0.5) / scale; // Use half soft-sel radius as brush size
+
+        const vertices = MeshTopologyUtils.getVerticesInWorldSphere(
+            asset.topology, 
+            asset.geometry.vertices, 
+            pick.worldPos, // pickMeshComponent returns local pos effectively
+            localRadius
+        );
+
+        // 3. Update Selection
+        if (add) {
+            vertices.forEach(v => this.subSelection.vertexIds.add(v));
+        } else {
+            vertices.forEach(v => this.subSelection.vertexIds.delete(v));
+        }
+        
+        this.recalculateSoftSelection();
+        this.notifyUI();
+    }
+
+    executeAssetGraph(entityId: string, assetId: string) {
+        // Placeholder for graph execution
+    }
+
+    // Mesh Ops
+    extrudeFaces() { consoleService.warn('Extrude Faces: Not implemented'); }
+    bevelEdges() { consoleService.warn('Bevel Edges: Not implemented'); }
+    weldVertices() { consoleService.warn('Weld Vertices: Not implemented'); }
+    connectComponents() { consoleService.warn('Connect Components: Not implemented'); }
+    deleteSelectedFaces() { consoleService.warn('Delete Selected Faces: Not implemented'); }
 }
 
 export const engineInstance = new Engine();
