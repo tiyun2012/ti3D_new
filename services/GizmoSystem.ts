@@ -53,6 +53,14 @@ export class GizmoSystem {
         const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
         
         if (isComponentMode) {
+            // Check if we actually have any components selected
+            const sub = engineInstance.subSelection;
+            if (sub.vertexIds.size === 0 && sub.edgeIds.size === 0 && sub.faceIds.size === 0) {
+                this.hoverAxis = null;
+                this.activeAxis = null;
+                return;
+            }
+
             // Vertex/Edge/Face Mode: Position at centroid of selected components
             const idx = Array.from(selected)[0];
             entityId = engineInstance.ecs.store.ids[idx];
@@ -115,6 +123,10 @@ export class GizmoSystem {
         const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
 
         if (isComponentMode) {
+            // Check if we actually have any components selected
+            const sub = engineInstance.subSelection;
+            if (sub.vertexIds.size === 0 && sub.edgeIds.size === 0 && sub.faceIds.size === 0) return;
+
             const idx = Array.from(selected)[0];
             const entityId = engineInstance.ecs.store.ids[idx];
             pos = this.getSelectedComponentCentroid(entityId);
