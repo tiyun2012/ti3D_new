@@ -22,6 +22,7 @@ import type { MeshRenderSystem } from './systems/MeshRenderSystem';
 import { ParticleSystem } from './systems/ParticleSystem';
 import { AnimationSystem } from './systems/AnimationSystem'; // Added
 import { COMPONENT_MASKS } from './constants';
+import { eventBus } from './EventBus';
 
 export type SoftSelectionMode = 'DYNAMIC' | 'FIXED';
 
@@ -110,6 +111,32 @@ export class Engine {
             ecs: this.ecs,
             scene: this.sceneGraph
         });
+
+        // Initialize Event Listeners
+        this.initEventListeners();
+    }
+
+    private initEventListeners() {
+        eventBus.on('ASSET_CREATED', (payload) => {
+             // If a mesh is created (e.g. imported), we might need to register it with GPU if it's used immediately
+             // Typically assets are registered on use or batch loaded.
+             // For drag-and-drop, the component does registerAssetWithGPU.
+             // Here we can just log or prep.
+             const asset = assetManager.getAsset(payload.id);
+             if (asset && (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH')) {
+                 this.registerAssetWithGPU(asset);
+             }
+        });
+
+        eventBus.on('ASSET_UPDATED', (payload) => {
+            const asset = assetManager.getAsset(payload.id);
+            if (asset && (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH')) {
+                // When mesh data updates (e.g. Skin Weights painted), we must notify system
+                this.notifyMeshChanged(payload.id);
+            } else if (asset && asset.type === 'MATERIAL') {
+                this.compileGraph(asset.data.nodes, asset.data.connections, asset.id);
+            }
+        });
     }
 
     get meshSystem(): MeshRenderSystem {
@@ -156,14 +183,7 @@ export class Engine {
             const asset = assetManager.getAsset(assetId) as StaticMeshAsset;
             if (asset) {
                 this.updateMeshBounds(asset); // Rebuilds AABB and clears BVH
-                // Rebuild topology faces if needed
-                if (!asset.topology || asset.topology.faces.length === 0) {
-                    // Force rebuild topology if missing
-                    const vCount = asset.geometry.vertices.length / 3;
-                    const v2f = new Map<number, number[]>();
-                    // Fallback to simple tri-topology reconstruction if needed
-                    // (Real implementation would depend on the operation performed)
-                }
+                // Force update topology if needed for picking
             }
 
             // 3. Re-upload to GPU
@@ -549,7 +569,8 @@ export class Engine {
         }
 
         if (modified) {
-            this.registerAssetWithGPU(asset);
+            // Trigger update via EventBus to handle side effects
+            eventBus.emit('ASSET_UPDATED', { id: asset.id, type: asset.type });
         }
     }
 
@@ -590,7 +611,7 @@ export class Engine {
                 for(let k=0; k<4; k++) asset.geometry.jointWeights[i*4+k] *= s;
             }
         }
-        this.registerAssetWithGPU(asset);
+        eventBus.emit('ASSET_UPDATED', { id: asset.id, type: asset.type });
         consoleService.success('Flooded Skin Weights');
     }
 
@@ -625,7 +646,7 @@ export class Engine {
                 for(let k=0; k<4; k++) asset.geometry.jointWeights[i*4+k] *= s;
             }
         }
-        this.registerAssetWithGPU(asset);
+        eventBus.emit('ASSET_UPDATED', { id: asset.id, type: asset.type });
         consoleService.info(`Pruned ${pruned} small weights (<${threshold})`);
     }
 

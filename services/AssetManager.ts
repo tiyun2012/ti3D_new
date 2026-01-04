@@ -6,6 +6,7 @@ import { engineInstance } from './engine';
 import { ProceduralGeneration } from './ProceduralGeneration';
 import { MeshTopologyUtils } from './MeshTopologyUtils';
 import * as THREE from 'three';
+import { eventBus } from './EventBus';
 
 export interface RigTemplate {
     name: string;
@@ -99,6 +100,7 @@ class AssetManagerService {
         const asset = this.getAsset(id);
         if (asset && asset.type === 'PHYSICS_MATERIAL') {
             asset.data = { ...asset.data, ...partialData };
+            eventBus.emit('ASSET_UPDATED', { id, type: asset.type });
         }
     }
 
@@ -106,6 +108,7 @@ class AssetManagerService {
         const asset = this.getAsset(id);
         if (asset && !asset.isProtected) {
             asset.name = newName;
+            eventBus.emit('ASSET_UPDATED', { id, type: asset.type });
         }
     }
 
@@ -124,6 +127,7 @@ class AssetManagerService {
             asset.data.nodes = JSON.parse(JSON.stringify(nodes));
             asset.data.connections = JSON.parse(JSON.stringify(connections));
             asset.data.glsl = glsl;
+            eventBus.emit('ASSET_UPDATED', { id, type: asset.type });
         }
     }
 
@@ -132,6 +136,7 @@ class AssetManagerService {
         if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) {
             asset.data.nodes = JSON.parse(JSON.stringify(nodes));
             asset.data.connections = JSON.parse(JSON.stringify(connections));
+            eventBus.emit('ASSET_UPDATED', { id, type: asset.type });
         }
     }
 
@@ -143,6 +148,7 @@ class AssetManagerService {
         copy.name = `${original.name} (Copy)`;
         copy.isProtected = false; 
         this.registerAsset(copy);
+        eventBus.emit('ASSET_CREATED', { id: copy.id, type: copy.type });
         return copy;
     }
 
@@ -177,6 +183,7 @@ class AssetManagerService {
                 this.rigIntToUuid.delete(intId);
             }
         }
+        eventBus.emit('ASSET_DELETED', { id, type: asset.type });
     }
 
     registerAsset(asset: Asset, forcedIntId?: number): number {
@@ -185,32 +192,31 @@ class AssetManagerService {
         
         this.assets.set(asset.id, asset);
         
+        let intId = 0;
+
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             if (this.meshUuidToInt.has(asset.id)) return this.meshUuidToInt.get(asset.id)!;
-            const intId = forcedIntId || this.nextMeshIntId++;
+            intId = forcedIntId || this.nextMeshIntId++;
             this.meshIntToUuid.set(intId, asset.id);
             this.meshUuidToInt.set(asset.id, intId);
-            return intId;
         } else if (asset.type === 'MATERIAL') {
             if (this.matUuidToInt.has(asset.id)) return this.matUuidToInt.get(asset.id)!;
-            const intId = this.nextMatIntId++;
+            intId = this.nextMatIntId++;
             this.matIntToUuid.set(intId, asset.id);
             this.matUuidToInt.set(asset.id, intId);
-            return intId;
         } else if (asset.type === 'PHYSICS_MATERIAL') {
             if (this.physMatUuidToInt.has(asset.id)) return this.physMatUuidToInt.get(asset.id)!;
-            const intId = this.nextPhysMatIntId++;
+            intId = this.nextPhysMatIntId++;
             this.physMatIntToUuid.set(intId, asset.id);
             this.physMatUuidToInt.set(asset.id, intId);
-            return intId;
         } else if (asset.type === 'RIG') {
             if (this.rigUuidToInt.has(asset.id)) return this.rigUuidToInt.get(asset.id)!;
-            const intId = this.nextRigIntId++;
+            intId = this.nextRigIntId++;
             this.rigIntToUuid.set(intId, asset.id);
             this.rigUuidToInt.set(asset.id, intId);
-            return intId;
         }
-        return 0;
+        
+        return intId;
     }
 
     getAsset(id: string) {
@@ -242,6 +248,7 @@ class AssetManagerService {
         const img = new Image();
         img.onload = () => { if (engineInstance?.meshSystem) engineInstance.meshSystem.uploadTexture(asset.layerIndex, img); };
         img.src = asset.source;
+        eventBus.emit('ASSET_CREATED', { id: asset.id, type: 'TEXTURE' });
         return asset;
     }
 
@@ -253,6 +260,7 @@ class AssetManagerService {
             data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)), glsl: '' }
         };
         this.registerAsset(mat);
+        eventBus.emit('ASSET_CREATED', { id: mat.id, type: 'MATERIAL' });
         return mat;
     }
 
@@ -260,6 +268,7 @@ class AssetManagerService {
         const id = crypto.randomUUID();
         const asset: PhysicsMaterialAsset = { id, name, type: 'PHYSICS_MATERIAL', path, data: data || { staticFriction: 0.6, dynamicFriction: 0.6, bounciness: 0.0, density: 1.0 } };
         this.registerAsset(asset);
+        eventBus.emit('ASSET_CREATED', { id: asset.id, type: 'PHYSICS_MATERIAL' });
         return asset;
     }
 
@@ -278,6 +287,7 @@ class AssetManagerService {
         ];
         const asset: ScriptAsset = { id, name, type: 'SCRIPT', path, data: { nodes, connections } };
         this.registerAsset(asset);
+        eventBus.emit('ASSET_CREATED', { id: asset.id, type: 'SCRIPT' });
         return asset;
     }
 
@@ -286,6 +296,7 @@ class AssetManagerService {
         const base = template || RIG_TEMPLATES[0];
         const asset: RigAsset = { id, name, type: 'RIG', path, data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)) } };
         this.registerAsset(asset);
+        eventBus.emit('ASSET_CREATED', { id: asset.id, type: 'RIG' });
         return asset;
     }
 
@@ -381,11 +392,13 @@ class AssetManagerService {
                  animations: animations
              };
              this.registerAsset(skelAsset);
+             eventBus.emit('ASSET_CREATED', { id: skelAsset.id, type: 'SKELETAL_MESH' });
              return skelAsset;
         }
 
         const staticAsset: StaticMeshAsset = { ...assetBase, type: 'MESH' };
         this.registerAsset(staticAsset);
+        eventBus.emit('ASSET_CREATED', { id: staticAsset.id, type: 'MESH' });
         return staticAsset;
     }
 
@@ -491,9 +504,6 @@ class AssetManagerService {
                         const bindPose = new Float32Array(16);
                         b.matrix.toArray(bindPose);
                         
-                        // Apply Import Scale to Translation components of Bind Pose (Local)
-                        // Note: Only if it's a root bone or if scale applies hierarchically?
-                        // Generally applying to translation is enough for T-Pose.
                         if (importScale !== 1.0) {
                             bindPose[12] *= importScale; 
                             bindPose[13] *= importScale; 
@@ -502,29 +512,15 @@ class AssetManagerService {
 
                         const inverseBindPose = new Float32Array(16);
                         
-                        // Use calculated inverses from Three.js Loader if available (Correct/Robust)
                         if (skeleton.boneInverses && skeleton.boneInverses[i]) {
                             skeleton.boneInverses[i].toArray(inverseBindPose);
-                            // Inverse matrices in Three.js scale UP the object if it was scaled down.
-                            // If we scaled vertices down by importScale, the bind matrices (local) are smaller.
-                            // The inverse bind matrices should scale UP.
-                            // However, simply using the loader's inverses works if we applied scale to vertices.
-                            // BUT: Three's loader output might assume the scene graph transform.
-                            // For simplicity, we trust Three's inverse calculation for the relationship between bone and geometry.
-                            // We do NOT manually scale inverseBindPose if we used the pre-calculated one,
-                            // EXCEPT if that inverse assumes unscaled vertices.
-                            // If vertices are scaled by S, inverse should include 1/S translation.
-                            // Let's rely on standard binding.
                             if (importScale !== 1.0) {
                                 inverseBindPose[12] /= importScale;
                                 inverseBindPose[13] /= importScale;
                                 inverseBindPose[14] /= importScale;
                             }
                         } else {
-                            // Fallback: Calculate from World Matrices (Naive)
-                            const parentIndex = b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1;
-                            // ... (This path is rarely hit with FBXLoader)
-                            const inv = new THREE.Matrix4().fromArray(bindPose).invert(); // Incorrect if not T-Pose
+                            const inv = new THREE.Matrix4().fromArray(bindPose).invert(); 
                             inv.toArray(inverseBindPose);
                         }
 
@@ -548,11 +544,9 @@ class AssetManagerService {
                         if (t.name.endsWith('.quaternion')) type = 'rotation'; 
                         if (t.name.endsWith('.scale')) type = 'scale';
                         
-                        // Clean Track Name (remove .bones etc)
                         const trackName = t.name.split('.')[0]; 
                         let values = new Float32Array(t.values);
                         
-                        // Scale Position Tracks
                         if (type === 'position' && importScale !== 1.0) { 
                             for(let k=0; k<values.length; k++) values[k] *= importScale; 
                         }
