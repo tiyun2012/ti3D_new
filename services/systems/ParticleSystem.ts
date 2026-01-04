@@ -309,7 +309,7 @@ export class ParticleSystem {
         }
     }
 
-    render(viewProj: Float32Array, camPos: {x:number, y:number, z:number}, textureArray: WebGLTexture | null, time: number) {
+    render(viewProj: Float32Array, camPos: {x:number, y:number, z:number}, textureArray: WebGLTexture | null, time: number, store: ComponentStorage) {
         if (!this.gl || !this.defaultProgram || !this.vao) return;
         const gl = this.gl;
         
@@ -323,8 +323,6 @@ export class ParticleSystem {
         
         gl.bindVertexArray(this.vao);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
-
-        const store = (window as any).engineInstance.ecs.store;
 
         this.emitters.forEach((emitter, idx) => {
             if (emitter.particles.length === 0) return;

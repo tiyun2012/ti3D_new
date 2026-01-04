@@ -31,6 +31,7 @@ export class ComponentStorage {
     materialIndex = new Int32Array(this.capacity); 
     rigIndex = new Int32Array(this.capacity);      
     effectIndex = new Float32Array(this.capacity); 
+    animationIndex = new Int32Array(this.capacity); // Added
     
     colorR = new Float32Array(this.capacity);
     colorG = new Float32Array(this.capacity);
@@ -175,6 +176,7 @@ export class ComponentStorage {
         this.materialIndex = resizeInt32(this.materialIndex);
         this.rigIndex = resizeInt32(this.rigIndex);
         this.effectIndex = resizeFloat(this.effectIndex);
+        this.animationIndex = resizeInt32(this.animationIndex);
         
         this.colorR = resizeFloat(this.colorR); this.colorG = resizeFloat(this.colorG); this.colorB = resizeFloat(this.colorB);
         this.lightType = resizeUint8(this.lightType);
@@ -226,6 +228,7 @@ export class ComponentStorage {
             materialIndex: new Int32Array(this.materialIndex),
             rigIndex: new Int32Array(this.rigIndex),
             effectIndex: new Float32Array(this.effectIndex),
+            animationIndex: new Int32Array(this.animationIndex),
             colorR: new Float32Array(this.colorR), colorG: new Float32Array(this.colorG), colorB: new Float32Array(this.colorB),
             lightType: new Uint8Array(this.lightType),
             lightIntensity: new Float32Array(this.lightIntensity),
@@ -268,6 +271,7 @@ export class ComponentStorage {
         if(snap.materialIndex) this.materialIndex.set(snap.materialIndex);
         if(snap.rigIndex) this.rigIndex.set(snap.rigIndex);
         if(snap.effectIndex) this.effectIndex.set(snap.effectIndex);
+        if(snap.animationIndex) this.animationIndex.set(snap.animationIndex);
         
         this.colorR.set(snap.colorR); this.colorG.set(snap.colorG); this.colorB.set(snap.colorB);
         if (snap.lightType) this.lightType.set(snap.lightType);

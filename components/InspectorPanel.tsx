@@ -294,9 +294,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
             <div className="p-4 space-y-4">
                 {asset.type === 'PHYSICS_MATERIAL' && (
                     <>
-                        <DraggableNumber label="Static Friction" value={(asset as any).data.staticFriction} onChange={v => { assetManager.updatePhysicsMaterial(asset.id, {staticFriction:v}); setRefresh(r=>r+1); }} step={0.05} />
-                        <DraggableNumber label="Dynamic Friction" value={(asset as any).data.dynamicFriction} onChange={v => { assetManager.updatePhysicsMaterial(asset.id, {dynamicFriction:v}); setRefresh(r=>r+1); }} step={0.05} />
-                        <DraggableNumber label="Bounciness" value={(asset as any).data.bounciness} onChange={v => { assetManager.updatePhysicsMaterial(asset.id, {bounciness:v}); setRefresh(r=>r+1); }} step={0.05} />
+                        <DraggableNumber label="Static Friction" value={Number((asset as any).data.staticFriction)} onChange={v => { assetManager.updatePhysicsMaterial(asset.id, {staticFriction:v}); setRefresh(r=>r+1); }} step={0.05} />
+                        <DraggableNumber label="Dynamic Friction" value={Number((asset as any).data.dynamicFriction)} onChange={v => { assetManager.updatePhysicsMaterial(asset.id, {dynamicFriction:v}); setRefresh(r=>r+1); }} step={0.05} />
+                        <DraggableNumber label="Bounciness" value={Number((asset as any).data.bounciness)} onChange={v => { assetManager.updatePhysicsMaterial(asset.id, {bounciness:v}); setRefresh(r=>r+1); }} step={0.05} />
                     </>
                 )}
             </div>

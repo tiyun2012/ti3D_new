@@ -146,7 +146,12 @@ export const MeshTopologyUtils = {
         let bestT = Infinity;
         let result: MeshPickingResult | null = null;
         
-        const bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
+        // Use cached BVH or build it
+        let bvh = mesh.bvh;
+        if (!bvh) {
+            bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
+            mesh.bvh = bvh;
+        }
 
         mesh.faces.forEach((face, fIdx) => {
             const box = bvh.faceBounds[fIdx];

@@ -9,7 +9,7 @@ import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
 import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff, SkeletalMeshAsset } from '../types';
-import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils } from './math';
+import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils, AABBUtils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '../contexts/EditorContext';
 import { NodeRegistry } from './NodeRegistry';
@@ -21,6 +21,7 @@ import { consoleService } from './Console';
 import type { MeshRenderSystem } from './systems/MeshRenderSystem';
 import { ParticleSystem } from './systems/ParticleSystem';
 import { AnimationSystem } from './systems/AnimationSystem'; // Added
+import { COMPONENT_MASKS } from './constants';
 
 export type SoftSelectionMode = 'DYNAMIC' | 'FIXED';
 
@@ -97,7 +98,13 @@ export class Engine {
         this.debugRenderer = new DebugRenderer();
         this.metrics = { fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
         
-        registerCoreModules();
+        // Expose to window for legacy/debug access
+        (window as any).engineInstance = this;
+
+        // Register Modules first (this creates the Systems)
+        // Pass specific system instances to modules to ensure shared state
+        registerCoreModules(this.physicsSystem, this.particleSystem, this.animationSystem);
+        
         moduleManager.init({
             engine: this,
             ecs: this.ecs,
@@ -113,15 +120,101 @@ export class Engine {
         this.renderer.init(canvas);
         this.renderer.initGizmo();
         this.debugRenderer.init(this.renderer.gl!);
-        this.particleSystem.init(this.renderer.gl!);
+        
+        // 1. Provide GL context to ModuleManager (re-init systems like Particles)
+        if (this.renderer.gl) {
+             moduleManager.init({
+                engine: this,
+                ecs: this.ecs,
+                scene: this.sceneGraph,
+                gl: this.renderer.gl
+            });
+        }
+
+        // 2. Upload all existing mesh assets to GPU (Essential for rendering)
+        assetManager.getAssetsByType('MESH').forEach(asset => this.registerAssetWithGPU(asset));
+        assetManager.getAssetsByType('SKELETAL_MESH').forEach(asset => this.registerAssetWithGPU(asset));
+        
         this.recompileAllMaterials();
         if (this.ecs.count === 0) this.createDefaultScene();
+    }
+
+    setGridConfig(config: GridConfiguration) {
+        this.renderer.showGrid = config.visible;
+        this.renderer.gridOpacity = config.opacity;
+        this.renderer.gridSize = config.size;
+        this.renderer.gridSubdivisions = config.subdivisions;
+        this.renderer.gridFadeDistance = config.fadeDistance;
+        this.renderer.gridExcludePP = config.excludeFromPostProcess;
+        
+        if (config.color) {
+            const hex = config.color;
+            const r = parseInt(hex.slice(1, 3), 16) / 255;
+            const g = parseInt(hex.slice(3, 5), 16) / 255;
+            const b = parseInt(hex.slice(5, 7), 16) / 255;
+            this.renderer.gridColor = [r, g, b];
+        }
+        this.notifyUI();
+    }
+
+    setUiConfig(config: UIConfiguration) {
+        this.uiConfig = config;
+        this.notifyUI();
     }
 
     recompileAllMaterials() {
         assetManager.getAssetsByType('MATERIAL').forEach(asset => {
             if (asset.type === 'MATERIAL') this.compileGraph(asset.data.nodes, asset.data.connections, asset.id);
         });
+    }
+
+    compileGraph(nodes: GraphNode[], connections: GraphConnection[], assetId: string) {
+        const asset = assetManager.getAsset(assetId);
+        if (asset && asset.type === 'MATERIAL') {
+            const shaderData = compileShader(nodes, connections);
+            if (typeof shaderData !== 'string') {
+                const matIntId = assetManager.getMaterialID(assetId);
+                if (matIntId > 0) {
+                    this.meshSystem.updateMaterial(matIntId, shaderData);
+                    this.currentShaderSource = shaderData.fs;
+                }
+            } else {
+                consoleService.error(`Shader Compile Error: ${shaderData}`);
+            }
+        } else if (asset && (asset.type === 'SCRIPT' || asset.type === 'RIG')) {
+             assetManager.saveScript(assetId, nodes, connections);
+        }
+    }
+
+    createEntityFromAsset(assetId: string, pos: {x:number, y:number, z:number}) {
+        const id = this.ecs.createEntity('New Object');
+        const idx = this.ecs.idToIndex.get(id);
+        if (idx !== undefined) {
+            this.ecs.store.setPosition(idx, pos.x, pos.y, pos.z);
+            
+            const asset = assetManager.getAsset(assetId);
+            if (asset) {
+                this.ecs.store.names[idx] = asset.name;
+                if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
+                    this.ecs.addComponent(id, ComponentType.MESH);
+                    this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
+                }
+            } else if (assetId.startsWith('SM_')) {
+                const primName = assetId.replace('SM_', '');
+                const all = assetManager.getAssetsByType('MESH');
+                const found = all.find(a => a.name === `SM_${primName}`);
+                if (found) {
+                    this.ecs.store.names[idx] = primName;
+                    this.ecs.addComponent(id, ComponentType.MESH);
+                    this.ecs.store.meshType[idx] = assetManager.getMeshID(found.id);
+                }
+            }
+            
+            this.sceneGraph.registerEntity(id);
+            this.notifyUI();
+            this.pushUndoState();
+        }
+        return id;
     }
 
     private createDefaultScene() {
@@ -161,6 +254,13 @@ export class Engine {
         this.ecs.store.setPosition(idx, 5, 10, 5);
         this.ecs.store.setRotation(idx, -0.785, 0.785, 0); 
         this.sceneGraph.registerEntity(light);
+
+        // 5. Virtual Pivot (PRESERVED)
+        const pivot = this.ecs.createEntity('Virtual Pivot');
+        this.ecs.addComponent(pivot, ComponentType.VIRTUAL_PIVOT);
+        const pIdx = this.ecs.idToIndex.get(pivot)!;
+        this.ecs.store.setPosition(pIdx, 0, 2, 0);
+        this.sceneGraph.registerEntity(pivot);
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }
@@ -218,6 +318,10 @@ export class Engine {
         const count = verts.length / 3;
         let modified = false;
 
+        // Collect vertices in brush range first
+        const inRange: {idx: number, dist: number, strength: number}[] = [];
+        let sumWeights = 0;
+        
         for (let i = 0; i < count; i++) {
             const vx = verts[i*3], vy = verts[i*3+1], vz = verts[i*3+2];
             const wx = worldMat[0]*vx + worldMat[4]*vy + worldMat[8]*vz + worldMat[12];
@@ -228,44 +332,62 @@ export class Engine {
             
             if (dist <= radius) {
                 const falloff = Math.pow(1.0 - (dist / radius), 2);
-                const effectiveWeight = weight * falloff;
-
-                let slot = -1;
-                let emptySlot = -1;
+                const strength = weight * falloff;
+                inRange.push({idx: i, dist, strength});
                 
-                for(let k=0; k<4; k++) {
-                    if (jointIndices[i*4+k] === boneIndex) slot = k;
-                    if (jointWeights[i*4+k] === 0) emptySlot = k;
+                // For smoothing: calc current total bone weight in area
+                if (mode === 'SMOOTH') {
+                    for(let k=0; k<4; k++) {
+                        if (jointIndices[i*4+k] === boneIndex) sumWeights += jointWeights[i*4+k];
+                    }
                 }
-
-                if (slot === -1 && emptySlot !== -1) {
-                    slot = emptySlot;
-                    jointIndices[i*4+slot] = boneIndex;
-                } else if (slot === -1) {
-                    let minW = 2.0; let minK = 0;
-                    for(let k=0; k<4; k++) { if (jointWeights[i*4+k] < minW) { minW = jointWeights[i*4+k]; minK = k; } }
-                    slot = minK;
-                    jointIndices[i*4+slot] = boneIndex;
-                    jointWeights[i*4+slot] = 0;
-                }
-
-                if (mode === 'ADD') {
-                    jointWeights[i*4+slot] = Math.min(1.0, jointWeights[i*4+slot] + effectiveWeight * 0.1);
-                } else if (mode === 'REPLACE') {
-                    jointWeights[i*4+slot] = MathUtils.lerp(jointWeights[i*4+slot], effectiveWeight, 0.5);
-                } else if (mode === 'REMOVE') {
-                    jointWeights[i*4+slot] = Math.max(0.0, jointWeights[i*4+slot] - effectiveWeight * 0.1);
-                }
-
-                let sum = 0;
-                for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
-                if (sum > 0) {
-                    const scale = 1.0 / sum;
-                    for(let k=0; k<4; k++) jointWeights[i*4+k] *= scale;
-                }
-
-                modified = true;
             }
+        }
+
+        const avgWeight = inRange.length > 0 ? sumWeights / inRange.length : 0;
+
+        for (const {idx: i, strength} of inRange) {
+            let slot = -1;
+            let emptySlot = -1;
+            
+            for(let k=0; k<4; k++) {
+                if (jointIndices[i*4+k] === boneIndex) slot = k;
+                if (jointWeights[i*4+k] === 0) emptySlot = k;
+            }
+
+            if (slot === -1 && emptySlot !== -1) {
+                slot = emptySlot;
+                jointIndices[i*4+slot] = boneIndex;
+            } else if (slot === -1) {
+                let minW = 2.0; let minK = 0;
+                for(let k=0; k<4; k++) { if (jointWeights[i*4+k] < minW) { minW = jointWeights[i*4+k]; minK = k; } }
+                slot = minK;
+                jointIndices[i*4+slot] = boneIndex;
+                jointWeights[i*4+slot] = 0;
+            }
+
+            const currentW = jointWeights[i*4+slot];
+
+            if (mode === 'ADD') {
+                jointWeights[i*4+slot] = Math.min(1.0, currentW + strength * 0.1);
+            } else if (mode === 'REPLACE') {
+                jointWeights[i*4+slot] = MathUtils.lerp(currentW, strength, 0.5);
+            } else if (mode === 'REMOVE') {
+                jointWeights[i*4+slot] = Math.max(0.0, currentW - strength * 0.1);
+            } else if (mode === 'SMOOTH') {
+                // Blend towards average
+                jointWeights[i*4+slot] = MathUtils.lerp(currentW, avgWeight, strength * 0.5);
+            }
+
+            // Normalize weights
+            let sum = 0;
+            for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
+            if (sum > 0) {
+                const scale = 1.0 / sum;
+                for(let k=0; k<4; k++) jointWeights[i*4+k] *= scale;
+            }
+            
+            modified = true;
         }
 
         if (modified) {
@@ -663,13 +785,10 @@ export class Engine {
             const clampedDt = Math.min(dt, this.maxFrameTime);
             if (dt > 0) this.accumulator += clampedDt;
 
-            // Run particles regardless of physics simulation, for editing
-            this.particleSystem.update(clampedDt, this.ecs.store);
-            
-            // Run animation
-            if (this.isPlaying) {
-                this.animationSystem.update(clampedDt, this.timeline.currentTime, this.meshSystem, this.ecs, this.sceneGraph);
-            }
+            // Updated: Use ModuleManager to update all registered systems
+            // This decouples Engine from specific systems (Physics, Particles, etc)
+            // Removes direct updates to particle/animation systems to avoid double-update
+            moduleManager.update(clampedDt);
 
             while (this.accumulator >= this.fixedTimeStep) {
                 this.fixedUpdate(this.fixedTimeStep);
@@ -677,7 +796,6 @@ export class Engine {
             }
 
             this.sceneGraph.update();
-            moduleManager.update(dt);
 
             if (this.currentViewProj && !this.isPlaying) {
                 this.debugRenderer.begin();
@@ -749,9 +867,9 @@ export class Engine {
                 }
             }
 
-            if (this.isPlaying) {
-                this.physicsSystem.update(fixedDt, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
-            }
+            // Note: Physics is managed by ModuleManager.update now.
+            // If strict fixed-step physics is required, we would invoke a specific fixed-update 
+            // method on the module manager here, but for this architecture we use the variable step.
 
             const store = this.ecs.store;
             for(let i=0; i<this.ecs.count; i++) {
@@ -863,188 +981,265 @@ export class Engine {
         store.meshType[newIdx] = store.meshType[idx]; store.materialIndex[newIdx] = store.materialIndex[idx];
         store.textureIndex[newIdx] = store.textureIndex[idx]; store.rigIndex[newIdx] = store.rigIndex[idx];
         store.effectIndex[newIdx] = store.effectIndex[idx];
+        store.animationIndex[newIdx] = store.animationIndex[idx];
+        
         store.colorR[newIdx] = store.colorR[idx]; store.colorG[newIdx] = store.colorG[idx]; store.colorB[newIdx] = store.colorB[idx];
-        
-        store.mass[newIdx] = store.mass[idx]; store.useGravity[newIdx] = store.useGravity[idx];
-        store.physicsMaterialIndex[newIdx] = store.physicsMaterialIndex[idx];
-        
         store.lightType[newIdx] = store.lightType[idx]; store.lightIntensity[newIdx] = store.lightIntensity[idx];
-        store.vpLength[newIdx] = store.vpLength[idx];
         
-        store.psMaxCount[newIdx] = store.psMaxCount[idx]; store.psRate[newIdx] = store.psRate[idx];
-        store.psSpeed[newIdx] = store.psSpeed[idx]; store.psLife[newIdx] = store.psLife[idx];
-        store.psColorR[newIdx] = store.psColorR[idx]; store.psColorG[newIdx] = store.psColorG[idx]; store.psColorB[newIdx] = store.psColorB[idx];
-        store.psSize[newIdx] = store.psSize[idx]; store.psTextureId[newIdx] = store.psTextureId[idx]; store.psShape[newIdx] = store.psShape[idx];
-
         this.sceneGraph.registerEntity(newId);
-        const parent = this.sceneGraph.getParentId(id);
-        if (parent) this.sceneGraph.attach(newId, parent);
-        
-        this.setSelected([newId]);
-        this.pushUndoState();
         this.notifyUI();
         consoleService.success(`Duplicated: ${name}`);
     }
-    
-    deleteAsset(id: string) { assetManager.deleteAsset(id); this.notifyUI(); }
-    notifyUI() { this.listeners.forEach(l => l()); }
-    subscribe(cb: () => void) { this.listeners.push(cb); return () => { this.listeners = this.listeners.filter(l => l !== cb); }; }
+
+    subscribe(cb: () => void) {
+        this.listeners.push(cb);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== cb);
+        };
+    }
+
+    notifyUI() {
+        this.listeners.forEach(cb => cb());
+    }
+
+    pushUndoState() {
+        this.historySystem.pushState(this.ecs);
+        this.notifyUI();
+    }
 
     registerAssetWithGPU(asset: Asset) {
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
-            const internalId = assetManager.getMeshID(asset.id);
-            if (internalId > 0) {
-                this.meshSystem.registerMesh(internalId, asset.geometry);
+            const intId = assetManager.getMeshID(asset.id);
+            if (intId > 0 && (asset as StaticMeshAsset).geometry) {
+                this.meshSystem.registerMesh(intId, (asset as StaticMeshAsset).geometry);
                 
-                if (this.softSelectionWeights.has(internalId)) {
-                    this.meshSystem.updateSoftSelectionBuffer(internalId, this.softSelectionWeights.get(internalId)!);
+                // [FIX] Restore soft selection weights if they exist for this mesh
+                // This prevents the heatmap from disappearing when geometry updates (e.g. vertex drag commits)
+                if (this.softSelectionWeights.has(intId)) {
+                    const weights = this.softSelectionWeights.get(intId);
+                    const vertexCount = (asset as StaticMeshAsset).geometry.vertices.length / 3;
+                    
+                    // Safety Check: Only restore if topology size matches
+                    if (weights && weights.length === vertexCount) {
+                        this.meshSystem.updateSoftSelectionBuffer(intId, weights);
+                    } else {
+                        // Topology changed significantly, discard old weights to prevent corruption
+                        this.softSelectionWeights.delete(intId);
+                    }
                 }
+
+                // Force a render tick to update GPU buffers immediately
+                this.tick(0);
             }
         }
     }
 
-    createEntityFromAsset(assetId: string, position: {x:number, y:number, z:number}): string | null {
-        let asset = assetManager.getAsset(assetId);
-        if (!asset) asset = assetManager.getAllAssets().find(a => a.name === assetId) || undefined;
-        if (!asset) {
-            consoleService.error(`Failed to create entity: Asset ${assetId} not found`);
-            return null;
-        }
-        this.registerAssetWithGPU(asset);
-        const id = this.ecs.createEntity(asset.name);
-        this.sceneGraph.registerEntity(id);
-        const idx = this.ecs.idToIndex.get(id)!;
-        this.ecs.store.setPosition(idx, position.x, position.y, position.z);
-        if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
-            this.ecs.addComponent(id, ComponentType.MESH);
-            this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
-        }
-        this.notifyUI(); this.pushUndoState();
-        consoleService.success(`Placed ${asset.name} in scene`);
-        return id;
+    setRenderMode(mode: number) {
+        this.renderMode = mode;
+        this.notifyUI();
     }
 
-    pushUndoState() { this.historySystem.pushState(this.ecs); }
-    setRenderMode(modeId: number) { this.renderMode = modeId; this.renderer.renderMode = modeId; }
-    toggleGrid() { this.renderer.showGrid = !this.renderer.showGrid; }
-    syncTransforms() { this.sceneGraph.update(); }
+    getPostProcessConfig() {
+        return this.renderer.ppConfig;
+    }
 
-    selectEntityAt(mx: number, my: number, w: number, h: number): string | null {
+    setPostProcessConfig(config: PostProcessConfig) {
+        this.renderer.ppConfig = config;
+        this.notifyUI();
+    }
+
+    toggleGrid() {
+        this.renderer.showGrid = !this.renderer.showGrid;
+        this.notifyUI();
+    }
+
+    // --- Mesh Actions Stubs ---
+    extrudeFaces() { consoleService.info("Extrude Face (Not Implemented)"); }
+    bevelEdges() { consoleService.info("Bevel Edge (Not Implemented)"); }
+    weldVertices() { consoleService.info("Weld Vertices (Not Implemented)"); }
+    connectComponents() { consoleService.info("Connect (Not Implemented)"); }
+    deleteSelectedFaces() { consoleService.info("Delete Face (Not Implemented)"); }
+
+    executeAssetGraph(entityId: string, assetId: string) {
+        const asset = assetManager.getAsset(assetId);
+        if (!asset || (asset.type !== 'SCRIPT' && asset.type !== 'RIG')) return;
+        // Placeholder for graph execution
+    }
+
+    syncTransforms() {
+        this.sceneGraph.update();
+    }
+
+    // [ADD THESE METHODS]
+    
+    saveScene(): string {
+        return this.ecs.serialize();
+    }
+
+    loadScene(json: string) {
+        this.stop();
+        this.ecs.deserialize(json, this.sceneGraph);
+        this.recompileAllMaterials();
+        this.notifyUI();
+        consoleService.success("Scene Loaded");
+    }
+
+    selectEntityAt(mx: number, my: number, width: number, height: number): string | null {
         if (!this.currentViewProj) return null;
-        const invVP = new Float32Array(16); if(!Mat4Utils.invert(this.currentViewProj, invVP)) return null;
-        const ray = RayUtils.create(); RayUtils.fromScreen(mx, my, w, h, invVP, ray);
-        let closestDist = Infinity; let closestId: string | null = null;
-        const store = this.ecs.store;
-        for(let i=0; i<this.ecs.count; i++) {
-            if(!store.isActive[i]) continue;
-            const pos = { x: store.worldMatrix[i*16+12], y: store.worldMatrix[i*16+13], z: store.worldMatrix[i*16+14] };
-            const radius = 0.5 * Math.max(store.scaleX[i], Math.max(store.scaleY[i], store.scaleZ[i])); 
-            const t = RayUtils.intersectSphere(ray, pos, radius);
-            if (t !== null && t < closestDist) { closestDist = t; closestId = store.ids[i]; }
+        
+        const invVP = new Float32Array(16);
+        if (!Mat4Utils.invert(this.currentViewProj, invVP)) return null;
+
+        const ray = RayUtils.create();
+        RayUtils.fromScreen(mx, my, width, height, invVP, ray);
+
+        let closestDist = Infinity;
+        let closestId: string | null = null;
+
+        for (let i = 0; i < this.ecs.count; i++) {
+            if (!this.ecs.store.isActive[i]) continue;
+            
+            const mask = this.ecs.store.componentMask[i];
+            const hasMesh = !!(mask & COMPONENT_MASKS.MESH);
+            
+            if (!hasMesh && !((mask & COMPONENT_MASKS.LIGHT) || (mask & COMPONENT_MASKS.PARTICLE_SYSTEM) || (mask & COMPONENT_MASKS.VIRTUAL_PIVOT))) continue;
+
+            const id = this.ecs.store.ids[i];
+            const wmOffset = i * 16;
+            const worldMat = this.ecs.store.worldMatrix.subarray(wmOffset, wmOffset + 16);
+            
+            let t: number | null = null;
+
+            if (hasMesh) {
+                // Precise Mesh Picking using AABB
+                const meshIntId = this.ecs.store.meshType[i];
+                const uuid = assetManager.meshIntToUuid.get(meshIntId);
+                const asset = uuid ? assetManager.getAsset(uuid) as StaticMeshAsset : null;
+                
+                if (asset && asset.geometry.aabb) {
+                    const invWorld = Mat4Utils.create();
+                    if (Mat4Utils.invert(worldMat, invWorld)) {
+                        const localRay = RayUtils.create();
+                        Vec3Utils.transformMat4(ray.origin, invWorld, localRay.origin);
+                        Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
+                        Vec3Utils.normalize(localRay.direction, localRay.direction);
+                        
+                        const aabbT = RayUtils.intersectAABB(localRay, asset.geometry.aabb);
+                        if (aabbT !== null) {
+                            // Hit AABB, now try precise geometry if desired, or accept approximation
+                            // For selection, usually AABB is 'good enough' for complex meshes, but precise is better.
+                            // Let's do precise if topology exists.
+                            if (asset.topology) {
+                                // Optimized BVH Raycast
+                                const res = MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay);
+                                if (res) {
+                                    // Transform hit distance back to world scale approximation
+                                    // Just use distance from camera to world hit pos
+                                    const worldHit = Vec3Utils.transformMat4(res.worldPos, worldMat, {x:0,y:0,z:0});
+                                    t = Vec3Utils.distance(ray.origin, worldHit);
+                                }
+                            } else {
+                                // Fallback to AABB hit distance (scaled roughly)
+                                const hitLocal = Vec3Utils.add(localRay.origin, Vec3Utils.scale(localRay.direction, aabbT, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                                const worldHit = Vec3Utils.transformMat4(hitLocal, worldMat, {x:0,y:0,z:0});
+                                t = Vec3Utils.distance(ray.origin, worldHit);
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback to Sphere
+                    const pos = { x: worldMat[12], y: worldMat[13], z: worldMat[14] };
+                    const sx = this.ecs.store.scaleX[i];
+                    const sy = this.ecs.store.scaleY[i];
+                    const sz = this.ecs.store.scaleZ[i];
+                    const radius = Math.max(sx, Math.max(sy, sz)) * 0.75; 
+                    t = RayUtils.intersectSphere(ray, pos, Math.max(0.5, radius));
+                }
+            } else {
+                // Non-Mesh Entities (Lights, etc) -> Sphere Pick
+                const pos = { x: worldMat[12], y: worldMat[13], z: worldMat[14] };
+                t = RayUtils.intersectSphere(ray, pos, 0.5);
+            }
+            
+            if (t !== null && t < closestDist) {
+                closestDist = t;
+                closestId = id;
+            }
         }
         return closestId;
     }
 
-    pickMeshComponent(entityId: string, mx: number, my: number, w: number, h: number): MeshPickingResult | null {
+    selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
+        if (!this.currentViewProj) return [];
+        const ids: string[] = [];
+        const left = x, right = x + w, top = y, bottom = y + h;
+
+        for (let i = 0; i < this.ecs.count; i++) {
+            if (!this.ecs.store.isActive[i]) continue;
+            
+            const id = this.ecs.store.ids[i];
+            const wmOffset = i * 16;
+            const pos = { 
+                x: this.ecs.store.worldMatrix[wmOffset + 12], 
+                y: this.ecs.store.worldMatrix[wmOffset + 13], 
+                z: this.ecs.store.worldMatrix[wmOffset + 14] 
+            };
+
+            const clip = Vec3Utils.transformMat4(pos, this.currentViewProj, {x:0, y:0, z:0});
+            
+            const m = this.currentViewProj;
+            const wVal = m[3]*pos.x + m[7]*pos.y + m[11]*pos.z + m[15];
+            if (wVal <= 0) continue;
+
+            const ndcX = clip.x; const ndcY = clip.y;
+            const sx = (ndcX * 0.5 + 0.5) * this.currentWidth;
+            const sy = (1.0 - (ndcY * 0.5 + 0.5)) * this.currentHeight;
+
+            if (sx >= left && sx <= right && sy >= top && sy <= bottom) {
+                ids.push(id);
+            }
+        }
+        return ids;
+    }
+
+    pickMeshComponent(entityId: string, mx: number, my: number, width: number, height: number): MeshPickingResult | null {
         if (!this.currentViewProj) return null;
+        
         const idx = this.ecs.idToIndex.get(entityId);
         if (idx === undefined) return null;
+        
         const meshIntId = this.ecs.store.meshType[idx];
         const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
         if (!assetUuid) return null;
+        
         const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
-        if (!asset || !asset.topology) return null;
-        const invVP = new Float32Array(16); Mat4Utils.invert(this.currentViewProj, invVP);
-        const worldRay = RayUtils.create(); RayUtils.fromScreen(mx, my, w, h, invVP, worldRay);
+        if (!asset || (asset.type !== 'MESH' && asset.type !== 'SKELETAL_MESH') || !asset.topology) return null;
+
         const worldMat = this.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return null;
-        const invWorld = Mat4Utils.create(); Mat4Utils.invert(worldMat, invWorld);
-        const localRay: Ray = { origin: Vec3Utils.transformMat4(worldRay.origin, invWorld, {x:0,y:0,z:0}), direction: Vec3Utils.transformMat4Normal(worldRay.direction, invWorld, {x:0,y:0,z:0}) };
-        Vec3Utils.normalize(localRay.direction, localRay.direction);
-        return MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay, 0.05);
-    }
 
-    selectEntitiesInRect(rx: number, ry: number, rw: number, rh: number): string[] { 
-        if (!this.currentViewProj || rw < 1 || rh < 1) return [];
-        const width = this.currentWidth; const height = this.currentHeight;
-        const selX1 = (rx / width) * 2 - 1; const selY1 = 1 - (ry / height) * 2;
-        const selX2 = ((rx + rw) / width) * 2 - 1; const selY2 = 1 - ((ry + rh) / height) * 2;
-        const selLeft = Math.min(selX1, selX2); const selRight = Math.max(selX1, selX2);
-        const selBottom = Math.min(selY1, selY2); const selTop = Math.max(selY1, selY2);
-        const hitIds: string[] = []; const store = this.ecs.store; const vp = this.currentViewProj;
-        const corners = [ [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[-0.5,0.5,-0.5],[0.5,0.5,-0.5], [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5] ];
-        for (let i = 0; i < this.ecs.count; i++) {
-            if (!store.isActive[i]) continue;
-            const base = i * 16; const wm = store.worldMatrix.subarray(base, base + 16);
-            let screenMinX = Infinity, screenMaxX = -Infinity, screenMinY = Infinity, screenMaxY = -Infinity, anyInFront = false;
-            for (let j = 0; j < 8; j++) {
-                const cx = corners[j][0], cy = corners[j][1], cz = corners[j][2];
-                const wx = wm[0]*cx + wm[4]*cy + wm[8]*cz + wm[12]; const wy = wm[1]*cx + wm[5]*cy + wm[9]*cz + wm[13]; const wz = wm[2]*cx + wm[6]*cy + wm[10]*cz + wm[14];
-                const clipX = vp[0]*wx + vp[4]*wy + vp[8]*wz + vp[12]; const clipY = vp[1]*wx + vp[5]*wy + vp[9]*wz + vp[13]; const clipW = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
-                if (clipW > 0) {
-                    const ndcX = clipX/clipW; const ndcY = clipY/clipW;
-                    screenMinX = Math.min(screenMinX, ndcX); screenMaxX = Math.max(screenMaxX, ndcX);
-                    screenMinY = Math.min(screenMinY, ndcY); screenMaxY = Math.max(screenMaxY, ndcY);
-                    anyInFront = true;
-                }
-            }
-            if (anyInFront && !(screenMaxX < selLeft || screenMinX > selRight || screenMaxY < selBottom || screenMinY > selTop)) hitIds.push(store.ids[i]);
+        const invWorld = Mat4Utils.create();
+        if (!Mat4Utils.invert(worldMat, invWorld)) return null;
+
+        const invVP = new Float32Array(16);
+        Mat4Utils.invert(this.currentViewProj, invVP);
+
+        const rayWorld = RayUtils.create();
+        RayUtils.fromScreen(mx, my, width, height, invVP, rayWorld);
+
+        const rayLocal = RayUtils.create();
+        Vec3Utils.transformMat4(rayWorld.origin, invWorld, rayLocal.origin);
+        Vec3Utils.transformMat4Normal(rayWorld.direction, invWorld, rayLocal.direction);
+        Vec3Utils.normalize(rayLocal.direction, rayLocal.direction);
+
+        const result = MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, rayLocal);
+        
+        if (result) {
+            Vec3Utils.transformMat4(result.worldPos, worldMat, result.worldPos);
+            return result;
         }
-        return hitIds;
+        return null;
     }
-
-    applyMaterialToSelected(assetId: string) { const matID = assetManager.getMaterialID(assetId); this.selectedIndices.forEach(idx => { this.ecs.store.materialIndex[idx] = matID; }); this.notifyUI(); }
-    loadScene(json: string) { this.ecs.deserialize(json, this.sceneGraph); this.notifyUI(); }
-    saveScene() { return this.ecs.serialize(); }
-
-    compileGraph(nodes: GraphNode[], connections: GraphConnection[], assetId?: string) {
-        if (assetId) {
-            const res = compileShader(nodes, connections);
-            if (typeof res !== 'string') { this.currentShaderSource = res.fs; const matID = assetManager.getMaterialID(assetId); this.meshSystem.updateMaterial(matID, res); }
-        }
-    }
-
-    executeAssetGraph(entityId: string, assetId: string) {
-        const asset = assetManager.getAsset(assetId);
-        if(!asset || (asset.type !== 'SCRIPT' && asset.type !== 'RIG')) return;
-        const nodes = asset.data.nodes; const connections = asset.data.connections;
-        const context = { ecs: this.ecs, sceneGraph: this.sceneGraph, entityId: entityId, time: this.timeline.currentTime };
-        const nodeMap = new Map(nodes.map(n => [n.id, n])); const computedValues = new Map<string, any>();
-        const evaluatePin = (nodeId: string, pinId: string): any => {
-            const key = `${nodeId}.${pinId}`; if(computedValues.has(key)) return computedValues.get(key);
-            const conn = connections.find(c => c.toNode === nodeId && c.toPin === pinId);
-            if(conn) { const val = evaluateNodeOutput(conn.fromNode, conn.fromPin); computedValues.set(key, val); return val; }
-            const node = nodeMap.get(nodeId); if(node && node.data && node.data[pinId] !== undefined) return node.data[pinId];
-            return undefined;
-        };
-        const evaluateNodeOutput = (nodeId: string, pinId: string): any => {
-            const node = nodeMap.get(nodeId); if(!node) return null;
-            const def = NodeRegistry[node.type]; if(!def) return null;
-            if(def.execute) { const inputs = def.inputs.map(inp => evaluatePin(nodeId, inp.id)); const result = def.execute(inputs, node.data, context); return (result && typeof result === 'object' && pinId in result) ? result[pinId] : result; }
-            return null;
-        };
-        nodes.filter(n => n.type === 'RigOutput' || n.type === 'SetEntityTransform').forEach(n => {
-            const def = NodeRegistry[n.type]; if(def && def.inputs) def.inputs.forEach(inp => evaluatePin(n.id, inp.id));
-            if(def && def.execute) { const inputs = def.inputs.map(inp => evaluatePin(n.id, inp.id)); def.execute(inputs, n.data, context); }
-        });
-    }
-
-    getPostProcessConfig(): PostProcessConfig { return this.renderer.ppConfig; }
-    setPostProcessConfig(config: PostProcessConfig) { this.renderer.ppConfig = config; }
-    setGridConfig(config: GridConfiguration) {
-        this.renderer.gridOpacity = config.opacity; this.renderer.gridSize = config.size; this.renderer.gridFadeDistance = config.fadeDistance;
-        const hex = config.color.replace('#',''); const r = parseInt(hex.substring(0,2), 16)/255; const g = parseInt(hex.substring(2,4), 16)/255; const b = parseInt(hex.substring(4,6), 16)/255;
-        this.renderer.gridColor = [r, g, b]; this.renderer.gridExcludePP = config.excludeFromPostProcess;
-    }
-    setUiConfig(config: UIConfiguration) { this.uiConfig = config; }
-
-    // --- MESH OPS (STUBS FOR PIE MENU) ---
-    extrudeFaces() { consoleService.info('Extrude Faces (Mock)', 'Modeling'); }
-    bevelEdges() { consoleService.info('Bevel Edges (Mock)', 'Modeling'); }
-    weldVertices() { consoleService.info('Weld Vertices (Mock)', 'Modeling'); }
-    connectComponents() { consoleService.info('Connect Components (Mock)', 'Modeling'); }
-    deleteSelectedFaces() { consoleService.info('Delete Faces (Mock)', 'Modeling'); }
 }
 
 export const engineInstance = new Engine();
-(window as any).engineInstance = engineInstance;

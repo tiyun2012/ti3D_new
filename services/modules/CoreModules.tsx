@@ -1,6 +1,6 @@
 
 import React, { useContext } from 'react';
-import { EngineModule, ComponentType, InspectorProps, TransformSpace, StaticMeshAsset } from '../../types';
+import { EngineModule, ComponentType, InspectorProps, TransformSpace, StaticMeshAsset, SkeletalMeshAsset, IGameSystem } from '../../types';
 import { EditorContext } from '../../contexts/EditorContext';
 import { Select } from '../../components/ui/Select';
 import { ROTATION_ORDERS, LIGHT_TYPES, COMPONENT_MASKS } from '../constants';
@@ -8,6 +8,9 @@ import { assetManager } from '../AssetManager';
 import { moduleManager } from '../ModuleManager';
 import { Vec3Utils } from '../math';
 import { effectRegistry } from '../EffectRegistry'; 
+import { PhysicsSystem } from '../systems/PhysicsSystem';
+import { ParticleSystem } from '../systems/ParticleSystem';
+import { AnimationSystem } from '../systems/AnimationSystem';
 
 // --- SHARED UI CONTROLS ---
 const DraggableNumber: React.FC<{ label: string; value: number; onChange: (val: number) => void; step?: number; color?: string }> = 
@@ -97,6 +100,15 @@ const MeshInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartU
                    <Select icon="GitBranch" value={component.rigId || ""} options={[{ label: 'None', value: "" }, ...rigs.map(r => ({ label: r.name, value: r.id }))]} onChange={(v) => { onStartUpdate(); onUpdate('rigId', v); onCommit(); }} />
                 </div>
              </div>
+             
+             {/* Animation Control */}
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Animation Clip</span>
+                <div className="flex-1">
+                   <DraggableNumber label="#" value={component.animationIndex || 0} onChange={(v) => { onStartUpdate(); onUpdate('animationIndex', Math.floor(v)); onCommit(); }} step={1} />
+                </div>
+             </div>
+
              <div className="flex items-center gap-2">
                 <span className="w-24 text-text-secondary text-[10px]">Post Effect</span>
                 <div className="flex-1">
@@ -169,7 +181,7 @@ export const MeshModule: EngineModule = {
                         let color = isObjectMode ? colObjectSelection : (isVertexMode ? wireframeDim : wireframeDim);
                         
                         if (!isObjectMode && !isVertexMode) {
-                            const edgeKey = [vA, vB].sort().join('-');
+                            const edgeKey = [vA, vB].sort((a,b)=>a-b).join('-');
                             if (engine.subSelection.edgeIds.has(edgeKey)) color = colSel;
                         }
                         engine.debugRenderer.drawLine(pA, pB, color);
@@ -292,10 +304,22 @@ const ParticleInspector: React.FC<InspectorProps> = ({ component, onUpdate, onSt
     );
 };
 
+// System Wrapper for Particles
+const createParticleSystemAdapter = (sys: ParticleSystem): IGameSystem => ({
+    id: 'ParticleSystem',
+    init: (ctx) => {
+        if(ctx.gl) sys.init(ctx.gl);
+    },
+    update: (dt, ctx) => {
+        sys.update(dt, ctx.ecs.store);
+    },
+    // Rendering is still handled by main renderer due to transparency sorting requirements
+});
+
 export const ParticleModule: EngineModule = {
     id: ComponentType.PARTICLE_SYSTEM,
     name: 'Particle System',
-    icon: 'Sparkles', // Use Sparkles or similar
+    icon: 'Sparkles',
     order: 15,
     InspectorComponent: ParticleInspector
 };
@@ -325,6 +349,19 @@ const PhysicsInspector: React.FC<InspectorProps> = ({ component, onUpdate, onSta
     );
 };
 
+// Physics System Wrapper
+const createPhysicsSystemAdapter = (sys: PhysicsSystem): IGameSystem => ({
+    id: 'PhysicsSystem',
+    update: (dt, ctx) => {
+        // Only run physics if playing
+        if (ctx.engine.isPlaying) {
+            // Note: Fixed update is handled inside engine main loop for now, but could be moved here.
+            // For now, we update variable step logic or just delegate
+            sys.update(dt, ctx.ecs.store, ctx.ecs.idToIndex, ctx.scene);
+        }
+    }
+});
+
 export const PhysicsModule: EngineModule = {
     id: ComponentType.PHYSICS,
     name: 'Physics Body',
@@ -332,6 +369,16 @@ export const PhysicsModule: EngineModule = {
     order: 30,
     InspectorComponent: PhysicsInspector
 };
+
+// --- ANIMATION MODULE ---
+// Animation isn't a component in the inspector yet (it's part of Mesh), but it is a System.
+const createAnimationSystemAdapter = (sys: AnimationSystem): IGameSystem => ({
+    id: 'AnimationSystem',
+    update: (dt, ctx) => {
+        // Always run to support T-pose editing in editor
+        sys.update(dt, ctx.engine.timeline.currentTime, ctx.engine.meshSystem, ctx.ecs, ctx.scene);
+    }
+});
 
 // --- SCRIPT MODULE ---
 export const ScriptModule: EngineModule = {
@@ -394,12 +441,28 @@ export const VirtualPivotModule: EngineModule = {
 };
 
 // Register all
-export const registerCoreModules = () => {
+export const registerCoreModules = (physicsSys: PhysicsSystem, particleSys: ParticleSystem, animSys: AnimationSystem) => {
     moduleManager.register(TransformModule);
     moduleManager.register(MeshModule);
     moduleManager.register(LightModule);
+    
+    // Attach System Adapters
+    PhysicsModule.system = createPhysicsSystemAdapter(physicsSys);
     moduleManager.register(PhysicsModule);
+    
     moduleManager.register(ScriptModule);
     moduleManager.register(VirtualPivotModule);
-    moduleManager.register(ParticleModule); // Registered
+    
+    ParticleModule.system = createParticleSystemAdapter(particleSys);
+    moduleManager.register(ParticleModule);
+    
+    // Register Animation System (No Module UI yet, but needs system registration)
+    moduleManager.register({
+        id: 'Animation',
+        name: 'Animation',
+        icon: 'Film',
+        order: 99,
+        InspectorComponent: () => null,
+        system: createAnimationSystemAdapter(animSys)
+    });
 };

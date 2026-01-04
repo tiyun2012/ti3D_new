@@ -1,11 +1,11 @@
 
-import React, { useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
+import React, { useRef, useEffect, useState, useLayoutEffect, useContext, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Entity, ToolType, MeshComponentMode } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import { engineInstance } from '../services/engine';
 import { gizmoSystem } from '../services/GizmoSystem';
-import { Mat4Utils, Vec3Utils, RayUtils } from '../services/math';
+import { Mat4Utils, Vec3Utils, RayUtils, AABBUtils } from '../services/math';
 import { VIEW_MODES } from '../services/constants';
 import { Icon } from './Icon';
 import { PieMenu } from './PieMenu';
@@ -171,15 +171,61 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => cancelAnimationFrame(frameId);
     }, [camera, softSelectionEnabled, softSelectionRadius]); 
 
-    const handleFocus = () => {
+    const handleFocus = useCallback(() => {
         if (selectedIds.length > 0) {
-            const id = selectedIds[0];
-            const pos = sceneGraph.getWorldPosition(id);
-            setCamera(prev => ({ ...prev, target: pos, radius: 3.0 })); // Zoom in
+            const bounds = AABBUtils.create();
+            let valid = false;
+
+            selectedIds.forEach(id => {
+                const pos = sceneGraph.getWorldPosition(id);
+                if (pos) {
+                    valid = true;
+                    // Get scale approximation
+                    const idx = engineInstance.ecs.idToIndex.get(id);
+                    let radius = 0.5;
+                    if (idx !== undefined) {
+                        const sx = Math.abs(engineInstance.ecs.store.scaleX[idx]);
+                        const sy = Math.abs(engineInstance.ecs.store.scaleY[idx]);
+                        const sz = Math.abs(engineInstance.ecs.store.scaleZ[idx]);
+                        radius = Math.max(sx, Math.max(sy, sz)) * 0.5; 
+                    }
+                    
+                    // Expand bounding box to encompass the estimated object volume
+                    AABBUtils.expandPoint(bounds, { x: pos.x - radius, y: pos.y - radius, z: pos.z - radius });
+                    AABBUtils.expandPoint(bounds, { x: pos.x + radius, y: pos.y + radius, z: pos.z + radius });
+                }
+            });
+
+            if (valid) {
+                const center = AABBUtils.center(bounds, Vec3Utils.create());
+                const size = AABBUtils.size(bounds, Vec3Utils.create());
+                const maxDim = Math.max(size.x, Math.max(size.y, size.z));
+                
+                // Fit camera
+                setCamera(prev => ({ 
+                    ...prev, 
+                    target: center, 
+                    radius: Math.max(maxDim * 1.5, 2.0) 
+                }));
+            }
         } else {
             setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
         }
-    };
+    }, [selectedIds, sceneGraph]);
+
+    // [FIX] 'F' to Focus Shortcut
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const active = document.activeElement;
+            if (active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA') return;
+            if (e.key === 'f' || e.key === 'F') {
+                e.preventDefault();
+                handleFocus();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [handleFocus]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (pieMenuState && e.button !== 2) setPieMenuState(null);
@@ -584,7 +630,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     {isViewMenuOpen && (
                         <div className="absolute top-full left-0 mt-1 w-32 bg-[#252525] border border-white/10 rounded-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 z-50">
                             {VIEW_MODES.map((mode) => (
-                                <button key={mode.id} onClick={() => handleModeSelect(mode.id)} className={`w-full flex items-center gap-2 px-3 py-1.5 text-[10px] hover:bg-accent hover:text-white transition-colors text-left ${mode.id === renderMode ? 'bg-white/5 text-white font-bold' : 'text-text-secondary'}`}>
+                                <button key={mode.id} onClick={() => handleModeSelect(mode.id as number)} className={`w-full flex items-center gap-2 px-3 py-1.5 text-[10px] hover:bg-accent hover:text-white transition-colors text-left ${mode.id === renderMode ? 'bg-white/5 text-white font-bold' : 'text-text-secondary'}`}>
                                     <Icon name={mode.icon as any} size={12} />
                                     <span>{mode.label}</span>
                                     {mode.id === renderMode && <Icon name="Check" size={10} className="ml-auto" />}

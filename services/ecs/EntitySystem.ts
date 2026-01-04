@@ -6,6 +6,9 @@ import { ComponentType, Entity, RotationOrder } from '../../types';
 import type { HistorySystem } from '../systems/HistorySystem';
 import { assetManager } from '../AssetManager';
 
+type ECSEventType = 'COMPONENT_ADDED' | 'COMPONENT_REMOVED' | 'ENTITY_DESTROYED';
+type ECSEventListener = (type: ECSEventType, entityId: string, componentType?: ComponentType) => void;
+
 export class SoAEntitySystem {
     store = new ComponentStorage();
     count = 0;
@@ -13,9 +16,21 @@ export class SoAEntitySystem {
     
     idToIndex = new Map<string, number>();
     private proxyCache: (Entity | null)[] = [];
+    private listeners: ECSEventListener[] = [];
 
     constructor() {
         this.proxyCache = new Array(this.store.capacity).fill(null);
+    }
+
+    subscribe(listener: ECSEventListener) {
+        this.listeners.push(listener);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== listener);
+        };
+    }
+
+    private notify(type: ECSEventType, entityId: string, componentType?: ComponentType) {
+        this.listeners.forEach(l => l(type, entityId, componentType));
     }
 
     createEntity(name: string): string {
@@ -46,24 +61,30 @@ export class SoAEntitySystem {
         this.store.meshType[index] = 0;
         this.store.textureIndex[index] = 0;
         this.store.effectIndex[index] = 0; 
+        this.store.animationIndex[index] = 0;
         this.store.colorR[index] = 1; this.store.colorG[index] = 1; this.store.colorB[index] = 1;
         
         this.store.lightType[index] = 0; 
         this.store.lightIntensity[index] = 1.0; 
 
         this.store.physicsMaterialIndex[index] = 0;
-        // Default to Material ID 1 (Standard PBR) instead of 0 (Internal Fallback)
         this.store.materialIndex[index] = 1; 
         this.store.rigIndex[index] = 0;
         this.store.mass[index] = 1.0; 
         
         this.idToIndex.set(id, index);
+        
+        // Transform is added by default, notify listeners
+        this.notify('COMPONENT_ADDED', id, ComponentType.TRANSFORM);
+        
         return id;
     }
 
     deleteEntity(id: string, sceneGraph: SceneGraph) {
         const idx = this.idToIndex.get(id);
         if (idx === undefined) return;
+
+        this.notify('ENTITY_DESTROYED', id);
 
         // Mark as inactive and unregister from scene graph
         this.store.isActive[idx] = 0;
@@ -76,7 +97,6 @@ export class SoAEntitySystem {
         this.proxyCache[idx] = null;
         this.freeIndices.push(idx);
 
-        // Tell scene graph to unregister and handle children (optional: simple engine might just detach them)
         sceneGraph.unregisterEntity(id);
     }
     
@@ -106,7 +126,11 @@ export class SoAEntitySystem {
             this.store.psMaterialIndex[idx] = 0; // Default
             this.store.effectIndex[idx] = 0;
         }
-        this.store.componentMask[idx] |= mask;
+        
+        if ((this.store.componentMask[idx] & mask) === 0) {
+            this.store.componentMask[idx] |= mask;
+            this.notify('COMPONENT_ADDED', id, type);
+        }
     }
 
     removeComponent(id: string, type: ComponentType) {
@@ -122,7 +146,10 @@ export class SoAEntitySystem {
         else if (type === ComponentType.VIRTUAL_PIVOT) mask = COMPONENT_MASKS.VIRTUAL_PIVOT;
         else if (type === ComponentType.PARTICLE_SYSTEM) mask = COMPONENT_MASKS.PARTICLE_SYSTEM;
         
-        this.store.componentMask[idx] &= ~mask;
+        if ((this.store.componentMask[idx] & mask) !== 0) {
+            this.store.componentMask[idx] &= ~mask;
+            this.notify('COMPONENT_REMOVED', id, type);
+        }
     }
     
     resize(newCapacity: number) {
@@ -189,6 +216,8 @@ export class SoAEntitySystem {
             set textureIndex(v: number) { store.textureIndex[index] = v; },
             get effectIndex() { return store.effectIndex[index]; },
             set effectIndex(v: number) { store.effectIndex[index] = v; },
+            get animationIndex() { return store.animationIndex[index]; },
+            set animationIndex(v: number) { store.animationIndex[index] = v; },
             get color() { 
                 const r = Math.floor(store.colorR[index] * 255);
                 const g = Math.floor(store.colorG[index] * 255);

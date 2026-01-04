@@ -159,9 +159,6 @@ export interface LogicalMesh {
     
     // Advanced Topology Graph (Lazy loaded or computed on import)
     graph?: MeshTopology;
-    
-    // Optimization: Bounding Volume Hierarchy for raycasting
-    bvh?: any;
 }
 
 // Animation Types
@@ -202,7 +199,6 @@ export interface StaticMeshAsset extends BaseAsset {
         uvs: Float32Array;
         colors: Float32Array;
         indices: Uint16Array;
-        aabb?: { min: Vector3; max: Vector3 };
     };
     topology?: LogicalMesh; // Optional CPU-side topology data
 }
@@ -218,7 +214,6 @@ export interface SkeletalMeshAsset extends BaseAsset {
         indices: Uint16Array;
         jointIndices: Float32Array;
         jointWeights: Float32Array;
-        aabb?: { min: Vector3; max: Vector3 };
     };
     skeleton: {
         bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array; inverseBindPose: Float32Array }>;

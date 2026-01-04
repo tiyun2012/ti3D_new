@@ -327,7 +327,7 @@ export class WebGLRenderer {
                 (gl as any).enablei(gl.BLEND, 0);
                 (gl as any).disablei(gl.BLEND, 1);
                 
-                particleSystem.render(vp, cam, this.meshSystem.textureArray, time);
+                particleSystem.render(vp, cam, this.meshSystem.textureArray, time, store);
                 
                 // Restore for standard rendering
                 (gl as any).enablei(gl.BLEND, 1);
@@ -335,7 +335,7 @@ export class WebGLRenderer {
                 // Fallback for systems without indexed blending (unlikely for WebGL 2 but safe)
                 // Just render standard blending to all targets
                 gl.enable(gl.BLEND);
-                particleSystem.render(vp, cam, this.meshSystem.textureArray, time);
+                particleSystem.render(vp, cam, this.meshSystem.textureArray, time, store);
             }
         }
 

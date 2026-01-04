@@ -73,6 +73,22 @@ class AssetManagerService {
         this.createRig('Locomotion IK Logic', RIG_TEMPLATES[0]);
     }
 
+    private computeAABB(vertices: Float32Array) {
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for(let i=0; i<vertices.length; i+=3) {
+            const x = vertices[i], y = vertices[i+1], z = vertices[i+2];
+            if(x < minX) minX = x; if(x > maxX) maxX = x;
+            if(y < minY) minY = y; if(y > maxY) maxY = y;
+            if(z < minZ) minZ = z; if(z > maxZ) maxZ = z;
+        }
+        if (minX === Infinity) return { min: {x:0,y:0,z:0}, max: {x:0,y:0,z:0} };
+        return {
+            min: { x: minX, y: minY, z: minZ },
+            max: { x: maxX, y: maxY, z: maxZ }
+        };
+    }
+
     private createDefaultPhysicsMaterials() {
         this.createPhysicsMaterial('Concrete', { staticFriction: 0.8, dynamicFriction: 0.7, bounciness: 0.1, density: 2.4 });
         this.createPhysicsMaterial('Rubber', { staticFriction: 0.9, dynamicFriction: 0.8, bounciness: 0.8, density: 1.1 });
@@ -290,7 +306,6 @@ class AssetManagerService {
                 geometryData = fbxData.geometry;
                 skeletonData = fbxData.skeleton;
                 animations = fbxData.animations;
-                // Force type to SKELETAL if bones detected
                 if (skeletonData) type = 'SKELETAL_MESH';
             }
         } else {
@@ -320,7 +335,6 @@ class AssetManagerService {
 
         const vertexCount = geometryData.v.length / 3;
         
-        // Ensure Skin Data Exists
         if (!geometryData.jointIndices || geometryData.jointIndices.length === 0) {
             geometryData.jointIndices = new Float32Array(vertexCount * 4).fill(0);
             geometryData.jointWeights = new Float32Array(vertexCount * 4).fill(0);
@@ -328,6 +342,7 @@ class AssetManagerService {
         }
         
         const colors = new Float32Array(vertexCount * 3).fill(1.0);
+        const aabb = this.computeAABB(geometryData.v instanceof Float32Array ? geometryData.v : new Float32Array(geometryData.v));
 
         const assetBase = {
             id, name, type,
@@ -337,7 +352,8 @@ class AssetManagerService {
                 normals: new Float32Array(geometryData.n),
                 uvs: new Float32Array(geometryData.u),
                 colors: colors,
-                indices: new Uint16Array(geometryData.idx)
+                indices: new Uint16Array(geometryData.idx),
+                aabb
             },
             topology
         };
@@ -435,29 +451,17 @@ class AssetManagerService {
 
     private async parseFBX(content: ArrayBuffer | string, importScale: number) {
         try {
-            // Dynamic import for FBXLoader (works with esm.sh)
             const { FBXLoader } = await import('https://esm.sh/three@0.182.0/examples/jsm/loaders/FBXLoader.js?alias=three:three');
             const loader = new FBXLoader();
-            
-            // Parse (FBXLoader supports ArrayBuffer)
             const group = loader.parse(content, '');
             
-            // Extract First Skinned Mesh
             let targetMesh: THREE.SkinnedMesh | null = null;
-            group.traverse((obj: any) => {
-                if (obj.isSkinnedMesh && !targetMesh) targetMesh = obj;
-            });
-
-            if (!targetMesh) {
-                // Fallback: look for static mesh
-                group.traverse((obj: any) => {
-                    if (obj.isMesh && !targetMesh) targetMesh = obj;
-                });
-            }
-
+            group.traverse((obj: any) => { if (obj.isSkinnedMesh && !targetMesh) targetMesh = obj; });
+            if (!targetMesh) group.traverse((obj: any) => { if (obj.isMesh && !targetMesh) targetMesh = obj; });
             if (!targetMesh) throw new Error("No mesh found in FBX");
 
-            // --- Geometry Extraction ---
+            targetMesh.updateMatrixWorld(true);
+
             const geo = (targetMesh as any).geometry;
             const pos = geo.attributes.position.array;
             const norm = geo.attributes.normal ? geo.attributes.normal.array : null;
@@ -467,79 +471,53 @@ class AssetManagerService {
             const skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
             const skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
 
-            // Apply Scale
             const v = new Float32Array(pos.length);
             for(let i=0; i<pos.length; i++) v[i] = pos[i] * importScale;
 
             const n = norm ? new Float32Array(norm) : new Float32Array(pos.length);
-            // Generate normals if missing
             if (!norm) this.generateMissingNormals(Array.from(v), Array.from(n), idx);
 
-            // --- Skeleton Extraction ---
             let skeletonData = null;
-            const bones: any[] = [];
-            
             if ((targetMesh as any).isSkinnedMesh) {
                 const skeleton = (targetMesh as any).skeleton;
+                const bones: any[] = [];
                 if (skeleton) {
                     skeleton.bones.forEach((b: THREE.Bone) => {
-                        const invBind = new Float32Array(16);
-                        // Find inverse bind matrix. FBXLoader calculates it.
-                        // THREE.Skeleton stores boneInverses[] matching bones[]
-                        const bIdx = skeleton.bones.indexOf(b);
-                        if (skeleton.boneInverses[bIdx]) {
-                            skeleton.boneInverses[bIdx].toArray(invBind);
-                        } else {
-                            // Identity fallback
-                            invBind[0]=1; invBind[5]=1; invBind[10]=1; invBind[15]=1;
-                        }
-
-                        // Local Transform as Bind Pose (Approximate)
                         b.updateMatrix();
                         const bindPose = new Float32Array(16);
                         b.matrix.toArray(bindPose);
-
-                        bones.push({
-                            name: b.name,
-                            parentIndex: b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1,
-                            bindPose: bindPose,
-                            inverseBindPose: invBind
-                        });
+                        bindPose[12] *= importScale; bindPose[13] *= importScale; bindPose[14] *= importScale;
+                        bones.push({ name: b.name, parentIndex: b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1, bindPose: bindPose, inverseBindPose: new Float32Array(16) });
                     });
+                    const globalMatrices = new Float32Array(bones.length * 16);
+                    for (let i = 0; i < bones.length; i++) {
+                        const bone = bones[i];
+                        const parentGlobal = bone.parentIndex !== -1 ? globalMatrices.subarray(bone.parentIndex * 16, (bone.parentIndex + 1) * 16) : null;
+                        const myGlobal = globalMatrices.subarray(i * 16, (i + 1) * 16);
+                        for(let k=0; k<16; k++) myGlobal[k] = bone.bindPose[k];
+                        if (parentGlobal) { const m = new THREE.Matrix4().fromArray(parentGlobal); const l = new THREE.Matrix4().fromArray(bone.bindPose); m.multiply(l); m.toArray(myGlobal); }
+                        const inv = new THREE.Matrix4().fromArray(myGlobal).invert();
+                        inv.toArray(bone.inverseBindPose);
+                    }
                     skeletonData = { bones };
                 }
             }
 
-            // --- Animation Extraction ---
             const animations: any[] = [];
             if (group.animations && group.animations.length > 0) {
                 group.animations.forEach((clip: THREE.AnimationClip) => {
                     const tracks: any[] = [];
                     clip.tracks.forEach((t) => {
-                        // Map THREE track types to engine types
-                        let type = 'position';
-                        if (t.name.endsWith('.quaternion')) type = 'rotation';
-                        if (t.name.endsWith('.scale')) type = 'scale';
-                        
-                        // Sanitize name (remove .position/quaternion suffix)
-                        const name = t.name.split('.')[0];
-                        
-                        tracks.push({
-                            name,
-                            type,
-                            times: new Float32Array(t.times),
-                            values: new Float32Array(t.values)
-                        });
+                        let type = 'position'; if (t.name.endsWith('.quaternion')) type = 'rotation'; if (t.name.endsWith('.scale')) type = 'scale';
+                        const trackName = t.name.split('.')[0]; 
+                        let values = new Float32Array(t.values);
+                        if (type === 'position' && importScale !== 1.0) { for(let k=0; k<values.length; k++) values[k] *= importScale; }
+                        tracks.push({ name: trackName, type, times: new Float32Array(t.times), values: values });
                     });
-                    animations.push({
-                        name: clip.name,
-                        duration: clip.duration,
-                        tracks
-                    });
+                    animations.push({ name: clip.name, duration: clip.duration, tracks });
                 });
             }
 
-            // Build logical faces (assume triangles from THREE)
             const logicalFaces = [];
             const triToFace = [];
             for (let i = 0; i < idx.length; i+=3) {
@@ -586,9 +564,8 @@ class AssetManagerService {
         const data = generator();
         const v2f = new Map<number, number[]>();
         data.faces?.forEach((f: number[], i: number) => f.forEach(v => { if(!v2f.has(v)) v2f.set(v, []); v2f.get(v)!.push(i); }));
-        
-        // Allocate Colors (White)
         const colors = new Float32Array(data.v.length).fill(1.0);
+        const aabb = this.computeAABB(new Float32Array(data.v));
 
         const topology: LogicalMesh = { 
             faces: data.faces, 
@@ -596,10 +573,7 @@ class AssetManagerService {
             vertexToFaces: v2f 
         };
         
-        // Build Topology
-        if (data.faces) {
-            topology.graph = MeshTopologyUtils.buildTopology(topology, data.v.length / 3);
-        }
+        if (data.faces) topology.graph = MeshTopologyUtils.buildTopology(topology, data.v.length / 3);
 
         return { 
             id: crypto.randomUUID(), name: `SM_${name}`, type: 'MESH', isProtected: true, path: '/Content/Meshes',
@@ -608,21 +582,19 @@ class AssetManagerService {
                 normals: new Float32Array(data.n), 
                 uvs: new Float32Array(data.u), 
                 colors: colors,
-                indices: new Uint16Array(data.idx) 
+                indices: new Uint16Array(data.idx),
+                aabb
             },
             topology
         };
     }
 
     private registerDefaultAssets() {
-        // Register Primitives using modular procedural generation
         this.registerAsset(this.createPrimitive('Cube', () => ProceduralGeneration.createCube()), MESH_TYPES['Cube']);
         this.registerAsset(this.createPrimitive('Sphere', () => ProceduralGeneration.createSphere(24)), MESH_TYPES['Sphere']);
         this.registerAsset(this.createPrimitive('Plane', () => ProceduralGeneration.createPlane()), MESH_TYPES['Plane']);
         this.registerAsset(this.createPrimitive('Cylinder', () => ProceduralGeneration.createCylinder(24)), MESH_TYPES['Cylinder']);
         this.registerAsset(this.createPrimitive('Cone', () => ProceduralGeneration.createCone(24)), MESH_TYPES['Cone']);
-        
-        // Register Root Folders
         this.registerAsset({ id: 'root_content', name: 'Content', type: 'FOLDER', path: '/' });
         this.registerAsset({ id: 'folder_mat', name: 'Materials', type: 'FOLDER', path: '/Content' });
         this.registerAsset({ id: 'folder_mesh', name: 'Meshes', type: 'FOLDER', path: '/Content' });
