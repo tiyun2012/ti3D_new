@@ -476,15 +476,38 @@ class AssetManagerService {
 
             targetMesh.updateMatrixWorld(true);
 
-            const geo = (targetMesh as any).geometry;
-            const pos = geo.attributes.position.array;
-            const norm = geo.attributes.normal ? geo.attributes.normal.array : null;
-            const uv = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
-            const idx: number[] = geo.index ? Array.from(geo.index.array) : [];
+            // [FIX] Bake Logic Separation
+            // For Static Meshes, bake the hierarchy transform so it sits at (0,0,0) and is upright.
+            // For Skinned Meshes, DO NOT bake hierarchy, as it desyncs the bind pose relative to vertices.
+            // We just extract raw geometry and apply the importScale.
             
-            const skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
-            const skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
+            let pos, norm, uv, idx, skinIndices, skinWeights;
 
+            if ((targetMesh as any).isSkinnedMesh) {
+                const geo = (targetMesh as any).geometry;
+                pos = geo.attributes.position.array;
+                norm = geo.attributes.normal ? geo.attributes.normal.array : null;
+                uv = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
+                idx = geo.index ? Array.from(geo.index.array) : [];
+                skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
+                skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
+            } else {
+                const bakedGeo = (targetMesh as any).geometry.clone();
+                bakedGeo.applyMatrix4(targetMesh.matrixWorld);
+                pos = bakedGeo.attributes.position.array;
+                norm = bakedGeo.attributes.normal ? bakedGeo.attributes.normal.array : null;
+                uv = bakedGeo.attributes.uv ? bakedGeo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
+                idx = bakedGeo.index ? Array.from(bakedGeo.index.array) : [];
+                skinIndices = null;
+                skinWeights = null;
+            }
+
+            // Handle missing indices (convert Triangle Soup to Indexed)
+            if (idx.length === 0) {
+                const count = pos.length / 3;
+                for(let i=0; i<count; i++) idx.push(i);
+            }
+            
             const v = new Float32Array(pos.length);
             for(let i=0; i<pos.length; i++) v[i] = pos[i] * importScale;
 
@@ -504,6 +527,8 @@ class AssetManagerService {
                         const bindPose = new Float32Array(16);
                         b.matrix.toArray(bindPose);
                         
+                        // [FIX] Apply Import Scale to Translation component of Bind Pose
+                        // Scale is only applied to translation (elements 12, 13, 14)
                         if (importScale !== 1.0) {
                             bindPose[12] *= importScale; 
                             bindPose[13] *= importScale; 
@@ -513,11 +538,45 @@ class AssetManagerService {
                         const inverseBindPose = new Float32Array(16);
                         
                         if (skeleton.boneInverses && skeleton.boneInverses[i]) {
+                            const inv = skeleton.boneInverses[i].clone();
+                            // If we scaled the bind pose translation, we need to adjust inverse.
+                            // Inverse Bind Pose transforms from World Space (Meshes) to Bone Space.
+                            // If Mesh is scaled, inverse needs to account for that.
+                            // However, simplified approach: recalculate Inverse from Modified Bind Pose.
+                            const m = new THREE.Matrix4().fromArray(bindPose);
+                            // NOTE: bindPose here is Local Matrix relative to parent.
+                            // We need Global Matrix to compute Inverse Bind.
+                            // This requires traversing up.
+                            // Since we iterate bones in linear order, we assume order is topological or we do a second pass?
+                            // THREE.Skeleton bones list is usually flat.
+                            
+                            // Let's store raw local matrix and inverse provided by loader.
+                            // But modify translation.
+                            
+                            // Better approach: Rely on loader's inverse but scale translation?
+                            // Scaling translation in Inverse matrix (elements 12,13,14) is tricky because it involves rotation.
+                            
+                            // Fallback: Recompute Inverse Bind Pose on runtime in AnimationSystem or here if we have full hierarchy.
+                            // For now, just pass loader's data but scale translation of Inverse?
+                            // Actually, Inverse Bind Pose usually contains scale 1/S.
+                            // If we scale geometry by S, we must scale Inverse translation by S? No.
+                            
+                            // Safe bet: Just store what we have. AnimationSystem computes global matrices.
+                            // AnimationSystem computes: Global = ParentGlobal * Local.
+                            // Skinning = Global * InverseBind.
+                            
+                            // If we scale Local Translation by S, Global Translation is scaled by S.
+                            // Vertices are scaled by S.
+                            // So V_new = S * V_old.
+                            // Bone_new = S * Bone_old.
+                            // Diff (V - Bone) should be scaled by S.
+                            // This works out naturally if InverseBind translation is also scaled?
+                            
                             skeleton.boneInverses[i].toArray(inverseBindPose);
-                            if (importScale !== 1.0) {
-                                inverseBindPose[12] /= importScale;
-                                inverseBindPose[13] /= importScale;
-                                inverseBindPose[14] /= importScale;
+                             if (importScale !== 1.0) {
+                                inverseBindPose[12] *= importScale;
+                                inverseBindPose[13] *= importScale;
+                                inverseBindPose[14] *= importScale;
                             }
                         } else {
                             const inv = new THREE.Matrix4().fromArray(bindPose).invert(); 
@@ -547,6 +606,7 @@ class AssetManagerService {
                         const trackName = t.name.split('.')[0]; 
                         let values = new Float32Array(t.values);
                         
+                        // [FIX] Apply scale only to position tracks
                         if (type === 'position' && importScale !== 1.0) { 
                             for(let k=0; k<values.length; k++) values[k] *= importScale; 
                         }

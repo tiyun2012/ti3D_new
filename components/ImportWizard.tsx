@@ -13,7 +13,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
     const [file, setFile] = useState<File | null>(null);
     const [importType, setImportType] = useState<'MESH' | 'SKELETAL_MESH'>('MESH');
     const [settings, setSettings] = useState({
-        scale: 0.01, // Default to 0.01 (Maya/FBX standard to Meter)
+        scale: 1.0, // Default to 1.0 (1:1)
         convertAxis: true,
         generateNormals: true,
     });
