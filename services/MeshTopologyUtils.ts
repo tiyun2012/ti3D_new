@@ -206,18 +206,15 @@ export const MeshTopologyUtils = {
         let minT = Infinity;
 
         // Force rebuild if vertex count mismatch (topology changed)
-        // Check random sample vertex or length match?
-        // Note: LogicalMesh doesn't store vertex count directly, but it relies on 'vertices' array being compatible.
-        // If vertices array length changed, rebuild BVH.
-        // We can't store previous length on LogicalMesh easily in this static function without mutation.
-        // But the Engine invalidates bvh explicitly. Here we just build if missing.
-        
         if (!mesh.bvh) mesh.bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
         const root = mesh.bvh as BVHNode;
 
         const traverse = (node: BVHNode) => {
             // 1. Check AABB overlap (Fast rejection)
-            if (RayUtils.intersectAABB(ray, node.aabb) === null) return;
+            const tBox = RayUtils.intersectAABB(ray, node.aabb);
+            
+            // If ray misses box, or box is further than our best hit so far, skip it.
+            if (tBox === null || tBox >= minT) return;
 
             // 2. Leaf Node: Check Triangles
             if (node.faceIndices) {
@@ -276,7 +273,7 @@ export const MeshTopologyUtils = {
                 return;
             }
 
-            // 3. Branch Node: Recurse
+            // 3. Branch Node: Recurse (Front-to-back sorting optimization could be added here, but simple recursion is fine for now)
             if (node.left) traverse(node.left);
             if (node.right) traverse(node.right);
         };

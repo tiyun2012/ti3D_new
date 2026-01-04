@@ -1140,6 +1140,7 @@ export class Engine {
             const mask = this.ecs.store.componentMask[i];
             const hasMesh = !!(mask & COMPONENT_MASKS.MESH);
             
+            // Only check non-mesh components if they are visible/selectable types
             if (!hasMesh && !((mask & COMPONENT_MASKS.LIGHT) || (mask & COMPONENT_MASKS.PARTICLE_SYSTEM) || (mask & COMPONENT_MASKS.VIRTUAL_PIVOT))) continue;
 
             const id = this.ecs.store.ids[i];
@@ -1164,16 +1165,22 @@ export class Engine {
                         const aabbT = RayUtils.intersectAABB(localRay, asset.geometry.aabb);
                         
                         if (aabbT !== null) {
-                            if (asset.topology) {
-                                const res = MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay);
-                                if (res) {
-                                    const worldHit = Vec3Utils.transformMat4(res.worldPos, worldMat, {x:0,y:0,z:0});
-                                    t = Vec3Utils.distance(ray.origin, worldHit);
+                            // Check if distance is already worse than best hit to avoid expensive check
+                            // Note: aabbT is distance to box, not necessarily distance to mesh, but it's a lower bound.
+                            if (aabbT < closestDist) {
+                                if (asset.topology && asset.topology.faces.length > 0) {
+                                    const res = MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay);
+                                    if (res) {
+                                        const worldHit = Vec3Utils.transformMat4(res.worldPos, worldMat, {x:0,y:0,z:0});
+                                        t = Vec3Utils.distance(ray.origin, worldHit);
+                                    }
+                                } else {
+                                    // Only fallback if mesh truly has no topology (rare case for imported meshes without faces)
+                                    // For standard meshes, we require geometric hit.
+                                    // const hitLocal = Vec3Utils.add(localRay.origin, Vec3Utils.scale(localRay.direction, aabbT, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                                    // const worldHit = Vec3Utils.transformMat4(hitLocal, worldMat, {x:0,y:0,z:0});
+                                    // t = Vec3Utils.distance(ray.origin, worldHit);
                                 }
-                            } else {
-                                const hitLocal = Vec3Utils.add(localRay.origin, Vec3Utils.scale(localRay.direction, aabbT, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-                                const worldHit = Vec3Utils.transformMat4(hitLocal, worldMat, {x:0,y:0,z:0});
-                                t = Vec3Utils.distance(ray.origin, worldHit);
                             }
                         }
                     }
