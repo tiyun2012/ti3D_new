@@ -278,7 +278,8 @@ export class MeshRenderSystem {
         if (!this.gl) return;
         const gl = this.gl;
         
-        let vao = this.meshes.get(id)?.vao;
+        const existingMesh = this.meshes.get(id);
+        let vao = existingMesh?.vao;
         if (!vao) vao = gl.createVertexArray()!;
         
         gl.bindVertexArray(vao);
@@ -302,10 +303,19 @@ export class MeshRenderSystem {
         }
 
         // Soft Selection Weights
-        const softWeights = new Float32Array(geometry.vertices.length / 3).fill(0);
-        const swBuf = createBuf(softWeights, gl.ARRAY_BUFFER);
-        gl.enableVertexAttribArray(14);
-        gl.vertexAttribPointer(14, 1, gl.FLOAT, false, 0, 0);
+        // [FIX] Preserve existing weights buffer if available to prevent flashing/resetting during drag operations
+        let swBuf: WebGLBuffer;
+        if (existingMesh && existingMesh.softWeightBuffer) {
+             swBuf = existingMesh.softWeightBuffer;
+             gl.bindBuffer(gl.ARRAY_BUFFER, swBuf);
+             gl.enableVertexAttribArray(14);
+             gl.vertexAttribPointer(14, 1, gl.FLOAT, false, 0, 0);
+        } else {
+             const softWeights = new Float32Array(geometry.vertices.length / 3).fill(0);
+             swBuf = createBuf(softWeights, gl.ARRAY_BUFFER);
+             gl.enableVertexAttribArray(14);
+             gl.vertexAttribPointer(14, 1, gl.FLOAT, false, 0, 0);
+        }
 
         // Skinning
         const hasSkin = !!(geometry.jointIndices && geometry.jointWeights);

@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState, useLayoutEffect, useContext, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Entity, ToolType, MeshComponentMode } from '../types';
@@ -41,8 +40,18 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         engineInstance.softSelectionMode = softSelectionMode;
         engineInstance.softSelectionFalloff = softSelectionFalloff;
         engineInstance.softSelectionHeatmapVisible = softSelectionHeatmapVisible;
+        
+        // Recalculate whenever these settings OR the selection changes
         engineInstance.recalculateSoftSelection(); 
-    }, [meshComponentMode, softSelectionEnabled, softSelectionRadius, softSelectionMode, softSelectionFalloff, softSelectionHeatmapVisible]);
+    }, [
+        meshComponentMode, 
+        softSelectionEnabled, 
+        softSelectionRadius, 
+        softSelectionMode, 
+        softSelectionFalloff, 
+        softSelectionHeatmapVisible,
+        selectedIds // <--- Added this to ensure heatmap updates when selection changes
+    ]);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -303,7 +312,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 }
             }
 
-            // Object Selection / Empty Click
+            // Object Selection
             if (!componentHit) {
                 const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
                 if (hitId) {
@@ -314,8 +323,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                         onSelect([hitId]);
                     }
                 } else if (!e.altKey) {
-                    // Clicked Empty Space -> Start Box Select
-                    // If simply deselecting, the App handler will default to Object mode
+                    // Start Box Select
+                    // Logic for resetting mode is now handled in App.tsx via onSelect([]) or new selection
                     setSelectionBox({ startX: mx, startY: my, currentX: mx, currentY: my, isSelecting: true });
                 }
             }

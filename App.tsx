@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance, SoftSelectionMode } from './services/engine';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from './types';
@@ -12,7 +11,7 @@ import { HierarchyPanel } from './components/HierarchyPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { SceneView } from './components/SceneView';
 import { ProjectPanel } from './components/ProjectPanel';
-import { ConsolePanel } from './components/ConsolePanel'; // New Import
+import { ConsolePanel } from './components/ConsolePanel'; 
 import { Icon } from './components/Icon';
 import { PreferencesModal } from './components/PreferencesModal';
 import { WindowManager, WindowManagerContext } from './components/WindowManager';
@@ -20,7 +19,7 @@ import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
 import { UVEditor } from './components/UVEditor';
 import { Timeline } from './components/Timeline';
 import { SkinningEditor } from './components/SkinningEditor';
-import { ToolOptionsPanel } from './components/ToolOptionsPanel'; // New Import
+import { ToolOptionsPanel } from './components/ToolOptionsPanel'; 
 
 // --- Widget Wrappers ---
 
@@ -92,7 +91,7 @@ const SceneWrapper = () => {
 
 const ProjectWrapper = () => <ProjectPanel />;
 const ConsoleWrapper = () => <ConsolePanel />;
-const ToolOptionsWrapper = () => <ToolOptionsPanel />; // New Wrapper
+const ToolOptionsWrapper = () => <ToolOptionsPanel />; 
 
 const StatsContent = () => {
     const [metrics, setMetrics] = useState(engineInstance.metrics);
