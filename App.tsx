@@ -335,6 +335,9 @@ const App: React.FC = () => {
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
     const [meshComponentMode, setMeshComponentMode] = useState<MeshComponentMode>('OBJECT');
     
+    // Per-object mode memory: Map<EntityID, Mode>
+    const [perObjectModes] = useState(() => new Map<string, MeshComponentMode>());
+
     // Soft Selection State
     const [softSelectionEnabled, setSoftSelectionEnabled] = useState(false);
     const [softSelectionRadius, setSoftSelectionRadius] = useState(2.0);
@@ -374,16 +377,42 @@ const App: React.FC = () => {
     useEffect(() => { engineInstance.setGridConfig(gridConfig); }, [gridConfig]);
     useEffect(() => { engineInstance.setUiConfig(uiConfig); }, [uiConfig]);
 
+    // Wrappers for smart selection and mode switching
+    const handleSetSelectedIds = useCallback((ids: string[]) => {
+        setSelectedIds(ids);
+        engineInstance.setSelected(ids);
+        
+        if (ids.length > 0) setInspectedNode(null);
+
+        // MODE MEMORY LOGIC:
+        if (ids.length === 1) {
+            // Restore mode for this specific object
+            const savedMode = perObjectModes.get(ids[0]) || 'OBJECT';
+            // Only update if different to avoid redundant effects
+            if (savedMode !== meshComponentMode) {
+                setMeshComponentMode(savedMode);
+            }
+        } else {
+            // For multi-selection or empty selection, default to Object mode
+            if (meshComponentMode !== 'OBJECT') {
+                setMeshComponentMode('OBJECT');
+            }
+        }
+    }, [meshComponentMode, perObjectModes]);
+
+    const handleSetMeshComponentMode = useCallback((mode: MeshComponentMode) => {
+        setMeshComponentMode(mode);
+        // Save mode for the currently selected single object
+        if (selectedIds.length === 1) {
+            perObjectModes.set(selectedIds[0], mode);
+        }
+    }, [selectedIds, perObjectModes]);
+
     const contextValue = useMemo<EditorContextType>(() => ({
         entities,
         sceneGraph: engineInstance.sceneGraph,
         selectedIds,
-        setSelectedIds: (ids) => { 
-            setSelectedIds(ids); 
-            engineInstance.setSelected(ids);
-            // Auto-clear node inspection when selecting entities to restore Inspector context
-            if (ids.length > 0) setInspectedNode(null);
-        },
+        setSelectedIds: handleSetSelectedIds,
         selectedAssetIds,
         setSelectedAssetIds,
         inspectedNode,
@@ -402,7 +431,7 @@ const App: React.FC = () => {
         selectionType,
         setSelectionType,
         meshComponentMode,
-        setMeshComponentMode,
+        setMeshComponentMode: handleSetMeshComponentMode,
         softSelectionEnabled,
         setSoftSelectionEnabled,
         softSelectionRadius,
@@ -429,7 +458,7 @@ const App: React.FC = () => {
         entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
         selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
         snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius, softSelectionMode,
-        softSelectionFalloff, softSelectionHeatmapVisible
+        softSelectionFalloff, softSelectionHeatmapVisible, handleSetSelectedIds, handleSetMeshComponentMode
     ]);
 
     return (

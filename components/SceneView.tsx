@@ -307,18 +307,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             if (!componentHit) {
                 const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
                 if (hitId) {
-                    const isNewObject = !selectedIds.includes(hitId);
-                    
-                    // [FIX]: Force Object Mode if selecting a NEW object
-                    if (isNewObject && meshComponentMode !== 'OBJECT') {
-                        setMeshComponentMode('OBJECT');
-                        // Also clear old component selection to avoid ghosts
-                        engineInstance.clearDeformation();
-                        engineInstance.subSelection.vertexIds.clear();
-                        engineInstance.subSelection.edgeIds.clear();
-                        engineInstance.subSelection.faceIds.clear();
-                    }
-
                     if (e.shiftKey) {
                         const newSel = selectedIds.includes(hitId) ? selectedIds.filter(id => id !== hitId) : [...selectedIds, hitId];
                         onSelect(newSel);
@@ -327,15 +315,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     }
                 } else if (!e.altKey) {
                     // Clicked Empty Space -> Start Box Select
-                    // [FIX]: Force Object Mode on Empty Click Start
-                    if (!e.shiftKey && meshComponentMode !== 'OBJECT') {
-                        setMeshComponentMode('OBJECT');
-                        engineInstance.clearDeformation();
-                        engineInstance.subSelection.vertexIds.clear();
-                        engineInstance.subSelection.edgeIds.clear();
-                        engineInstance.subSelection.faceIds.clear();
-                    }
-                    
+                    // If simply deselecting, the App handler will default to Object mode
                     setSelectionBox({ startX: mx, startY: my, currentX: mx, currentY: my, isSelecting: true });
                 }
             }
@@ -370,14 +350,10 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     onSelect(Array.from(nextSelection));
                 } else {
                     onSelect(hitIds);
-                    // [FIX]: Reset to Object Mode if box selecting new objects
-                    if (meshComponentMode !== 'OBJECT') setMeshComponentMode('OBJECT');
                 }
             } else {
                 if (!e.shiftKey && e.button === 0) {
                     onSelect([]);
-                    // [FIX]: Reset to Object Mode on empty click (Deselect)
-                    if (meshComponentMode !== 'OBJECT') setMeshComponentMode('OBJECT');
                 }
             }
             setSelectionBox(null);
