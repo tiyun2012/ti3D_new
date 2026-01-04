@@ -1,4 +1,3 @@
-
 // services/engine.ts
 
 import { SoAEntitySystem } from './ecs/EntitySystem';
@@ -776,6 +775,9 @@ export class Engine {
                 verts[vIdx*3+2] += localDelta.z;
             }
         }
+        
+        // FIX: Update bounds and invalidate BVH so selection works after modify
+        this.updateMeshBounds(asset);
         this.registerAssetWithGPU(asset);
     }
 
@@ -816,7 +818,32 @@ export class Engine {
             }
         }
 
+        // FIX: Update bounds and invalidate BVH so selection works after modify
+        this.updateMeshBounds(asset);
         this.registerAssetWithGPU(asset);
+    }
+
+    private updateMeshBounds(asset: StaticMeshAsset) {
+        const verts = asset.geometry.vertices;
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+        for (let i = 0; i < verts.length; i += 3) {
+            const x = verts[i], y = verts[i+1], z = verts[i+2];
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
+
+        asset.geometry.aabb = {
+            min: { x: minX, y: minY, z: minZ },
+            max: { x: maxX, y: maxY, z: maxZ }
+        };
+
+        // Invalidate BVH so it rebuilds on next raycast
+        if (asset.topology) {
+            asset.topology.bvh = undefined; 
+        }
     }
 
     endVertexDrag() {
@@ -828,6 +855,7 @@ export class Engine {
         this.currentDeformationDelta = { x: 0, y: 0, z: 0 };
     }
 
+    // ... (rest of the class)
     // --- LOOP SELECTION API ---
     selectLoop(mode: MeshComponentMode) {
         if (this.selectedIndices.size === 0) return;
