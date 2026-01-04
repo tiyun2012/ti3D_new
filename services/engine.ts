@@ -411,11 +411,17 @@ export class Engine {
         const count = verts.length / 3;
         let modified = false;
 
+        // Check for vertex mask
+        const selectedVerts = this.getSelectionAsVertices();
+        const hasSelection = selectedVerts.size > 0;
+
         // Collect vertices in brush range first
         const inRange: {idx: number, dist: number, strength: number}[] = [];
         let sumWeights = 0;
         
         for (let i = 0; i < count; i++) {
+            if (hasSelection && !selectedVerts.has(i)) continue; // Maya-style Masking
+
             const vx = verts[i*3], vy = verts[i*3+1], vz = verts[i*3+2];
             const wx = worldMat[0]*vx + worldMat[4]*vy + worldMat[8]*vz + worldMat[12];
             const wy = worldMat[1]*vx + worldMat[5]*vy + worldMat[9]*vz + worldMat[13];
@@ -428,7 +434,6 @@ export class Engine {
                 const strength = weight * falloff;
                 inRange.push({idx: i, dist, strength});
                 
-                // For smoothing: calc current total bone weight in area
                 if (mode === 'SMOOTH') {
                     for(let k=0; k<4; k++) {
                         if (jointIndices[i*4+k] === boneIndex) sumWeights += jointWeights[i*4+k];
@@ -468,7 +473,6 @@ export class Engine {
             } else if (mode === 'REMOVE') {
                 jointWeights[i*4+slot] = Math.max(0.0, currentW - strength * 0.1);
             } else if (mode === 'SMOOTH') {
-                // Blend towards average
                 jointWeights[i*4+slot] = MathUtils.lerp(currentW, avgWeight, strength * 0.5);
             }
 
@@ -495,13 +499,19 @@ export class Engine {
         if(!asset || asset.type !== 'SKELETAL_MESH') return;
 
         const count = asset.geometry.vertices.length / 3;
+        
+        // Check for vertex mask
+        const selectedVerts = this.getSelectionAsVertices();
+        const hasSelection = selectedVerts.size > 0;
+
         for (let i = 0; i < count; i++) {
+            if (hasSelection && !selectedVerts.has(i)) continue; // Masking
+
             // Find slot or empty
             let slot = -1;
             for(let k=0; k<4; k++) if(asset.geometry.jointIndices[i*4+k] === boneIndex) slot = k;
             
             if(slot === -1) {
-                // Find empty or min
                 let minW = 2.0; let minK = 0;
                 for(let k=0; k<4; k++) { 
                     if(asset.geometry.jointWeights[i*4+k] < minW) { minW = asset.geometry.jointWeights[i*4+k]; minK = k; } 
@@ -530,8 +540,15 @@ export class Engine {
         if(!asset || asset.type !== 'SKELETAL_MESH') return;
 
         const count = asset.geometry.vertices.length / 3;
+        
+        // Check for vertex mask
+        const selectedVerts = this.getSelectionAsVertices();
+        const hasSelection = selectedVerts.size > 0;
+
         let pruned = 0;
         for (let i = 0; i < count; i++) {
+            if (hasSelection && !selectedVerts.has(i)) continue; // Masking
+
             for(let k=0; k<4; k++) {
                 if(asset.geometry.jointWeights[i*4+k] < threshold) {
                     asset.geometry.jointWeights[i*4+k] = 0;
@@ -551,6 +568,7 @@ export class Engine {
         consoleService.info(`Pruned ${pruned} small weights (<${threshold})`);
     }
 
+    // ... (rest of methods)
     updateVertexColor(entityId: string, vertexIndex: number, color: {r: number, g: number, b: number}) {
         const idx = this.ecs.idToIndex.get(entityId);
         if (idx === undefined) return;
@@ -946,6 +964,7 @@ export class Engine {
         }
 
         private fixedUpdate(fixedDt: number) {
+            // ... (keep existing)
             if (this.timeline.isPlaying) {
                 this.timeline.currentTime += fixedDt * this.timeline.playbackSpeed;
                 if (this.timeline.currentTime >= this.timeline.duration) {
@@ -959,10 +978,6 @@ export class Engine {
                     }
                 }
             }
-
-            // Note: Physics is managed by ModuleManager.update now.
-            // If strict fixed-step physics is required, we would invoke a specific fixed-update 
-            // method on the module manager here, but for this architecture we use the variable step.
 
             const store = this.ecs.store;
             for(let i=0; i<this.ecs.count; i++) {
@@ -994,6 +1009,7 @@ export class Engine {
     }
 
     selectEntityAt(mx: number, my: number, width: number, height: number): string | null {
+        // ... (keep existing)
         if (!this.currentViewProj) return null;
         
         const invVP = new Float32Array(16);
@@ -1032,22 +1048,16 @@ export class Engine {
                         Vec3Utils.transformMat4Normal(ray.direction, invWorld, localRay.direction);
                         Vec3Utils.normalize(localRay.direction, localRay.direction);
                         
-                        // 1. Fast AABB Check
                         const aabbT = RayUtils.intersectAABB(localRay, asset.geometry.aabb);
                         
                         if (aabbT !== null) {
-                            // 2. Precise BVH Triangle Check
                             if (asset.topology) {
-                                // Now extremely fast O(logN)
                                 const res = MeshTopologyUtils.raycastMesh(asset.topology, asset.geometry.vertices, localRay);
                                 if (res) {
-                                    // Transform hit distance back to world
                                     const worldHit = Vec3Utils.transformMat4(res.worldPos, worldMat, {x:0,y:0,z:0});
                                     t = Vec3Utils.distance(ray.origin, worldHit);
                                 }
-                                // If topology exists but raycastMesh returns null, we intentionally leave t as null (Precision enforced)
                             } else {
-                                // Fallback for meshes without topology (legacy/simple)
                                 const hitLocal = Vec3Utils.add(localRay.origin, Vec3Utils.scale(localRay.direction, aabbT, {x:0,y:0,z:0}), {x:0,y:0,z:0});
                                 const worldHit = Vec3Utils.transformMat4(hitLocal, worldMat, {x:0,y:0,z:0});
                                 t = Vec3Utils.distance(ray.origin, worldHit);
@@ -1056,7 +1066,6 @@ export class Engine {
                     }
                 }
             } else {
-                // Sphere pick for non-mesh entities
                 const pos = { x: worldMat[12], y: worldMat[13], z: worldMat[14] };
                 t = RayUtils.intersectSphere(ray, pos, 0.5);
             }
@@ -1070,14 +1079,11 @@ export class Engine {
     }
 
     selectEntitiesInRect(x: number, y: number, w: number, h: number): string[] {
+        // ... (keep existing)
         if (!this.currentViewProj) return [];
         const ids: string[] = [];
         
-        // Marquee bounds
-        const selLeft = x;
-        const selRight = x + w;
-        const selTop = y;
-        const selBottom = y + h;
+        const selLeft = x; const selRight = x + w; const selTop = y; const selBottom = y + h;
 
         for (let i = 0; i < this.ecs.count; i++) {
             if (!this.ecs.store.isActive[i]) continue;
@@ -1089,78 +1095,57 @@ export class Engine {
             const wmOffset = i * 16;
             const worldMatrix = this.ecs.store.worldMatrix.subarray(wmOffset, wmOffset + 16);
 
-            // We will project points to screen space to form a 2D bounding box
             let screenMinX = Infinity, screenMinY = Infinity;
             let screenMaxX = -Infinity, screenMaxY = -Infinity;
             let pointsToCheck: {x:number, y:number, z:number}[] = [];
 
             if (hasMesh) {
-                // 1. Get Mesh AABB corners
                 const meshIntId = this.ecs.store.meshType[i];
                 const uuid = assetManager.meshIntToUuid.get(meshIntId);
                 const asset = uuid ? assetManager.getAsset(uuid) as StaticMeshAsset : null;
                 
                 if (asset && asset.geometry.aabb) {
                     const { min, max } = asset.geometry.aabb;
-                    // Local Space Corners
                     const localCorners = [
                         {x: min.x, y: min.y, z: min.z}, {x: max.x, y: min.y, z: min.z},
                         {x: min.x, y: max.y, z: min.z}, {x: max.x, y: max.y, z: min.z},
                         {x: min.x, y: min.y, z: max.z}, {x: max.x, y: min.y, z: max.z},
                         {x: min.x, y: max.y, z: max.z}, {x: max.x, y: max.y, z: max.z}
                     ];
-                    // Transform to World Space
                     pointsToCheck = localCorners.map(p => Vec3Utils.transformMat4(p, worldMatrix, {x:0,y:0,z:0}));
                 }
             }
 
-            // Fallback: If no mesh or AABB, just check the center position
             if (pointsToCheck.length === 0) {
-                pointsToCheck.push({ 
-                    x: worldMatrix[12], 
-                    y: worldMatrix[13], 
-                    z: worldMatrix[14] 
-                });
+                pointsToCheck.push({ x: worldMatrix[12], y: worldMatrix[13], z: worldMatrix[14] });
             }
 
-            // 2. Project World Points to Screen Space
             let visiblePoints = 0;
             const m = this.currentViewProj;
 
             for (const p of pointsToCheck) {
-                // Check if point is in front of camera (W > 0)
                 const wVal = m[3]*p.x + m[7]*p.y + m[11]*p.z + m[15];
-                if (wVal <= 0.001) continue; // Skip points behind camera
+                if (wVal <= 0.001) continue; 
 
                 const clip = Vec3Utils.transformMat4(p, m, {x:0, y:0, z:0});
-                
-                // Convert NDC to Screen Coords
-                // Note: transformMat4 does the perspective divide, so clip.x/y are -1 to 1
                 const sx = (clip.x * 0.5 + 0.5) * this.currentWidth;
-                const sy = (1.0 - (clip.y * 0.5 + 0.5)) * this.currentHeight; // Invert Y for screen space
+                const sy = (1.0 - (clip.y * 0.5 + 0.5)) * this.currentHeight;
 
-                screenMinX = Math.min(screenMinX, sx);
-                screenMinY = Math.min(screenMinY, sy);
-                screenMaxX = Math.max(screenMaxX, sx);
-                screenMaxY = Math.max(screenMaxY, sy);
+                screenMinX = Math.min(screenMinX, sx); screenMinY = Math.min(screenMinY, sy);
+                screenMaxX = Math.max(screenMaxX, sx); screenMaxY = Math.max(screenMaxY, sy);
                 visiblePoints++;
             }
 
-            // If entire object is behind camera, skip
             if (visiblePoints === 0) continue;
 
-            // 3. Check for Overlap (AABB vs Rect Intersection)
-            // If the 2D projected box overlaps the marquee box at all, select it.
             const overlaps = !(screenMaxX < selLeft || screenMinX > selRight || screenMaxY < selTop || screenMinY > selBottom);
-
-            if (overlaps) {
-                ids.push(id);
-            }
+            if (overlaps) ids.push(id);
         }
         return ids;
     }
 
     pickMeshComponent(entityId: string, mx: number, my: number, width: number, height: number): MeshPickingResult | null {
+        // ... (keep existing)
         if (!this.currentViewProj) return null;
         
         const idx = this.ecs.idToIndex.get(entityId);
@@ -1199,7 +1184,7 @@ export class Engine {
         return null;
     }
 
-    // Optimized Vertex Highlighting (No linear scan)
+    // Optimized Vertex Highlighting
     highlightVertexAt(mx: number, my: number, w: number, h: number) {
         if (this.meshComponentMode !== 'VERTEX' || this.selectedIndices.size === 0 || !this.currentViewProj) {
             this.hoveredVertex = null;
@@ -1214,23 +1199,17 @@ export class Engine {
         
         if (!asset || !asset.topology) return;
 
-        // Use pickMeshComponent which uses the BVH
         const pick = this.pickMeshComponent(entityId, mx, my, w, h);
         
         if (pick) {
-            // Check distance to closest vertex on the hit face
-            // We use a generous screen-space feel by checking 3D distance to the precise hit point
             const vPos = {
                 x: asset.geometry.vertices[pick.vertexId*3],
                 y: asset.geometry.vertices[pick.vertexId*3+1],
                 z: asset.geometry.vertices[pick.vertexId*3+2]
             };
             
-            // Check world distance between precise ray hit and the vertex
-            const dist = Vec3Utils.distance(pick.worldPos, vPos); // Note: worldPos here is Local Space from pickMeshComponent
+            const dist = Vec3Utils.distance(pick.worldPos, vPos); 
             
-            // Simple threshold in local units (approx 0.1 units)
-            // For better UX, you might want to project to screen space, but this is much faster
             if (dist < 0.2) { 
                 this.hoveredVertex = { entityId, index: pick.vertexId };
                 return;
@@ -1240,8 +1219,6 @@ export class Engine {
         this.hoveredVertex = null;
     }
 
-    // New: Brush Selection Logic
-    // Call this when dragging mouse with a "Paint" tool active
     selectVerticesInBrush(mx: number, my: number, width: number, height: number, add: boolean = true) {
         if (this.selectedIndices.size === 0 || !this.currentViewProj) return;
 
@@ -1255,23 +1232,19 @@ export class Engine {
         const worldMat = this.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return;
 
-        // 1. Raycast to find brush center on mesh surface
         const pick = this.pickMeshComponent(entityId, mx, my, width, height);
         if (!pick) return;
 
-        // 2. Find all vertices in radius (using the new BVH helper)
-        // Transform radius to local space (approximate)
         const scale = Math.max(this.ecs.store.scaleX[idx], this.ecs.store.scaleY[idx]);
-        const localRadius = (this.softSelectionRadius * 0.5) / scale; // Use half soft-sel radius as brush size
+        const localRadius = (this.softSelectionRadius * 0.5) / scale; 
 
         const vertices = MeshTopologyUtils.getVerticesInWorldSphere(
             asset.topology, 
             asset.geometry.vertices, 
-            pick.worldPos, // pickMeshComponent returns local pos effectively
+            pick.worldPos, 
             localRadius
         );
 
-        // 3. Update Selection
         if (add) {
             vertices.forEach(v => this.subSelection.vertexIds.add(v));
         } else {
@@ -1283,7 +1256,6 @@ export class Engine {
     }
 
     executeAssetGraph(entityId: string, assetId: string) {
-        // Placeholder for graph execution
     }
 
     // Mesh Ops

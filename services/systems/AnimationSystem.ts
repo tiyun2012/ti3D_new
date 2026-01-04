@@ -2,6 +2,7 @@
 import { AnimationClip, SkeletalMeshAsset, AnimationTrack } from '../../types';
 import { Mat4Utils, QuatUtils, Vec3Utils, MathUtils } from '../math';
 import { assetManager } from '../AssetManager';
+import { DebugRenderer } from '../renderers/DebugRenderer';
 
 export class AnimationSystem {
     
@@ -43,10 +44,9 @@ export class AnimationSystem {
         }
     }
 
-    update(dt: number, time: number, meshSystem: any, ecs: any, sceneGraph: any) {
+    update(dt: number, time: number, meshSystem: any, ecs: any, sceneGraph: any, debugRenderer?: DebugRenderer, selectedIndices?: Set<number>, meshComponentMode?: string) {
         // Iterate entities with Mesh components that have Skeletal Assets
         const store = ecs.store;
-        const debug = (window as any).engineInstance.debugRenderer;
         
         // Get currently selected bone index from MeshSystem to highlight it
         const selectedBoneIndex = meshSystem.selectedBoneIndex;
@@ -123,10 +123,9 @@ export class AnimationSystem {
                 boneMatrices.set(offsetM, bIdx * 16);
 
                 // --- DEBUG DRAW SKELETON ---
-                // Only draw if we have a valid Debug Renderer and the entity is selected or we are in skinning mode
-                if (debug && entityWorld) {
-                    const isSelected = (window as any).engineInstance.selectedIndices.has(i);
-                    const isSkinning = (window as any).engineInstance.meshComponentMode !== 'OBJECT';
+                if (debugRenderer && entityWorld && selectedIndices) {
+                    const isSelected = selectedIndices.has(i);
+                    const isSkinning = meshComponentMode !== 'OBJECT';
                     
                     if (isSelected || isSkinning) {
                         const bPos = { x: globalM[12], y: globalM[13], z: globalM[14] };
@@ -137,7 +136,7 @@ export class AnimationSystem {
                         const jointSize = isBoneSelected ? 8 : 4;
 
                         // Draw Joint
-                        debug.drawPoint(worldPos, jointColor, jointSize);
+                        debugRenderer.drawPoint(worldPos, jointColor, jointSize);
 
                         if (bone.parentIndex !== -1) {
                             const pMat = globalMatrices.subarray(bone.parentIndex * 16, (bone.parentIndex + 1) * 16);
@@ -145,7 +144,7 @@ export class AnimationSystem {
                             const worldP = Vec3Utils.transformMat4(pPos, entityWorld, {x:0,y:0,z:0});
                             
                             // Bone Line
-                            debug.drawLine(worldP, worldPos, isBoneSelected ? {r:1,g:0,b:1} : {r:1,g:1,b:0});
+                            debugRenderer.drawLine(worldP, worldPos, isBoneSelected ? {r:1,g:0,b:1} : {r:1,g:1,b:0});
                         }
                     }
                 }
