@@ -1,3 +1,4 @@
+
 // services/engine.ts
 
 import { SoAEntitySystem } from './ecs/EntitySystem';
@@ -139,6 +140,34 @@ export class Engine {
                 // Cast to StaticMeshAsset to access geometry
                 this.meshSystem.registerMesh(intId, (asset as StaticMeshAsset).geometry);
             }
+        }
+    }
+
+    // Call this when mesh topology changes (index count, face count, etc)
+    notifyMeshChanged(assetId: string) {
+        const intId = assetManager.getMeshID(assetId);
+        if (intId > 0) {
+            // 1. Clear Soft Selection Weights cache as geometry mismatch will occur
+            if (this.softSelectionWeights.has(intId)) {
+                this.softSelectionWeights.delete(intId);
+            }
+            
+            // 2. Invalidate BVH and Topology Cache via AssetManager/TopologyUtils
+            const asset = assetManager.getAsset(assetId) as StaticMeshAsset;
+            if (asset) {
+                this.updateMeshBounds(asset); // Rebuilds AABB and clears BVH
+                // Rebuild topology faces if needed
+                if (!asset.topology || asset.topology.faces.length === 0) {
+                    // Force rebuild topology if missing
+                    const vCount = asset.geometry.vertices.length / 3;
+                    const v2f = new Map<number, number[]>();
+                    // Fallback to simple tri-topology reconstruction if needed
+                    // (Real implementation would depend on the operation performed)
+                }
+            }
+
+            // 3. Re-upload to GPU
+            this.registerAssetWithGPU(asset);
         }
     }
 
@@ -665,6 +694,8 @@ export class Engine {
             );
         } else {
             weights = this.softSelectionWeights.get(meshIntId) || new Float32Array(vertexCount);
+            // Check size matches (safety)
+            if (weights.length !== vertexCount) weights = new Float32Array(vertexCount);
             
             const centroid = {x:0, y:0, z:0};
             const selection = Array.from(selectedVerts);

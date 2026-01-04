@@ -205,7 +205,13 @@ export const MeshTopologyUtils = {
         let bestResult: MeshPickingResult | null = null;
         let minT = Infinity;
 
-        // Ensure BVH exists
+        // Force rebuild if vertex count mismatch (topology changed)
+        // Check random sample vertex or length match?
+        // Note: LogicalMesh doesn't store vertex count directly, but it relies on 'vertices' array being compatible.
+        // If vertices array length changed, rebuild BVH.
+        // We can't store previous length on LogicalMesh easily in this static function without mutation.
+        // But the Engine invalidates bvh explicitly. Here we just build if missing.
+        
         if (!mesh.bvh) mesh.bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
         const root = mesh.bvh as BVHNode;
 
@@ -216,6 +222,7 @@ export const MeshTopologyUtils = {
             // 2. Leaf Node: Check Triangles
             if (node.faceIndices) {
                 for (const fIdx of node.faceIndices) {
+                    if (fIdx >= mesh.faces.length) continue; // Safety check
                     const face = mesh.faces[fIdx];
                     
                     // Simple Fan Triangulation for intersection
@@ -223,6 +230,9 @@ export const MeshTopologyUtils = {
                         const v0Idx = face[0];
                         const v1Idx = face[i];
                         const v2Idx = face[i+1];
+                        
+                        // Safety check for indices bounds
+                        if (v0Idx*3 >= vertices.length || v1Idx*3 >= vertices.length || v2Idx*3 >= vertices.length) continue;
 
                         const v0 = { x: vertices[v0Idx*3], y: vertices[v0Idx*3+1], z: vertices[v0Idx*3+2] };
                         const v1 = { x: vertices[v1Idx*3], y: vertices[v1Idx*3+1], z: vertices[v1Idx*3+2] };
@@ -239,9 +249,11 @@ export const MeshTopologyUtils = {
                             let minDistV = Infinity; // Find absolute closest first
                             
                             face.forEach(vIdx => {
-                                const vp = { x: vertices[vIdx*3], y: vertices[vIdx*3+1], z: vertices[vIdx*3+2] };
-                                const d = Vec3Utils.distanceSquared(hitPos, vp);
-                                if (d < minDistV) { minDistV = d; closestV = vIdx; }
+                                if (vIdx*3 < vertices.length) {
+                                    const vp = { x: vertices[vIdx*3], y: vertices[vIdx*3+1], z: vertices[vIdx*3+2] };
+                                    const d = Vec3Utils.distanceSquared(hitPos, vp);
+                                    if (d < minDistV) { minDistV = d; closestV = vIdx; }
+                                }
                             });
 
                             // Determine Edge
@@ -249,10 +261,12 @@ export const MeshTopologyUtils = {
                             let minDistE = Infinity;
                             for(let k=0; k<face.length; k++) {
                                 const vA = face[k]; const vB = face[(k+1)%face.length];
-                                const pA = { x: vertices[vA*3], y: vertices[vA*3+1], z: vertices[vA*3+2] };
-                                const pB = { x: vertices[vB*3], y: vertices[vB*3+1], z: vertices[vB*3+2] };
-                                const d = RayUtils.distRaySegment(ray, pA, pB);
-                                if (d < minDistE) { minDistE = d; closestEdge = [vA, vB]; }
+                                if (vA*3 < vertices.length && vB*3 < vertices.length) {
+                                    const pA = { x: vertices[vA*3], y: vertices[vA*3+1], z: vertices[vA*3+2] };
+                                    const pB = { x: vertices[vB*3], y: vertices[vB*3+1], z: vertices[vB*3+2] };
+                                    const d = RayUtils.distRaySegment(ray, pA, pB);
+                                    if (d < minDistE) { minDistE = d; closestEdge = [vA, vB]; }
+                                }
                             }
                             
                             bestResult = { t, faceId: fIdx, vertexId: closestV, edgeId: closestEdge, worldPos: hitPos };
@@ -263,8 +277,6 @@ export const MeshTopologyUtils = {
             }
 
             // 3. Branch Node: Recurse
-            // Optimization: Sort children by distance to ray origin? 
-            // For now, simple recursion is fine for O(logN)
             if (node.left) traverse(node.left);
             if (node.right) traverse(node.right);
         };
@@ -322,6 +334,7 @@ export const MeshTopologyUtils = {
                     const face = mesh.faces[fIdx];
                     for (const vIdx of face) {
                         if (results.has(vIdx)) continue;
+                        if (vIdx*3 >= vertices.length) continue;
                         const vx = vertices[vIdx*3], vy = vertices[vIdx*3+1], vz = vertices[vIdx*3+2];
                         const distSq = (vx-center.x)**2 + (vy-center.y)**2 + (vz-center.z)**2;
                         if (distSq <= radiusSq) {

@@ -10,6 +10,7 @@ interface MeshBatch {
     instanceCount: number; 
     hasSkin: boolean;
     softWeightBuffer: WebGLBuffer; // New buffer for explicit weights
+    vertexCount: number; // Track vertex count to detect topology changes
 }
 
 const VS_TEMPLATE = `#version 300 es
@@ -303,15 +304,21 @@ export class MeshRenderSystem {
         }
 
         // Soft Selection Weights
-        // [FIX] Preserve existing weights buffer if available to prevent flashing/resetting during drag operations
+        const vertexCount = geometry.vertices.length / 3;
         let swBuf: WebGLBuffer;
-        if (existingMesh && existingMesh.softWeightBuffer) {
+        
+        // Preserve existing buffer ONLY if vertex count matches (topology unchanged)
+        if (existingMesh && existingMesh.softWeightBuffer && existingMesh.vertexCount === vertexCount) {
              swBuf = existingMesh.softWeightBuffer;
              gl.bindBuffer(gl.ARRAY_BUFFER, swBuf);
              gl.enableVertexAttribArray(14);
              gl.vertexAttribPointer(14, 1, gl.FLOAT, false, 0, 0);
         } else {
-             const softWeights = new Float32Array(geometry.vertices.length / 3).fill(0);
+             // If topology changed or new mesh, create new buffer
+             if (existingMesh && existingMesh.softWeightBuffer) {
+                 gl.deleteBuffer(existingMesh.softWeightBuffer);
+             }
+             const softWeights = new Float32Array(vertexCount).fill(0);
              swBuf = createBuf(softWeights, gl.ARRAY_BUFFER);
              gl.enableVertexAttribArray(14);
              gl.vertexAttribPointer(14, 1, gl.FLOAT, false, 0, 0);
@@ -351,7 +358,8 @@ export class MeshRenderSystem {
             cpuBuffer: this.meshes.get(id)?.cpuBuffer || new Float32Array(INITIAL_CAPACITY * 22), 
             instanceCount: 0, 
             hasSkin,
-            softWeightBuffer: swBuf 
+            softWeightBuffer: swBuf,
+            vertexCount: vertexCount 
         });
     }
 
