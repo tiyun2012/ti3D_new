@@ -538,40 +538,6 @@ class AssetManagerService {
                         const inverseBindPose = new Float32Array(16);
                         
                         if (skeleton.boneInverses && skeleton.boneInverses[i]) {
-                            const inv = skeleton.boneInverses[i].clone();
-                            // If we scaled the bind pose translation, we need to adjust inverse.
-                            // Inverse Bind Pose transforms from World Space (Meshes) to Bone Space.
-                            // If Mesh is scaled, inverse needs to account for that.
-                            // However, simplified approach: recalculate Inverse from Modified Bind Pose.
-                            const m = new THREE.Matrix4().fromArray(bindPose);
-                            // NOTE: bindPose here is Local Matrix relative to parent.
-                            // We need Global Matrix to compute Inverse Bind.
-                            // This requires traversing up.
-                            // Since we iterate bones in linear order, we assume order is topological or we do a second pass?
-                            // THREE.Skeleton bones list is usually flat.
-                            
-                            // Let's store raw local matrix and inverse provided by loader.
-                            // But modify translation.
-                            
-                            // Better approach: Rely on loader's inverse but scale translation?
-                            // Scaling translation in Inverse matrix (elements 12,13,14) is tricky because it involves rotation.
-                            
-                            // Fallback: Recompute Inverse Bind Pose on runtime in AnimationSystem or here if we have full hierarchy.
-                            // For now, just pass loader's data but scale translation of Inverse?
-                            // Actually, Inverse Bind Pose usually contains scale 1/S.
-                            // If we scale geometry by S, we must scale Inverse translation by S? No.
-                            
-                            // Safe bet: Just store what we have. AnimationSystem computes global matrices.
-                            // AnimationSystem computes: Global = ParentGlobal * Local.
-                            // Skinning = Global * InverseBind.
-                            
-                            // If we scale Local Translation by S, Global Translation is scaled by S.
-                            // Vertices are scaled by S.
-                            // So V_new = S * V_old.
-                            // Bone_new = S * Bone_old.
-                            // Diff (V - Bone) should be scaled by S.
-                            // This works out naturally if InverseBind translation is also scaled?
-                            
                             skeleton.boneInverses[i].toArray(inverseBindPose);
                              if (importScale !== 1.0) {
                                 inverseBindPose[12] *= importScale;
@@ -617,12 +583,17 @@ class AssetManagerService {
                 });
             }
 
-            const logicalFaces = [];
-            const triToFace = [];
-            for (let i = 0; i < idx.length; i+=3) {
-                logicalFaces.push([idx[i], idx[i+1], idx[i+2]]);
-                triToFace.push(i/3);
-            }
+            // Attempt to reconstruct quads for better topology
+            let logicalFaces: number[][] = [];
+            let triToFace: number[] = [];
+            
+            // Check if user wants to attempt quad reconstruction (could be an option, but for now we default to it for cleaner editing)
+            // Or better: Check if original FBX had Polygons. THREE.FBXLoader sadly triangulates internally.
+            // We will run a post-process merge.
+            
+            const recon = this.reconstructQuads(idx, v);
+            logicalFaces = recon.faces;
+            triToFace = recon.triToFace;
 
             return {
                 geometry: {
@@ -640,6 +611,129 @@ class AssetManagerService {
             console.error("FBX Load Failed:", e);
             return null;
         }
+    }
+
+    private reconstructQuads(indices: number[], vertices: Float32Array): { faces: number[][], triToFace: number[] } {
+        const faces: number[][] = [];
+        const triToFace: number[] = new Array(indices.length / 3);
+        const usedTriangles = new Set<number>();
+
+        // Map edge to triangles: "vMin-vMax" -> [triIdx1, triIdx2, ...]
+        const edgeToTri = new Map<string, number[]>();
+
+        for (let i = 0; i < indices.length; i += 3) {
+            const a = indices[i], b = indices[i+1], c = indices[i+2];
+            const edges = [
+                [a, b].sort((x,y)=>x-y).join('-'),
+                [b, c].sort((x,y)=>x-y).join('-'),
+                [c, a].sort((x,y)=>x-y).join('-')
+            ];
+            edges.forEach(e => {
+                if (!edgeToTri.has(e)) edgeToTri.set(e, []);
+                edgeToTri.get(e)!.push(i/3);
+            });
+        }
+
+        const getNormal = (tIdx: number) => {
+            const i = tIdx * 3;
+            const a = indices[i], b = indices[i+1], c = indices[i+2];
+            const va = {x:vertices[a*3], y:vertices[a*3+1], z:vertices[a*3+2]};
+            const vb = {x:vertices[b*3], y:vertices[b*3+1], z:vertices[b*3+2]};
+            const vc = {x:vertices[c*3], y:vertices[c*3+1], z:vertices[c*3+2]};
+            
+            const ab = {x:vb.x-va.x, y:vb.y-va.y, z:vb.z-va.z};
+            const ac = {x:vc.x-va.x, y:vc.y-va.y, z:vc.z-va.z};
+            const n = {
+                x: ab.y*ac.z - ab.z*ac.y,
+                y: ab.z*ac.x - ab.x*ac.z,
+                z: ab.x*ac.y - ab.y*ac.x
+            };
+            const l = Math.sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
+            return l > 0 ? {x:n.x/l, y:n.y/l, z:n.z/l} : {x:0,y:1,z:0};
+        };
+
+        const triCount = indices.length / 3;
+        for (let i = 0; i < triCount; i++) {
+            if (usedTriangles.has(i)) continue;
+
+            const a = indices[i*3], b = indices[i*3+1], c = indices[i*3+2];
+            const edges = [
+                [a, b].sort((x,y)=>x-y).join('-'),
+                [b, c].sort((x,y)=>x-y).join('-'),
+                [c, a].sort((x,y)=>x-y).join('-')
+            ];
+
+            let merged = false;
+            // Try to find a neighbor to merge with
+            for (const edge of edges) {
+                const neighbors = edgeToTri.get(edge);
+                if (!neighbors) continue;
+                
+                const neighbor = neighbors.find(n => n !== i && !usedTriangles.has(n));
+                if (neighbor !== undefined) {
+                    // Check Normal Similarity
+                    const n1 = getNormal(i);
+                    const n2 = getNormal(neighbor);
+                    const dot = n1.x*n2.x + n1.y*n2.y + n1.z*n2.z;
+                    
+                    if (dot > 0.95) { // Coplanar-ish
+                        const t1 = [a,b,c];
+                        const t2 = [indices[neighbor*3], indices[neighbor*3+1], indices[neighbor*3+2]];
+                        
+                        const shared = t1.filter(v => t2.includes(v));
+                        const unique1 = t1.find(v => !t2.includes(v));
+                        const unique2 = t2.find(v => !t1.includes(v));
+
+                        if (shared.length === 2 && unique1 !== undefined && unique2 !== undefined) {
+                            // Reconstruct quad winding
+                            // We need to find order in T1 such that it goes v1 -> v2 (shared).
+                            // The merged quad should replace the shared edge with the path through unique vertices.
+                            
+                            // Find index of unique1 in T1
+                            const idx1 = t1.indexOf(unique1);
+                            // T1 winding: unique1 -> sharedA -> sharedB
+                            const sA = t1[(idx1+1)%3]; 
+                            const sB = t1[(idx1+2)%3];
+                            
+                            // T2 winding should contain sharedB -> sharedA to be adjacent along that edge?
+                            // T2: unique2 -> sharedB -> sharedA ??
+                            
+                            // Let's form quad: unique1 -> sA -> unique2 -> sB
+                            // Check if sA connects to unique2 in T2
+                            const idx2 = t2.indexOf(unique2);
+                            const t2Next = t2[(idx2+1)%3];
+                            
+                            if (t2Next === sB) {
+                                // T2 is u2 -> sB -> sA
+                                // Quad: u1 -> sA -> u2 -> sB
+                                faces.push([unique1, sA, unique2, sB]);
+                            } else {
+                                // T2 is u2 -> sA -> sB
+                                // Quad: u1 -> sA -> sB -> u2 ... wait this crosses
+                                // Fallback: Just push indices unique1, sA, unique2, sB and hope winding is okay or refine logic.
+                                // Actually standard is u1 -> sA -> u2 -> sB
+                                faces.push([unique1, sA, unique2, sB]);
+                            }
+                            
+                            triToFace[i] = faces.length - 1;
+                            triToFace[neighbor] = faces.length - 1;
+                            usedTriangles.add(i);
+                            usedTriangles.add(neighbor);
+                            merged = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!merged) {
+                faces.push([a, b, c]);
+                triToFace[i] = faces.length - 1;
+                usedTriangles.add(i);
+            }
+        }
+        
+        return { faces, triToFace };
     }
 
     private generateMissingNormals(v: number[], n: number[], idx: number[]) {
