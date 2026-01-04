@@ -10,12 +10,6 @@ export class TimelineSystem {
         isLooping: true
     };
 
-    get currentTime() { return this.state.currentTime; }
-    get duration() { return this.state.duration; }
-    get isPlaying() { return this.state.isPlaying; }
-    get isLooping() { return this.state.isLooping; }
-    set isLooping(v: boolean) { this.state.isLooping = v; }
-
     play() {
         this.state.isPlaying = true;
     }

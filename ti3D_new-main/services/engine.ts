@@ -191,11 +191,7 @@ export class Engine {
         assetManager.getAssetsByType('SKELETAL_MESH').forEach(asset => this.registerAssetWithGPU(asset));
         
         this.recompileAllMaterials();
-        
-        // Create default scene only if empty
-        if (this.ecs.count === 0) {
-            this.createDefaultScene();
-        }
+        if (this.ecs.count === 0) this.createDefaultScene();
     }
 
     setGridConfig(config: GridConfiguration) {
@@ -246,51 +242,27 @@ export class Engine {
     }
 
     createEntityFromAsset(assetId: string, pos: {x:number, y:number, z:number}) {
-        let asset = assetManager.getAsset(assetId);
-        
-        // Robust Fallback for primitive names (SM_Cube, etc) used in Default Scene
-        if (!asset && assetId.startsWith('SM_')) {
-            const primName = assetId.replace('SM_', '');
-            const meshes = assetManager.getAssetsByType('MESH');
-            asset = meshes.find(a => a.name === `SM_${primName}`);
-        }
-
-        if (!asset) {
-            consoleService.warn(`[Engine] Could not find asset: ${assetId}`);
-            return null;
-        }
-
-        const id = this.ecs.createEntity(asset.name);
+        const id = this.ecs.createEntity('New Object');
         const idx = this.ecs.idToIndex.get(id);
-        
         if (idx !== undefined) {
             this.ecs.store.setPosition(idx, pos.x, pos.y, pos.z);
             
-            // Handle different asset types
-            if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
-                this.ecs.addComponent(id, ComponentType.MESH);
-                this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
-                // Assign standard material if none
-                if (this.ecs.store.materialIndex[idx] === 0) {
-                     this.ecs.store.materialIndex[idx] = 1; 
-                }
-            } 
-            else if (asset.type === 'MATERIAL') {
-                // Dragging a Material creates a Sphere with that material
-                this.ecs.addComponent(id, ComponentType.MESH);
-                const sphere = assetManager.getAssetsByType('MESH').find(a => a.name === 'SM_Sphere');
-                this.ecs.store.meshType[idx] = sphere ? assetManager.getMeshID(sphere.id) : 2; // Default to Sphere ID
-                this.ecs.store.materialIndex[idx] = assetManager.getMaterialID(asset.id);
-                this.ecs.store.names[idx] = asset.name; // Rename entity
-            }
-            else if (asset.type === 'TEXTURE') {
-                // Dragging a Texture creates a Plane with that texture
-                this.ecs.addComponent(id, ComponentType.MESH);
-                const plane = assetManager.getAssetsByType('MESH').find(a => a.name === 'SM_Plane');
-                this.ecs.store.meshType[idx] = plane ? assetManager.getMeshID(plane.id) : 3; // Default to Plane ID
-                this.ecs.store.materialIndex[idx] = 1; // Standard Material
-                this.ecs.store.textureIndex[idx] = (asset as any).layerIndex || 0;
+            const asset = assetManager.getAsset(assetId);
+            if (asset) {
                 this.ecs.store.names[idx] = asset.name;
+                if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
+                    this.ecs.addComponent(id, ComponentType.MESH);
+                    this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
+                }
+            } else if (assetId.startsWith('SM_')) {
+                const primName = assetId.replace('SM_', '');
+                const all = assetManager.getAssetsByType('MESH');
+                const found = all.find(a => a.name === `SM_${primName}`);
+                if (found) {
+                    this.ecs.store.names[idx] = primName;
+                    this.ecs.addComponent(id, ComponentType.MESH);
+                    this.ecs.store.meshType[idx] = assetManager.getMeshID(found.id);
+                }
             }
             
             this.sceneGraph.registerEntity(id);
@@ -367,7 +339,6 @@ export class Engine {
     }
 
     private createDefaultScene() {
-        // Ensure we have assets available
         const standardMat = assetManager.getAssetsByType('MATERIAL').find(a => a.name === 'Standard');
         
         // 1. Holographic Cube
@@ -380,8 +351,6 @@ export class Engine {
                 this.ecs.store.effectIndex[idx] = 101; 
                 this.ecs.store.names[idx] = "Holo Cube";
             }
-        } else {
-            consoleService.warn("Default Cube or Standard Material not found during init.");
         }
 
         // 2. Normal Sphere
@@ -413,8 +382,6 @@ export class Engine {
         const pIdx = this.ecs.idToIndex.get(pivot)!;
         this.ecs.store.setPosition(pIdx, 0, 2, 0);
         this.sceneGraph.registerEntity(pivot);
-        
-        consoleService.success("Default Scene Created");
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }

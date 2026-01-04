@@ -1,10 +1,38 @@
 
 import React from 'react';
-import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff, UIConfiguration, GridConfiguration, SnapSettings } from '../types';
+import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from '../types';
 import { SceneGraph } from '../services/SceneGraph';
 import type { SoftSelectionMode } from '../services/engine';
 
-export type { UIConfiguration, GridConfiguration, SnapSettings };
+export interface UIConfiguration {
+    windowBorderRadius: number;
+    resizeHandleThickness: number;
+    resizeHandleColor: string;
+    resizeHandleOpacity: number;
+    resizeHandleLength: number;
+    // New Visual Preferences
+    selectionEdgeHighlight: boolean;
+    selectionEdgeColor: string;
+    vertexSize: number;
+    vertexColor: string;
+}
+
+export interface GridConfiguration {
+    visible: boolean;
+    size: number;            // Spacing of main lines (meters)
+    subdivisions: number;    // Number of cells inside a main line
+    opacity: number;         // Base alpha
+    fadeDistance: number;
+    color: string;
+    excludeFromPostProcess: boolean;
+}
+
+export interface SnapSettings {
+    active: boolean;
+    move: number;   // Grid units (e.g. 0.5)
+    rotate: number; // Degrees (e.g. 15)
+    scale: number;  // Factor (e.g. 0.1)
+}
 
 export const DEFAULT_UI_CONFIG: UIConfiguration = {
     windowBorderRadius: 8,

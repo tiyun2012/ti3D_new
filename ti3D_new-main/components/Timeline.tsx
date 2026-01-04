@@ -2,15 +2,15 @@
 import React, { useState, useEffect, useRef, useContext, useLayoutEffect } from 'react';
 import { Icon } from './Icon';
 import { engineInstance } from '../services/engine';
-import { TimelineState } from '../types';
 
 export const Timeline: React.FC = () => {
-    // Track state object directly
-    const [timelineState, setTimelineState] = useState<TimelineState>(engineInstance.timeline);
+    const [timeline, setTimeline] = useState(engineInstance.timeline);
     const rulerRef = useRef<HTMLDivElement>(null);
     const [isScrubbing, setIsScrubbing] = useState(false);
+    // Added rulerWidth state to track the actual size of the timeline track area
     const [rulerWidth, setRulerWidth] = useState(0);
 
+    // Track the width of the ruler area to accurately position the playhead
     useLayoutEffect(() => {
         if (!rulerRef.current) return;
         const observer = new ResizeObserver(entries => {
@@ -24,8 +24,7 @@ export const Timeline: React.FC = () => {
 
     useEffect(() => {
         const update = () => {
-            // Create a shallow copy of the state to trigger re-render
-            setTimelineState({ ...engineInstance.timeline });
+            setTimeline({ ...engineInstance.timeline });
         };
         const unsub = engineInstance.subscribe(update);
         return unsub;
@@ -37,7 +36,7 @@ export const Timeline: React.FC = () => {
         const clientX = 'touches' in e ? (e as React.TouchEvent).touches[0].clientX : (e as React.MouseEvent).clientX;
         const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
         const percentage = x / rect.width;
-        engineInstance.setTimelineTime(percentage * timelineState.duration);
+        engineInstance.setTimelineTime(percentage * timeline.duration);
     };
 
     const onMouseDown = (e: React.MouseEvent) => {
@@ -66,10 +65,10 @@ export const Timeline: React.FC = () => {
 
     const renderRuler = () => {
         const ticks = [];
-        const seconds = Math.floor(timelineState.duration);
+        const seconds = Math.floor(timeline.duration);
         for (let i = 0; i <= seconds; i++) {
             ticks.push(
-                <div key={i} className="absolute h-full flex flex-col items-center" style={{ left: `${(i / timelineState.duration) * 100}%` }}>
+                <div key={i} className="absolute h-full flex flex-col items-center" style={{ left: `${(i / timeline.duration) * 100}%` }}>
                     <div className="w-px h-2 bg-white/20"></div>
                     <span className="text-[8px] mt-0.5 opacity-40 select-none">{i}s</span>
                 </div>
@@ -85,24 +84,24 @@ export const Timeline: React.FC = () => {
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2 bg-black/30 px-3 py-1 rounded border border-white/5 font-mono text-accent">
                         <Icon name="Clock" size={12} className="opacity-50" />
-                        <span className="text-[11px] font-bold">{formatTime(timelineState.currentTime)}</span>
+                        <span className="text-[11px] font-bold">{formatTime(timeline.currentTime)}</span>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-3 text-text-secondary text-[10px] font-bold">
                     <div className="flex items-center gap-1 opacity-60">
-                        <Icon name="Repeat" size={12} className={timelineState.isLooping ? "text-accent" : ""} />
+                        <Icon name="Repeat" size={12} className={timeline.isLooping ? "text-accent" : ""} />
                         <span>Loop</span>
                         <input 
                             type="checkbox" 
-                            checked={timelineState.isLooping} 
+                            checked={timeline.isLooping} 
                             onChange={(e) => { engineInstance.timeline.isLooping = e.target.checked; engineInstance.notifyUI(); }} 
                             className="ml-1 w-3 h-3 accent-accent"
                             aria-label="Toggle Looping"
                         />
                     </div>
                     <div className="w-px h-4 bg-white/10"></div>
-                    <span className="opacity-40">DUR: {timelineState.duration}s</span>
+                    <span className="opacity-40">DUR: {timeline.duration}s</span>
                 </div>
             </div>
 
@@ -119,7 +118,7 @@ export const Timeline: React.FC = () => {
                     {/* Progress Highlight */}
                     <div 
                         className="absolute inset-y-0 left-0 bg-accent/5 border-r border-accent/20 transition-all duration-75 pointer-events-none"
-                        style={{ width: `${(timelineState.currentTime / timelineState.duration) * 100}%` }}
+                        style={{ width: `${(timeline.currentTime / timeline.duration) * 100}%` }}
                     />
                 </div>
 
@@ -139,7 +138,7 @@ export const Timeline: React.FC = () => {
                 <div 
                     className="absolute top-4 bottom-4 w-px bg-white z-10 pointer-events-none shadow-[0_0_8px_rgba(255,255,255,0.8)]"
                     style={{ 
-                        left: `calc(1rem + ${(timelineState.currentTime / timelineState.duration) * rulerWidth}px)`, 
+                        left: `calc(1rem + ${(timeline.currentTime / timeline.duration) * rulerWidth}px)`, 
                         transform: 'translateX(-50%)' 
                     }}
                 >

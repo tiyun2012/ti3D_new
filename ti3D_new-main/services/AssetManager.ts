@@ -306,7 +306,6 @@ class AssetManagerService {
                 geometryData = fbxData.geometry;
                 skeletonData = fbxData.skeleton;
                 animations = fbxData.animations;
-                // If skeleton was found, promote to SKELETAL_MESH even if user selected MESH
                 if (skeletonData) type = 'SKELETAL_MESH';
             }
         } else {
@@ -452,6 +451,7 @@ class AssetManagerService {
 
     private async parseFBX(content: ArrayBuffer | string, importScale: number) {
         try {
+            // Updated import to esm.sh which handles the Three.js dependency properly for browser environments
             const { FBXLoader } = await import('https://esm.sh/three@0.182.0/examples/jsm/loaders/FBXLoader.js?alias=three:three');
             const loader = new FBXLoader();
             const group = loader.parse(content, '');
@@ -480,61 +480,26 @@ class AssetManagerService {
 
             let skeletonData = null;
             if ((targetMesh as any).isSkinnedMesh) {
-                const skinnedMesh = targetMesh as THREE.SkinnedMesh;
-                const skeleton = skinnedMesh.skeleton;
+                const skeleton = (targetMesh as any).skeleton;
                 const bones: any[] = [];
-                
                 if (skeleton) {
-                    skeleton.bones.forEach((b: THREE.Bone, i: number) => {
+                    skeleton.bones.forEach((b: THREE.Bone) => {
                         b.updateMatrix();
-                        
                         const bindPose = new Float32Array(16);
                         b.matrix.toArray(bindPose);
-                        
-                        // Apply Import Scale to Translation components of Bind Pose (Local)
-                        // Note: Only if it's a root bone or if scale applies hierarchically?
-                        // Generally applying to translation is enough for T-Pose.
-                        if (importScale !== 1.0) {
-                            bindPose[12] *= importScale; 
-                            bindPose[13] *= importScale; 
-                            bindPose[14] *= importScale;
-                        }
-
-                        const inverseBindPose = new Float32Array(16);
-                        
-                        // Use calculated inverses from Three.js Loader if available (Correct/Robust)
-                        if (skeleton.boneInverses && skeleton.boneInverses[i]) {
-                            skeleton.boneInverses[i].toArray(inverseBindPose);
-                            // Inverse matrices in Three.js scale UP the object if it was scaled down.
-                            // If we scaled vertices down by importScale, the bind matrices (local) are smaller.
-                            // The inverse bind matrices should scale UP.
-                            // However, simply using the loader's inverses works if we applied scale to vertices.
-                            // BUT: Three's loader output might assume the scene graph transform.
-                            // For simplicity, we trust Three's inverse calculation for the relationship between bone and geometry.
-                            // We do NOT manually scale inverseBindPose if we used the pre-calculated one,
-                            // EXCEPT if that inverse assumes unscaled vertices.
-                            // If vertices are scaled by S, inverse should include 1/S translation.
-                            // Let's rely on standard binding.
-                            if (importScale !== 1.0) {
-                                inverseBindPose[12] /= importScale;
-                                inverseBindPose[13] /= importScale;
-                                inverseBindPose[14] /= importScale;
-                            }
-                        } else {
-                            // Fallback: Calculate from World Matrices (Naive)
-                            const parentIndex = b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1;
-                            // ... (This path is rarely hit with FBXLoader)
-                            const inv = new THREE.Matrix4().fromArray(bindPose).invert(); // Incorrect if not T-Pose
-                            inv.toArray(inverseBindPose);
-                        }
-
-                        bones.push({ 
-                            name: b.name, 
-                            parentIndex: b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1, 
-                            bindPose: bindPose, 
-                            inverseBindPose: inverseBindPose 
-                        });
+                        bindPose[12] *= importScale; bindPose[13] *= importScale; bindPose[14] *= importScale;
+                        bones.push({ name: b.name, parentIndex: b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1, bindPose: bindPose, inverseBindPose: new Float32Array(16) });
                     });
+                    const globalMatrices = new Float32Array(bones.length * 16);
+                    for (let i = 0; i < bones.length; i++) {
+                        const bone = bones[i];
+                        const parentGlobal = bone.parentIndex !== -1 ? globalMatrices.subarray(bone.parentIndex * 16, (bone.parentIndex + 1) * 16) : null;
+                        const myGlobal = globalMatrices.subarray(i * 16, (i + 1) * 16);
+                        for(let k=0; k<16; k++) myGlobal[k] = bone.bindPose[k];
+                        if (parentGlobal) { const m = new THREE.Matrix4().fromArray(parentGlobal); const l = new THREE.Matrix4().fromArray(bone.bindPose); m.multiply(l); m.toArray(myGlobal); }
+                        const inv = new THREE.Matrix4().fromArray(myGlobal).invert();
+                        inv.toArray(bone.inverseBindPose);
+                    }
                     skeletonData = { bones };
                 }
             }
@@ -544,19 +509,10 @@ class AssetManagerService {
                 group.animations.forEach((clip: THREE.AnimationClip) => {
                     const tracks: any[] = [];
                     clip.tracks.forEach((t) => {
-                        let type = 'position'; 
-                        if (t.name.endsWith('.quaternion')) type = 'rotation'; 
-                        if (t.name.endsWith('.scale')) type = 'scale';
-                        
-                        // Clean Track Name (remove .bones etc)
+                        let type = 'position'; if (t.name.endsWith('.quaternion')) type = 'rotation'; if (t.name.endsWith('.scale')) type = 'scale';
                         const trackName = t.name.split('.')[0]; 
                         let values = new Float32Array(t.values);
-                        
-                        // Scale Position Tracks
-                        if (type === 'position' && importScale !== 1.0) { 
-                            for(let k=0; k<values.length; k++) values[k] *= importScale; 
-                        }
-                        
+                        if (type === 'position' && importScale !== 1.0) { for(let k=0; k<values.length; k++) values[k] *= importScale; }
                         tracks.push({ name: trackName, type, times: new Float32Array(t.times), values: values });
                     });
                     animations.push({ name: clip.name, duration: clip.duration, tracks });

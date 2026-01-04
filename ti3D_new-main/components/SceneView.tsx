@@ -13,7 +13,6 @@ import { EditorContext } from '../contexts/EditorContext';
 import { MeshTopologyUtils } from '../services/MeshTopologyUtils';
 import { assetManager } from '../services/AssetManager';
 import { StaticMeshAsset } from '../types';
-import { consoleService } from '../services/Console';
 
 interface SceneViewProps {
   entities: Entity[];
@@ -469,11 +468,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
                 }
                 const id = engineInstance.createEntityFromAsset(assetId, pos);
-                if (id) {
-                    onSelect([id]);
-                } else {
-                    consoleService.warn("Failed to drop asset. Check console for details.", "SceneView");
-                }
+                if (id) onSelect([id]);
             }
         }
     };

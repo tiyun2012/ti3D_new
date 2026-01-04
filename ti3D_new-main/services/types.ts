@@ -24,38 +24,6 @@ export enum ComponentType {
   PARTICLE_SYSTEM = 'ParticleSystem'
 }
 
-// --- CONFIGURATION TYPES ---
-
-export interface UIConfiguration {
-    windowBorderRadius: number;
-    resizeHandleThickness: number;
-    resizeHandleColor: string;
-    resizeHandleOpacity: number;
-    resizeHandleLength: number;
-    // New Visual Preferences
-    selectionEdgeHighlight: boolean;
-    selectionEdgeColor: string;
-    vertexSize: number;
-    vertexColor: string;
-}
-
-export interface GridConfiguration {
-    visible: boolean;
-    size: number;            // Spacing of main lines (meters)
-    subdivisions: number;    // Number of cells inside a main line
-    opacity: number;         // Base alpha
-    fadeDistance: number;
-    color: string;
-    excludeFromPostProcess: boolean;
-}
-
-export interface SnapSettings {
-    active: boolean;
-    move: number;   // Grid units (e.g. 0.5)
-    rotate: number; // Degrees (e.g. 15)
-    scale: number;  // Factor (e.g. 0.1)
-}
-
 // --- MODULAR SYSTEM TYPES ---
 
 export interface ModuleContext {
@@ -191,9 +159,6 @@ export interface LogicalMesh {
     
     // Advanced Topology Graph (Lazy loaded or computed on import)
     graph?: MeshTopology;
-    
-    // Optimization: Bounding Volume Hierarchy for raycasting
-    bvh?: any;
 }
 
 // Animation Types
@@ -234,7 +199,6 @@ export interface StaticMeshAsset extends BaseAsset {
         uvs: Float32Array;
         colors: Float32Array;
         indices: Uint16Array;
-        aabb?: { min: Vector3; max: Vector3 };
     };
     topology?: LogicalMesh; // Optional CPU-side topology data
 }
@@ -250,7 +214,6 @@ export interface SkeletalMeshAsset extends BaseAsset {
         indices: Uint16Array;
         jointIndices: Float32Array;
         jointWeights: Float32Array;
-        aabb?: { min: Vector3; max: Vector3 };
     };
     skeleton: {
         bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array; inverseBindPose: Float32Array }>;
