@@ -451,6 +451,7 @@ class AssetManagerService {
 
     private async parseFBX(content: ArrayBuffer | string, importScale: number) {
         try {
+            // Updated import to esm.sh which handles the Three.js dependency properly for browser environments
             const { FBXLoader } = await import('https://esm.sh/three@0.182.0/examples/jsm/loaders/FBXLoader.js?alias=three:three');
             const loader = new FBXLoader();
             const group = loader.parse(content, '');

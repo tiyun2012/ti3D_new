@@ -1,6 +1,5 @@
-
 import React, { useState, useRef, useEffect, useContext } from 'react';
-import { Entity, Asset, GraphNode, ComponentType, SelectionType, StaticMeshAsset } from '../types';
+import { Entity, Asset, GraphNode, ComponentType, SelectionType, StaticMeshAsset, MeshComponentMode } from '../types';
 import { engineInstance } from '../services/engine';
 import { assetManager } from '../services/AssetManager';
 import { Icon } from './Icon';
@@ -67,16 +66,60 @@ const ComponentCard: React.FC<{
   );
 };
 
+// --- NEW: Mesh Mode Selector Component ---
+// This ensures you can switch modes regardless of current view
+const MeshModeSelector: React.FC<{ object: Entity }> = ({ object }) => {
+    const { meshComponentMode, setMeshComponentMode } = useContext(EditorContext)!;
+    
+    // Only show if the entity has a Mesh component
+    const hasMesh = object.components['Mesh'] !== undefined;
+    if (!hasMesh) return null;
+
+    const modes: { id: MeshComponentMode, icon: string, title: string }[] = [
+        { id: 'OBJECT', icon: 'Box', title: 'Object Mode' },
+        { id: 'VERTEX', icon: 'Target', title: 'Vertex Mode' },
+        { id: 'EDGE', icon: 'Move', title: 'Edge Mode' },
+        { id: 'FACE', icon: 'Square', title: 'Face Mode' },
+    ];
+
+    return (
+        <div className="flex bg-black/20 rounded p-1 gap-1 mx-4 my-2 border border-white/5">
+            {modes.map(m => (
+                <button 
+                    key={m.id}
+                    onClick={() => setMeshComponentMode(m.id)}
+                    className={`flex-1 p-1.5 rounded flex justify-center items-center transition-all ${meshComponentMode === m.id ? 'bg-accent text-white shadow-sm' : 'hover:bg-white/10 text-text-secondary hover:text-white'}`}
+                    title={m.title}
+                >
+                    <Icon name={m.icon as any} size={14} />
+                </button>
+            ))}
+        </div>
+    );
+};
+
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialObject, selectionCount = 0, type: initialType = 'ENTITY', isClone = false }) => {
   const [isLocked, setIsLocked] = useState(isClone);
   const [snapshot, setSnapshot] = useState<{ object: any, type: any } | null>(null);
   const [name, setName] = useState('');
-  const [refresh, setRefresh] = useState(0); // Force re-render for nested data
+  const [refresh, setRefresh] = useState(0); 
   const [showAddComponent, setShowAddComponent] = useState(false);
-  // Removed soft selection context usage as it moved to ToolOptionsPanel
 
   const activeObject = isLocked ? (snapshot?.object ?? initialObject) : initialObject;
   const activeType = isLocked ? (snapshot?.type ?? initialType) : initialType;
+
+  // Helper: Get the underlying Entity even when in Vertex/Edge mode
+  const getEntity = (): Entity | null => {
+      if (!activeObject) return null;
+      if (activeType === 'ENTITY') return activeObject as Entity;
+      // In component modes, activeObject is usually passed as the Entity by App.tsx
+      if (['VERTEX', 'EDGE', 'FACE'].includes(activeType as string) && (activeObject as any).components) {
+          return activeObject as Entity;
+      }
+      return null;
+  };
+
+  const entity = getEntity();
 
   useEffect(() => {
     if (!isLocked) {
@@ -133,9 +176,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
 
   // --- ENTITY INSPECTOR ---
   if (activeType === 'ENTITY') {
-      const entity = activeObject as Entity;
       const modules = moduleManager.getAllModules();
-      const availableModules = modules.filter(m => !entity.components[m.id]);
+      const availableModules = modules.filter(m => !entity!.components[m.id]);
 
       return (
         <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20" onClick={() => setShowAddComponent(false)}>
@@ -144,16 +186,19 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                  <div className="w-8 h-8 bg-blue-500 rounded flex items-center justify-center text-white shadow-sm shrink-0"><Icon name="Box" size={16} /></div>
                  <div className="flex-1 min-w-0">
                      <input type="text" value={name} onChange={e => setName(e.target.value)} onBlur={() => { if(activeObject.name!==name) { engineInstance.pushUndoState(); activeObject.name = name; engineInstance.notifyUI(); } }} className="w-full bg-transparent text-sm font-bold text-white outline-none border-b border-transparent focus:border-accent transition-colors truncate" />
-                     <div className="text-[10px] text-text-secondary font-mono mt-0.5 truncate select-all opacity-50">{entity.id}</div>
+                     <div className="text-[10px] text-text-secondary font-mono mt-0.5 truncate select-all opacity-50">{entity!.id}</div>
                  </div>
-                 <input type="checkbox" checked={entity.isActive} onChange={(e) => { engineInstance.pushUndoState(); entity.isActive = e.target.checked; engineInstance.notifyUI(); }} className="cursor-pointer" title="Active" />
+                 <input type="checkbox" checked={entity!.isActive} onChange={(e) => { engineInstance.pushUndoState(); entity!.isActive = e.target.checked; engineInstance.notifyUI(); }} className="cursor-pointer" title="Active" />
                  {renderHeaderControls()}
              </div>
           </div>
+          
+          {/* Mode Selector for Meshes */}
+          {entity && <MeshModeSelector object={entity} />}
 
           <div className="flex-1 overflow-y-auto custom-scrollbar">
               {modules.map(mod => {
-                  const comp = entity.components[mod.id];
+                  const comp = entity!.components[mod.id];
                   if (!comp) return null;
                   return (
                       <ComponentCard 
@@ -164,7 +209,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                           onRemove={mod.id === 'Transform' ? undefined : () => removeComponent(mod.id)}
                       >
                           <mod.InspectorComponent 
-                              entity={entity}
+                              entity={entity!}
                               component={comp}
                               onUpdate={(f, v) => updateComponent(mod.id, f, v)}
                               onStartUpdate={() => engineInstance.pushUndoState()}
@@ -210,8 +255,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
       let vertexId = -1;
       let asset: StaticMeshAsset | null = null;
 
-      if (count === 1 && activeType === 'VERTEX' && activeObject) {
-          const entity = activeObject as Entity;
+      if (entity) {
           // Find the Mesh Component's asset
           const meshComp = entity.components['Mesh'];
           if (meshComp) {
@@ -224,14 +268,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                  }
              }
           }
+      }
 
-          if (asset) {
-              vertexId = Array.from(subSel.vertexIds)[0];
-              const v = asset.geometry.vertices;
-              const n = asset.geometry.normals;
-              vertexPos = { x: v[vertexId*3], y: v[vertexId*3+1], z: v[vertexId*3+2] };
-              vertexNorm = { x: n[vertexId*3], y: n[vertexId*3+1], z: n[vertexId*3+2] };
-          }
+      if (count === 1 && activeType === 'VERTEX' && asset) {
+          vertexId = Array.from(subSel.vertexIds)[0];
+          const v = asset.geometry.vertices;
+          const n = asset.geometry.normals;
+          vertexPos = { x: v[vertexId*3], y: v[vertexId*3+1], z: v[vertexId*3+2] };
+          vertexNorm = { x: n[vertexId*3], y: n[vertexId*3+1], z: n[vertexId*3+2] };
       }
 
       const updateVertexPos = (newPos: {x:number, y:number, z:number}) => {
@@ -254,6 +298,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                  {renderHeaderControls()}
             </div>
             
+            {/* Mode Selector in Component Mode - KEEPS CONTROL HERE */}
+            {entity && <MeshModeSelector object={entity} />}
+
             <div className="p-4 space-y-4 text-xs overflow-y-auto custom-scrollbar">
                 {/* Summary Box */}
                 <div className="bg-black/20 p-3 rounded border border-white/5 flex justify-between items-center">
