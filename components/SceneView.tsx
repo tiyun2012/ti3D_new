@@ -13,7 +13,6 @@ import { EditorContext } from '../contexts/EditorContext';
 import { MeshTopologyUtils } from '../services/MeshTopologyUtils';
 import { assetManager } from '../services/AssetManager';
 import { StaticMeshAsset } from '../types';
-import { consoleService } from '../services/Console';
 
 interface SceneViewProps {
   entities: Entity[];
@@ -34,7 +33,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         setTool
     } = useContext(EditorContext)!;
     
-    // Sync EditorContext state to Engine Instance
+    // [FIX] Sync EditorContext state to Engine Instance
     useEffect(() => {
         engineInstance.meshComponentMode = meshComponentMode;
         engineInstance.softSelectionEnabled = softSelectionEnabled;
@@ -42,7 +41,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         engineInstance.softSelectionMode = softSelectionMode;
         engineInstance.softSelectionFalloff = softSelectionFalloff;
         engineInstance.softSelectionHeatmapVisible = softSelectionHeatmapVisible;
-        engineInstance.recalculateSoftSelection(); 
+        engineInstance.recalculateSoftSelection(); // Recalculate weights on mode/radius change
     }, [meshComponentMode, softSelectionEnabled, softSelectionRadius, softSelectionMode, softSelectionFalloff, softSelectionHeatmapVisible]);
 
     const containerRef = useRef<HTMLDivElement>(null);
@@ -55,7 +54,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
     const brushStartPos = useRef({ x: 0, y: 0, startRadius: 0 });
     
-    // Camera State
+    // Camera State (Mirroring Engine for UI, but engine holds truth)
     const [camera, setCamera] = useState({ theta: 0.5, phi: 1.2, radius: 10, target: { x: 0, y: 0, z: 0 } });
     
     const [dragState, setDragState] = useState<{
@@ -74,14 +73,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         isSelecting: boolean;
     } | null>(null);
 
-    // Keep refs for event handlers to avoid stale closures and re-binding
-    const selectedIdsRef = useRef(selectedIds);
-    useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
-
-    const cameraRef = useRef(camera);
-    useEffect(() => { cameraRef.current = camera; }, [camera]);
-
-    // Initialize Engine
+    // Initialize Engine with Canvas
     useLayoutEffect(() => {
         if (canvasRef.current && !engineInstance.renderer.gl) {
             engineInstance.initGL(canvasRef.current);
@@ -99,7 +91,31 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => obs.disconnect();
     }, []);
 
-    // Engine Loop & Camera Sync
+    // Sync Camera from Engine to React State
+    useEffect(() => {
+        const update = () => {
+            const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
+            const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
+            const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
+            
+            const aspect = containerRef.current ? (containerRef.current.clientWidth / containerRef.current.clientHeight) : 1;
+            const proj = Mat4Utils.create();
+            Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0, proj);
+            
+            const view = Mat4Utils.create();
+            Mat4Utils.lookAt({x:eyeX, y:eyeY, z:eyeZ}, camera.target, {x:0,y:1,z:0}, view);
+            
+            const vp = Mat4Utils.create();
+            Mat4Utils.multiply(proj, view, vp);
+            
+            engineInstance.updateCamera(vp, {x:eyeX, y:eyeY, z:eyeZ}, containerRef.current?.clientWidth || 1, containerRef.current?.clientHeight || 1);
+            gizmoSystem.setTool(tool);
+            engineInstance.tick(0);
+        };
+        update();
+    }, [camera, tool]);
+
+    // Animation Loop
     useEffect(() => {
         let lastTime = performance.now();
         let frameId: number;
@@ -108,12 +124,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const dt = (time - lastTime) / 1000;
             lastTime = time;
             
-            // Use ref for camera to ensure loop always uses latest without re-triggering effect
-            const cam = cameraRef.current;
-            
-            const eyeX = cam.target.x + cam.radius * Math.sin(cam.phi) * Math.cos(cam.theta);
-            const eyeY = cam.target.y + cam.radius * Math.cos(cam.phi);
-            const eyeZ = cam.target.z + cam.radius * Math.sin(cam.phi) * Math.sin(cam.theta);
+            const eyeX = camera.target.x + camera.radius * Math.sin(camera.phi) * Math.cos(camera.theta);
+            const eyeY = camera.target.y + camera.radius * Math.cos(camera.phi);
+            const eyeZ = camera.target.z + camera.radius * Math.sin(camera.phi) * Math.sin(camera.theta);
             
             const width = containerRef.current?.clientWidth || 1;
             const height = containerRef.current?.clientHeight || 1;
@@ -123,13 +136,12 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0, proj);
             
             const view = Mat4Utils.create();
-            Mat4Utils.lookAt({x:eyeX, y:eyeY, z:eyeZ}, cam.target, {x:0,y:1,z:0}, view);
+            Mat4Utils.lookAt({x:eyeX, y:eyeY, z:eyeZ}, camera.target, {x:0,y:1,z:0}, view);
             
             const vp = Mat4Utils.create();
             Mat4Utils.multiply(proj, view, vp);
             
             engineInstance.updateCamera(vp, {x:eyeX, y:eyeY, z:eyeZ}, width, height);
-            gizmoSystem.setTool(tool);
             
             // Visualizer for Soft Selection Radius
             if (engineInstance.meshComponentMode !== 'OBJECT' && engineInstance.subSelection.vertexIds.size > 0 && softSelectionEnabled) {
@@ -157,19 +169,18 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         };
         frameId = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(frameId);
-    }, [softSelectionEnabled, softSelectionRadius, tool]); // Minimized dependencies
+    }, [camera, softSelectionEnabled, softSelectionRadius]); 
 
     const handleFocus = useCallback(() => {
-        const ids = selectedIdsRef.current;
-        if (ids.length > 0) {
+        if (selectedIds.length > 0) {
             const bounds = AABBUtils.create();
             let valid = false;
 
-            ids.forEach(id => {
+            selectedIds.forEach(id => {
                 const pos = sceneGraph.getWorldPosition(id);
                 if (pos) {
                     valid = true;
-                    // Approximate bounds based on scale
+                    // Get scale approximation
                     const idx = engineInstance.ecs.idToIndex.get(id);
                     let radius = 0.5;
                     if (idx !== undefined) {
@@ -178,6 +189,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                         const sz = Math.abs(engineInstance.ecs.store.scaleZ[idx]);
                         radius = Math.max(sx, Math.max(sy, sz)) * 0.5; 
                     }
+                    
+                    // Expand bounding box to encompass the estimated object volume
                     AABBUtils.expandPoint(bounds, { x: pos.x - radius, y: pos.y - radius, z: pos.z - radius });
                     AABBUtils.expandPoint(bounds, { x: pos.x + radius, y: pos.y + radius, z: pos.z + radius });
                 }
@@ -188,18 +201,19 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 const size = AABBUtils.size(bounds, Vec3Utils.create());
                 const maxDim = Math.max(size.x, Math.max(size.y, size.z));
                 
+                // Fit camera
                 setCamera(prev => ({ 
                     ...prev, 
                     target: center, 
-                    radius: Math.max(maxDim * 2.0, 3.0) 
+                    radius: Math.max(maxDim * 1.5, 2.0) 
                 }));
             }
         } else {
             setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
         }
-    }, [sceneGraph]);
+    }, [selectedIds, sceneGraph]);
 
-    // 'F' to Focus Shortcut
+    // [FIX] 'F' to Focus Shortcut
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const active = document.activeElement;
@@ -213,50 +227,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [handleFocus]);
 
-    // Drag & Drop
-    const handleDragOver = (e: React.DragEvent) => { 
-        e.preventDefault(); 
-        e.dataTransfer.dropEffect = 'copy'; 
-    };
-
-    const handleDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        const assetId = e.dataTransfer.getData('application/ti3d-asset');
-        
-        if (assetId && containerRef.current) {
-            const rect = containerRef.current.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            
-            const invVP = new Float32Array(16);
-            if (engineInstance.currentViewProj && Mat4Utils.invert(engineInstance.currentViewProj, invVP)) {
-                const ray = RayUtils.create();
-                RayUtils.fromScreen(x, y, rect.width, rect.height, invVP, ray);
-                
-                let pos = { x: 0, y: 0, z: 0 };
-                // Intersect ground plane (y=0) if looking somewhat down
-                if (Math.abs(ray.direction.y) > 0.001) {
-                    const t = -ray.origin.y / ray.direction.y;
-                    if (t > 0) {
-                        pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-                    } else {
-                        // Looking up? Spawn in front
-                        pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-                    }
-                } else {
-                    // Parallel to ground, spawn in front
-                    pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
-                }
-                
-                const id = engineInstance.createEntityFromAsset(assetId, pos);
-                if (id) {
-                    onSelect([id]);
-                    consoleService.success(`Created entity from asset: ${assetId.substring(0, 8)}...`);
-                }
-            }
-        }
-    };
-
     const handleMouseDown = (e: React.MouseEvent) => {
         if (pieMenuState && e.button !== 2) setPieMenuState(null);
         if (pieMenuState) return;
@@ -266,13 +236,18 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const mx = e.clientX - rect.left; 
         const my = e.clientY - rect.top;
 
-        // Gizmo Interaction
+        // 0. Soft Selection Radius Adjustment
+        if (e.altKey && e.button === 0 && meshComponentMode !== 'OBJECT') {
+            // Handled by global listeners
+        }
+
+        // 1. GIZMO CHECK
         if (e.button === 0 && !isAdjustingBrush && !e.altKey) {
             gizmoSystem.update(0, mx, my, rect.width, rect.height, true, false);
             if (gizmoSystem.activeAxis) return; 
         }
 
-        // Right Click (Pie Menu)
+        // 2. Right Click (Pie Menu)
         if (e.button === 2 && !e.altKey) {
             const hitId = engineInstance.selectEntityAt(mx, my, rect.width, rect.height);
             if (hitId) {
@@ -281,31 +256,85 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 }
                 setPieMenuState({ x: e.clientX, y: e.clientY, entityId: hitId });
             } else if (selectedIds.length > 0) {
+                // Open pie menu even if clicking void but having selection (for mode switch)
                 setPieMenuState({ x: e.clientX, y: e.clientY });
             }
             return;
         }
 
-        // Selection
+        // 3. Selection
+        // Alt + Click = Loop Selection
         if (e.button === 0 && !isAdjustingBrush) {
             engineInstance.isInputDown = true;
+            
             let componentHit = false;
             
-            // Component Selection
             if (meshComponentMode !== 'OBJECT' && selectedIds.length > 0) {
                 const result = engineInstance.pickMeshComponent(selectedIds[0], mx, my, rect.width, rect.height);
+                
                 if (result) {
                     engineInstance.clearDeformation(); 
                     componentHit = true;
+                    
                     if (!e.shiftKey) {
                         engineInstance.subSelection.vertexIds.clear();
                         engineInstance.subSelection.edgeIds.clear();
                         engineInstance.subSelection.faceIds.clear();
                     }
-                    
+
+                    // --- LOOP SELECTION LOGIC ---
                     if (e.altKey) {
-                        // Loop logic would go here (omitted for brevity, handled by PieMenu/Shortcuts usually)
+                        const idx = engineInstance.ecs.idToIndex.get(selectedIds[0]);
+                        const meshIntId = engineInstance.ecs.store.meshType[idx!];
+                        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
+                        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
+                        
+                        if (asset && asset.topology) {
+                            if (meshComponentMode === 'EDGE') {
+                                // Edge Loop (Longitudinal)
+                                const loop = MeshTopologyUtils.getEdgeLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
+                                loop.forEach(edge => {
+                                    const key = edge.sort((a,b)=>a-b).join('-');
+                                    engineInstance.subSelection.edgeIds.add(key);
+                                });
+                            } else if (meshComponentMode === 'FACE') {
+                                // Face Loop (Strip)
+                                const loop = MeshTopologyUtils.getFaceLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
+                                loop.forEach(f => engineInstance.subSelection.faceIds.add(f));
+                            } else if (meshComponentMode === 'VERTEX') {
+                                // Vertex Loop Logic
+                                const previouslySelected = Array.from(engineInstance.subSelection.vertexIds);
+                                const clickedV = result.vertexId;
+                                let loopFound = false;
+
+                                // 1. Directional Selection: If exactly 1 vertex was selected, and we clicked a neighbor
+                                if (previouslySelected.length === 1 && clickedV !== -1 && clickedV !== previouslySelected[0]) {
+                                    const v1 = previouslySelected[0];
+                                    const v2 = clickedV;
+                                    
+                                    // Verify connectivity via edge map
+                                    const graph = asset.topology.graph;
+                                    const key = [v1, v2].sort((a,b)=>a-b).join('-');
+                                    
+                                    if (graph && graph.edgeKeyToHalfEdge.has(key)) {
+                                        const loop = MeshTopologyUtils.getVertexLoop(asset.topology, v1, v2);
+                                        if (loop.length > 0) {
+                                            loop.forEach(v => engineInstance.subSelection.vertexIds.add(v));
+                                            loopFound = true;
+                                        }
+                                    }
+                                }
+
+                                // 2. Fallback: Use the edge closest to cursor (raycast hit)
+                                if (!loopFound) {
+                                    // result.edgeId is always valid from raycastMesh (closest edge on face)
+                                    const loop = MeshTopologyUtils.getVertexLoop(asset.topology, result.edgeId[0], result.edgeId[1]);
+                                    loop.forEach(v => engineInstance.subSelection.vertexIds.add(v));
+                                }
+                            }
+                        }
                     } else {
+                        // Standard Single Click
                         if (meshComponentMode === 'VERTEX') {
                             const id = result.vertexId;
                             if (engineInstance.subSelection.vertexIds.has(id)) engineInstance.subSelection.vertexIds.delete(id);
@@ -320,6 +349,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                             else engineInstance.subSelection.faceIds.add(id);
                         }
                     }
+                    
                     engineInstance.recalculateSoftSelection(); 
                     engineInstance.notifyUI();
                     return;
@@ -332,6 +362,13 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 if (hitId) {
                     if (meshComponentMode !== 'OBJECT') {
                         if (!selectedIds.includes(hitId)) setMeshComponentMode('OBJECT');
+                        if (!e.shiftKey) {
+                            engineInstance.clearDeformation(); 
+                            engineInstance.subSelection.vertexIds.clear();
+                            engineInstance.subSelection.edgeIds.clear();
+                            engineInstance.subSelection.faceIds.clear();
+                            engineInstance.notifyUI();
+                        }
                     }
                     if (e.shiftKey) {
                         const newSel = selectedIds.includes(hitId) ? selectedIds.filter(id => id !== hitId) : [...selectedIds, hitId];
@@ -340,16 +377,22 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                         onSelect([hitId]);
                     }
                 } else if (!e.altKey) {
-                    // Start Box Selection
+                    // Box Selection Start
                     if (!e.shiftKey) {
-                        if (meshComponentMode === 'OBJECT') onSelect([]);
+                        if (meshComponentMode !== 'OBJECT') {
+                            engineInstance.clearDeformation(); 
+                            engineInstance.subSelection.vertexIds.clear();
+                            engineInstance.subSelection.edgeIds.clear();
+                            engineInstance.subSelection.faceIds.clear();
+                            engineInstance.notifyUI();
+                        }
                     }
                     setSelectionBox({ startX: mx, startY: my, currentX: mx, currentY: my, isSelecting: true });
                 }
             }
         }
 
-        // Navigation
+        // 4. Navigation
         if (e.altKey && e.button !== 0 || (e.altKey && e.button === 0 && !isAdjustingBrush)) {
             e.preventDefault();
             let mode: 'ORBIT' | 'PAN' | 'ZOOM' = 'ORBIT';
@@ -380,6 +423,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 } else {
                     onSelect(hitIds);
                 }
+            } else {
+                if (!e.shiftKey && e.button === 0) onSelect([]);
             }
             setSelectionBox(null);
         }
@@ -393,14 +438,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
 
         if (isAdjustingBrush) {
             const dx = e.clientX - brushStartPos.current.x;
-            const newRad = Math.max(0.1, brushStartPos.current.startRadius + dx * 0.05);
+            const sensitivity = 0.05;
+            const newRad = Math.max(0.1, brushStartPos.current.startRadius + dx * sensitivity);
             setSoftSelectionRadius(newRad);
             return;
         }
 
         gizmoSystem.update(0, mx, my, rect.width, rect.height, false, false);
 
-        if (meshComponentMode === 'VERTEX') engineInstance.highlightVertexAt(mx, my, rect.width, rect.height);
+        if (meshComponentMode !== 'OBJECT') {
+            if (meshComponentMode === 'VERTEX') engineInstance.highlightVertexAt(mx, my, rect.width, rect.height);
+        }
 
         if (dragState && dragState.isDragging) {
             const dx = e.clientX - dragState.startX;
@@ -443,11 +491,12 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         setIsAdjustingBrush(false);
     };
 
-    // B Interaction for Soft Selection
+    // Global Key Listener for B interaction
     useEffect(() => {
         let bDown = false;
         const onDown = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = true; };
         const onUp = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = false; };
+        
         const onWindowMouseDown = (e: MouseEvent) => {
             if (bDown && e.button === 0) {
                 e.preventDefault(); e.stopPropagation();
@@ -456,15 +505,17 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                 brushStartPos.current = { x: e.clientX, y: e.clientY, startRadius: softSelectionRadius };
             }
         };
+
         window.addEventListener('keydown', onDown);
         window.addEventListener('keyup', onUp);
         window.addEventListener('mousedown', onWindowMouseDown); 
+        
         return () => {
             window.removeEventListener('keydown', onDown);
             window.removeEventListener('keyup', onUp);
             window.removeEventListener('mousedown', onWindowMouseDown);
         };
-    }, [softSelectionRadius, softSelectionEnabled]);
+    }, [softSelectionRadius, setSoftSelectionEnabled, softSelectionEnabled]);
 
     useEffect(() => {
         window.addEventListener('mousemove', handleGlobalMouseMove);
@@ -475,6 +526,33 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         };
     }, [dragState, selectionBox, meshComponentMode, isAdjustingBrush]);
 
+    const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; };
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        const assetId = e.dataTransfer.getData('application/ti3d-asset');
+        if (assetId && containerRef.current) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const invVP = new Float32Array(16);
+            if (Mat4Utils.invert(engineInstance.currentViewProj!, invVP)) {
+                const ray = RayUtils.create();
+                RayUtils.fromScreen(x, y, rect.width, rect.height, invVP, ray);
+                let pos = { x: 0, y: 0, z: 0 };
+                if (Math.abs(ray.direction.y) > 0.001) {
+                    const t = -ray.origin.y / ray.direction.y;
+                    if (t > 0) pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                    else pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                } else {
+                    pos = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, 10, {x:0,y:0,z:0}), {x:0,y:0,z:0});
+                }
+                const id = engineInstance.createEntityFromAsset(assetId, pos);
+                if (id) onSelect([id]);
+            }
+        }
+    };
+
     const handleModeSelect = (modeId: number) => { 
         engineInstance.setRenderMode(modeId); 
         setRenderMode(modeId); 
@@ -482,24 +560,34 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     };
 
     const handlePieAction = (action: string) => {
+        // --- SELECTION TOOLS ---
         if (action === 'tool_select') setTool('SELECT');
         if (action === 'tool_move') setTool('MOVE');
         if (action === 'tool_rotate') setTool('ROTATE');
         if (action === 'tool_scale') setTool('SCALE');
+
+        // --- VIEW ---
         if (action === 'toggle_grid') engineInstance.toggleGrid();
-        if (action === 'toggle_wire') handleModeSelect(3);
+        if (action === 'toggle_wire') handleModeSelect(3); // Wireframe
         if (action === 'reset_cam') handleFocus();
+
+        // --- OBJECT ACTIONS ---
         if (action === 'delete') { selectedIds.forEach(id => engineInstance.deleteEntity(id, sceneGraph)); onSelect([]); }
         if (action === 'duplicate') { selectedIds.forEach(id => engineInstance.duplicateEntity(id)); }
         if (action === 'focus') { handleFocus(); }
+
+        // --- MESH EDIT ACTIONS ---
         if (action === 'extrude') engineInstance.extrudeFaces();
         if (action === 'bevel') engineInstance.bevelEdges();
         if (action === 'weld') engineInstance.weldVertices();
         if (action === 'connect') engineInstance.connectComponents();
         if (action === 'delete_face') engineInstance.deleteSelectedFaces();
+        
+        // --- LOOP SELECTION ACTIONS ---
         if (action === 'loop_vert') engineInstance.selectLoop('VERTEX');
         if (action === 'loop_edge') engineInstance.selectLoop('EDGE');
         if (action === 'loop_face') engineInstance.selectLoop('FACE');
+        
         setPieMenuState(null);
     };
 
