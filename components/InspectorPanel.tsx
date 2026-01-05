@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { Entity, Asset, GraphNode, ComponentType, SelectionType, StaticMeshAsset, MeshComponentMode, PhysicsMaterialAsset } from '../types';
 import { engineInstance } from '../services/engine';
@@ -14,7 +13,6 @@ interface InspectorPanelProps {
   isClone?: boolean;
 }
 
-// --- Reusable UI Control ---
 const DraggableNumber: React.FC<{ 
   label: string; value: number; onChange: (val: number) => void; step?: number; color?: string; disabled?: boolean;
 }> = ({ label, value, onChange, step = 0.01, color, disabled }) => {
@@ -67,12 +65,9 @@ const ComponentCard: React.FC<{
   );
 };
 
-// --- NEW: Mesh Mode Selector Component ---
-// This ensures you can switch modes regardless of current view
 const MeshModeSelector: React.FC<{ object: Entity }> = ({ object }) => {
     const { meshComponentMode, setMeshComponentMode } = useContext(EditorContext)!;
     
-    // Only show if the entity has a Mesh component
     const hasMesh = object.components['Mesh'] !== undefined;
     if (!hasMesh) return null;
 
@@ -109,11 +104,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
   const activeObject = isLocked ? (snapshot?.object ?? initialObject) : initialObject;
   const activeType = isLocked ? (snapshot?.type ?? initialType) : initialType;
 
-  // Helper: Get the underlying Entity even when in Vertex/Edge mode
   const getEntity = (): Entity | null => {
       if (!activeObject) return null;
       if (activeType === 'ENTITY') return activeObject as Entity;
-      // In component modes, activeObject is usually passed as the Entity by App.tsx
       if (['VERTEX', 'EDGE', 'FACE'].includes(activeType as string) && (activeObject as any).components) {
           return activeObject as Entity;
       }
@@ -175,7 +168,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
     </div>
   );
 
-  // --- ENTITY INSPECTOR ---
   if (activeType === 'ENTITY') {
       const modules = moduleManager.getAllModules();
       const availableModules = modules.filter(m => !entity!.components[m.id]);
@@ -194,7 +186,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
              </div>
           </div>
           
-          {/* Mode Selector for Meshes */}
           {entity && <MeshModeSelector object={entity} />}
 
           <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -239,25 +230,21 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
       );
   }
 
-  // --- VERTEX / EDGE / FACE INSPECTOR ---
   if (['VERTEX', 'EDGE', 'FACE'].includes(activeType as string)) {
-      const subSel = engineInstance.subSelection;
+      const subSel = engineInstance.selectionSystem.subSelection; // Updated
       
-      // Determine Selected Count
       let count = 0;
       let label = '';
       if (activeType === 'VERTEX') { count = subSel.vertexIds.size; label = 'Vertices'; }
       if (activeType === 'EDGE') { count = subSel.edgeIds.size; label = 'Edges'; }
       if (activeType === 'FACE') { count = subSel.faceIds.size; label = 'Faces'; }
 
-      // Get Geometry Data if 1 item selected
       let vertexPos = { x: 0, y: 0, z: 0 };
       let vertexNorm = { x: 0, y: 0, z: 0 };
       let vertexId = -1;
       let asset: StaticMeshAsset | null = null;
 
       if (entity) {
-          // Find the Mesh Component's asset
           const meshComp = entity.components['Mesh'];
           if (meshComp) {
              const idx = engineInstance.ecs.idToIndex.get(entity.id);
@@ -284,10 +271,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
               asset.geometry.vertices[vertexId*3] = newPos.x;
               asset.geometry.vertices[vertexId*3+1] = newPos.y;
               asset.geometry.vertices[vertexId*3+2] = newPos.z;
-              
-              // Re-upload to GPU
               engineInstance.registerAssetWithGPU(asset);
-              setRefresh(r => r + 1); // Force UI update
+              setRefresh(r => r + 1); 
           }
       };
 
@@ -299,11 +284,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                  {renderHeaderControls()}
             </div>
             
-            {/* Mode Selector in Component Mode - KEEPS CONTROL HERE */}
             {entity && <MeshModeSelector object={entity} />}
 
             <div className="p-4 space-y-4 text-xs overflow-y-auto custom-scrollbar">
-                {/* Summary Box */}
                 <div className="bg-black/20 p-3 rounded border border-white/5 flex justify-between items-center">
                     <div>
                         <div className="text-2xl font-mono text-white mb-1">{count}</div>
@@ -312,7 +295,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                     {count === 1 && activeType === 'VERTEX' && <div className="text-right text-[10px] font-mono text-text-secondary">ID: {vertexId}</div>}
                 </div>
 
-                {/* Vertex Data Editor */}
                 {count === 1 && activeType === 'VERTEX' && asset && (
                     <div className="space-y-3 pt-2 border-t border-white/5">
                         <div className="flex items-center gap-2 text-white font-bold"><Icon name="Move" size={12} /> Vertex Data</div>
@@ -329,7 +311,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
       );
   }
 
-  // --- ASSET INSPECTOR ---
   if (activeType === 'ASSET') {
       const asset = activeObject as Asset;
       return (

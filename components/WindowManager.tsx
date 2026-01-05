@@ -16,7 +16,7 @@ export interface WindowItem {
     zIndex: number;
 }
 
-interface WindowManagerContextType {
+export interface WindowManagerContextType {
     openWindow: (id: string) => void;
     closeWindow: (id: string) => void;
     toggleWindow: (id: string) => void;

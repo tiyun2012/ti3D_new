@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance, SoftSelectionMode } from './services/engine';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from './types';
@@ -15,17 +14,15 @@ import { ProjectPanel } from './components/ProjectPanel';
 import { ConsolePanel } from './components/ConsolePanel'; 
 import { Icon } from './components/Icon';
 import { PreferencesModal } from './components/PreferencesModal';
-import { WindowManager, WindowManagerContext, WindowManagerContextType } from './components/WindowManager';
+import { WindowManager, WindowManagerContext } from './components/WindowManager';
 import { GeometrySpreadsheet } from './components/GeometrySpreadsheet';
 import { UVEditor } from './components/UVEditor';
 import { Timeline } from './components/Timeline';
 import { SkinningEditor } from './components/SkinningEditor';
 import { ToolOptionsPanel } from './components/ToolOptionsPanel'; 
 
-// --- Widget Wrappers ---
-
 const HierarchyWrapper = () => {
-  const ctx = useContext(EditorContext) as EditorContextType | null;
+  const ctx = useContext(EditorContext);
   if (!ctx) return null;
   return (
     <HierarchyPanel 
@@ -41,13 +38,12 @@ const HierarchyWrapper = () => {
 };
 
 const InspectorWrapper = () => {
-  const ctx = useContext(EditorContext) as EditorContextType | null;
+  const ctx = useContext(EditorContext);
   if (!ctx) return null;
   
   let target: any = null;
   let count = 0;
 
-  // Priority: Graph Node > Entity/Asset Selection
   if (ctx.inspectedNode) {
       target = ctx.inspectedNode;
       return <InspectorPanel object={target} type="NODE" />;
@@ -65,7 +61,6 @@ const InspectorWrapper = () => {
       }
   } else if (['VERTEX', 'EDGE', 'FACE'].includes(ctx.selectionType)) {
       if (ctx.selectedIds.length > 0) {
-          // For component modes, we still target the Entity, but the Inspector will read engineInstance.subSelection
           target = ctx.entities.find(e => e.id === ctx.selectedIds[0]) || null;
       }
   }
@@ -74,7 +69,7 @@ const InspectorWrapper = () => {
 };
 
 const SceneWrapper = () => {
-  const ctx = useContext(EditorContext) as EditorContextType | null;
+  const ctx = useContext(EditorContext);
   if (!ctx) return null;
   return (
     <SceneView 
@@ -126,7 +121,7 @@ const StatsContent = () => {
 };
 
 const StatusBarInfo: React.FC = () => {
-    const { meshComponentMode, selectedIds, simulationMode } = useContext(EditorContext) as EditorContextType;
+    const { meshComponentMode, selectedIds, simulationMode } = useContext(EditorContext)!;
     const [statusText, setStatusText] = useState('Ready');
     const [hintText, setHintText] = useState('');
 
@@ -208,8 +203,8 @@ const StatusBarInfo: React.FC = () => {
 };
 
 const EditorInterface: React.FC = () => {
-    const wm = useContext(WindowManagerContext) as WindowManagerContextType | null;
-    const editor = useContext(EditorContext) as EditorContextType | null;
+    const wm = useContext(WindowManagerContext);
+    const editor = useContext(EditorContext);
     const initialized = useRef(false);
 
     useEffect(() => {
@@ -263,15 +258,13 @@ const EditorInterface: React.FC = () => {
         if (!initialized.current) {
             wm.openWindow('hierarchy');
             wm.openWindow('inspector');
-            wm.openWindow('tool_options'); // Open by default
+            wm.openWindow('tool_options'); 
             wm.openWindow('project');
-            // wm.openWindow('timeline'); // Disabled by default to save space
-            consoleService.init(); // Initialize global error catching
+            consoleService.init(); 
             initialized.current = true;
         }
     }, [wm]);
 
-    // Keyboard Shortcuts (Delete Object)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -308,7 +301,6 @@ const EditorInterface: React.FC = () => {
 
     return (
         <div className="flex flex-col h-screen bg-[#101010] text-text-primary overflow-hidden font-sans relative">
-            {/* Unified Top Toolbar (Menus + Tools + Transport) */}
             <Toolbar onSave={handleSave} onLoad={handleLoad} />
 
             <div className="absolute inset-0 top-[40px] bottom-[24px] z-0">
@@ -335,24 +327,19 @@ const App: React.FC = () => {
     const [transformSpace, setTransformSpace] = useState<TransformSpace>('World');
     const [meshComponentMode, setMeshComponentMode] = useState<MeshComponentMode>('OBJECT');
     
-    // Per-object mode memory: Map<EntityID, Mode>
     const [perObjectModes] = useState(() => new Map<string, MeshComponentMode>());
 
-    // Soft Selection State
     const [softSelectionEnabled, setSoftSelectionEnabled] = useState(false);
     const [softSelectionRadius, setSoftSelectionRadius] = useState(2.0);
     const [softSelectionMode, setSoftSelectionMode] = useState<SoftSelectionMode>('FIXED');
     const [softSelectionFalloff, setSoftSelectionFalloff] = useState<SoftSelectionFalloff>('VOLUME');
     const [softSelectionHeatmapVisible, setSoftSelectionHeatmapVisible] = useState(true);
 
-    // New State for Simulation
     const [simulationMode, setSimulationMode] = useState<SimulationMode>('STOPPED');
 
-    // Graph
     const [inspectedNode, setInspectedNode] = useState<GraphNode | null>(null);
     const [activeGraphConnections, setActiveGraphConnections] = useState<GraphConnection[]>([]);
     
-    // Configs
     const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
     const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
     const [snapSettings, setSnapSettings] = useState<SnapSettings>(DEFAULT_SNAP_CONFIG);
@@ -362,13 +349,12 @@ const App: React.FC = () => {
     useEffect(() => {
         const update = () => {
             setEntities(engineInstance.ecs.getAllProxies(engineInstance.sceneGraph));
-            setSimulationMode(engineInstance.simulationMode); // Sync engine mode to UI
+            setSimulationMode(engineInstance.simulationMode); 
         };
         update();
         return engineInstance.subscribe(update);
     }, []);
 
-    // Sync mesh component mode to engine
     useEffect(() => {
         engineInstance.meshComponentMode = meshComponentMode;
         engineInstance.notifyUI();
@@ -377,23 +363,18 @@ const App: React.FC = () => {
     useEffect(() => { engineInstance.setGridConfig(gridConfig); }, [gridConfig]);
     useEffect(() => { engineInstance.setUiConfig(uiConfig); }, [uiConfig]);
 
-    // Wrappers for smart selection and mode switching
     const handleSetSelectedIds = useCallback((ids: string[]) => {
         setSelectedIds(ids);
-        engineInstance.selectionSystem.setSelected(ids);
+        engineInstance.selectionSystem.setSelected(ids); // Updated to SelectionSystem
         
         if (ids.length > 0) setInspectedNode(null);
 
-        // MODE MEMORY LOGIC:
         if (ids.length === 1) {
-            // Restore mode for this specific object
             const savedMode = perObjectModes.get(ids[0]) || 'OBJECT';
-            // Only update if different to avoid redundant effects
             if (savedMode !== meshComponentMode) {
                 setMeshComponentMode(savedMode);
             }
         } else {
-            // For multi-selection or empty selection, default to Object mode
             if (meshComponentMode !== 'OBJECT') {
                 setMeshComponentMode('OBJECT');
             }
@@ -402,7 +383,6 @@ const App: React.FC = () => {
 
     const handleSetMeshComponentMode = useCallback((mode: MeshComponentMode) => {
         setMeshComponentMode(mode);
-        // Save mode for the currently selected single object
         if (selectedIds.length === 1) {
             perObjectModes.set(selectedIds[0], mode);
         }
@@ -447,7 +427,7 @@ const App: React.FC = () => {
         transformSpace,
         setTransformSpace,
         isPlaying: engineInstance.isPlaying,
-        simulationMode, // Pass to context
+        simulationMode, 
         uiConfig,
         setUiConfig,
         gridConfig,

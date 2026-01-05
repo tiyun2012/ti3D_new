@@ -1,4 +1,3 @@
-
 import { engineInstance } from './engine';
 import { Mat4Utils, Vec3Utils } from './math';
 import { Vector3, ToolType } from '../types';
@@ -11,23 +10,18 @@ export class GizmoSystem {
     activeAxis: GizmoAxis = null;
     hoverAxis: GizmoAxis = null;
     
-    // Config
-    private tool: ToolType = 'SELECT'; // Default to SELECT (Hidden)
+    private tool: ToolType = 'SELECT'; 
     private gizmoScale = 1.0;
 
-    // Drag State
     private isDragging = false;
     private startPos: Vector3 = { x: 0, y: 0, z: 0 };
     private clickOffset: Vector3 = { x: 0, y: 0, z: 0 };
     private planeNormal: Vector3 = { x: 0, y: 1, z: 0 };
     
-    // Tracks original click position on the intersection plane to calculate cumulative delta
     private dragOrigin: Vector3 = { x: 0, y: 0, z: 0 };
 
-    // --- API ---
     setTool(tool: ToolType) {
         this.tool = tool;
-        // If we switch to SELECT while dragging, cancel the drag
         if (tool === 'SELECT' && this.isDragging) {
             this.isDragging = false;
             this.activeAxis = null;
@@ -36,43 +30,36 @@ export class GizmoSystem {
     }
 
     update(dt: number, mx: number, my: number, width: number, height: number, isDown: boolean, isUp: boolean) {
-        // 1. Tool Check: If SELECT, do nothing (allow box selection to pass through)
         if (this.tool === 'SELECT') {
             this.hoverAxis = null;
             this.activeAxis = null;
             return;
         }
 
-        const selected = engineInstance.selectedIndices;
+        const selected = engineInstance.selectionSystem.selectedIndices; // Updated
         if (selected.size === 0) return; 
         
-        // --- Calculate Gizmo Position ---
         let worldPos = { x: 0, y: 0, z: 0 };
         let entityId: string | null = null;
 
         const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
         
         if (isComponentMode) {
-            // Check if we actually have any components selected
-            const sub = engineInstance.subSelection;
+            const sub = engineInstance.selectionSystem.subSelection; // Updated
             if (sub.vertexIds.size === 0 && sub.edgeIds.size === 0 && sub.faceIds.size === 0) {
                 this.hoverAxis = null;
                 this.activeAxis = null;
                 return;
             }
 
-            // Vertex/Edge/Face Mode: Position at centroid of selected components
             const idx = Array.from(selected)[0];
             entityId = engineInstance.ecs.store.ids[idx];
-            // Use the unified vertex selector from engine to get centroid of whatever components are selected
             worldPos = this.getSelectedComponentCentroid(entityId);
         } else if (selected.size === 1) {
-            // Entity Mode: Position at entity transform
             const idx = Array.from(selected)[0];
             entityId = engineInstance.ecs.store.ids[idx];
             worldPos = engineInstance.sceneGraph.getWorldPosition(entityId);
         } else {
-            // Multi-selection not fully supported yet in this simple gizmo
             return;
         }
 
@@ -112,10 +99,9 @@ export class GizmoSystem {
     }
 
     render() {
-        // 1. Tool Check: If SELECT, do not render
         if (this.tool === 'SELECT') return;
 
-        const selected = engineInstance.selectedIndices;
+        const selected = engineInstance.selectionSystem.selectedIndices; // Updated
         if (selected.size === 0) return;
 
         let pos = { x: 0, y: 0, z: 0 };
@@ -123,8 +109,7 @@ export class GizmoSystem {
         const isComponentMode = engineInstance.meshComponentMode !== 'OBJECT';
 
         if (isComponentMode) {
-            // Check if we actually have any components selected
-            const sub = engineInstance.subSelection;
+            const sub = engineInstance.selectionSystem.subSelection; // Updated
             if (sub.vertexIds.size === 0 && sub.edgeIds.size === 0 && sub.faceIds.size === 0) return;
 
             const idx = Array.from(selected)[0];
@@ -166,8 +151,7 @@ export class GizmoSystem {
         const worldMat = engineInstance.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return centroid;
 
-        // Use the Engine's helper to get all vertices involved in selection (Edge/Face/Vertex)
-        const vertexIds = Array.from(engineInstance.getSelectionAsVertices());
+        const vertexIds = Array.from(engineInstance.selectionSystem.getSelectionAsVertices()); // Updated
         if (vertexIds.length === 0) return centroid;
 
         for (const vIdx of vertexIds) {
@@ -203,7 +187,6 @@ export class GizmoSystem {
         const hit = this.rayPlaneIntersect(ray, pos, this.planeNormal);
         if (hit) {
             this.clickOffset = Vec3Utils.subtract(hit, pos, {x:0,y:0,z:0});
-            // Store original drag point for cumulative delta calculation
             this.dragOrigin = { ...hit };
         }
 
@@ -215,8 +198,6 @@ export class GizmoSystem {
     private handleDrag(ray: any, entityId: string, isComponentMode: boolean) {
         const hit = this.rayPlaneIntersect(ray, this.startPos, this.planeNormal);
         if (hit) {
-            // Apply Constraints (If NOT free view/plane)
-            // Note: We constrain the HIT point relative to START POS to ensure sliding along axis
             let constrainedHit = { ...hit };
             
             if (this.activeAxis === 'X') { constrainedHit.y = this.startPos.y + this.clickOffset.y; constrainedHit.z = this.startPos.z + this.clickOffset.z; }
@@ -227,15 +208,10 @@ export class GizmoSystem {
             if (this.activeAxis === 'YZ') constrainedHit.x = this.startPos.x + this.clickOffset.x;
 
             if (isComponentMode) {
-                // Target Position = Constrained Hit - Click Offset
                 const targetPos = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
-                
-                // Total Delta = Target Position - Initial Gizmo Position (this.startPos)
                 const totalDelta = Vec3Utils.subtract(targetPos, this.startPos, {x:0,y:0,z:0});
-                
                 engineInstance.updateVertexDrag(entityId, totalDelta);
             } else {
-                // Object Mode (Standard)
                 const target = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
                 this.setWorldPosition(entityId, target);
                 engineInstance.syncTransforms();
@@ -263,13 +239,10 @@ export class GizmoSystem {
         }
     }
 
-    // --- Math Helpers ---
     private raycastGizmo(ray: any, pos: Vector3, scale: number): GizmoAxis {
-        // 0. Center Ball
         const ballRad = scale * 0.02; 
         if (this.distRaySegment(ray, pos, pos) < ballRad) return 'VIEW';
 
-        // 1. Axes
         const len = scale * 0.67;  
         const rad = scale * 0.00625; 
         const distToAxis = (axisVec: Vector3) => {
@@ -281,7 +254,6 @@ export class GizmoSystem {
         if (distToAxis({x:0,y:1,z:0}) < rad) return 'Y';
         if (distToAxis({x:0,y:0,z:1}) < rad) return 'Z';
         
-        // 2. Planes
         const pStart = scale * 0.1;
         const pEnd = scale * 0.2; 
         const checkPlane = (normal: Vector3, uAxis: Vector3, vAxis: Vector3): boolean => {

@@ -1,4 +1,3 @@
-
 import React, { useContext, useState, useEffect } from 'react';
 import { EditorContext } from '../contexts/EditorContext';
 import { Icon } from './Icon';
@@ -40,17 +39,14 @@ export const SkinningEditor: React.FC = () => {
             setAsset(foundAsset);
             setBones(foundAsset.skeleton.bones.map((b, i) => ({ name: b.name, index: i })));
             
-            // Auto-switch to Heatmap Mode when tool is active
             engineInstance.setRenderMode(5);
         } else {
             setAsset(null);
             setBones([]);
-            // Revert mode if closed/deselected
             if (engineInstance.renderMode === 5) engineInstance.setRenderMode(0);
         }
         
         return () => {
-             // Cleanup: revert render mode on unmount if it was 5
              if (engineInstance.renderMode === 5) engineInstance.setRenderMode(0);
         };
     }, [selectedIds, selectedAssetIds]);
@@ -69,10 +65,9 @@ export const SkinningEditor: React.FC = () => {
 
     const handlePrune = () => {
         if (selectedIds.length === 0) return;
-        engineInstance.pruneSkinWeights(selectedIds[0], 0.05); // Prune below 0.05
+        engineInstance.pruneSkinWeights(selectedIds[0], 0.05); 
     };
 
-    // Global Painting Listener
     useEffect(() => {
         if (selectedBoneIndex === -1 || !asset || selectedIds.length === 0) return;
         
@@ -86,8 +81,7 @@ export const SkinningEditor: React.FC = () => {
                 const mx = e.clientX - rect.left;
                 const my = e.clientY - rect.top;
                 
-                // Perform pick
-                const result = engineInstance.pickMeshComponent(entityId, mx, my, rect.width, rect.height);
+                const result = engineInstance.selectionSystem.pickMeshComponent(entityId, mx, my, rect.width, rect.height); // Updated
                 
                 if (result) {
                     setIsPainting(true);
@@ -132,7 +126,6 @@ export const SkinningEditor: React.FC = () => {
                 </div>
             </div>
             
-            {/* Paint Operations */}
             <div className="p-3 border-b border-white/5 space-y-3 bg-black/20">
                 <div className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Paint Operation</div>
                 <div className="grid grid-cols-2 gap-2">
@@ -187,7 +180,6 @@ export const SkinningEditor: React.FC = () => {
                 </div>
             </div>
 
-            {/* Bone List */}
             <div className="flex-1 flex flex-col min-h-0">
                 <div className="px-3 py-2 bg-black/10 border-b border-white/5 flex items-center gap-2">
                     <Icon name="Search" size={12} className="text-text-secondary" />
