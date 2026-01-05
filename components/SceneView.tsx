@@ -15,6 +15,7 @@ import { assetManager } from '../services/AssetManager';
 import { StaticMeshAsset } from '../types';
 import { consoleService } from '../services/Console';
 import { useBrushInteraction } from '../hooks/useBrushInteraction';
+import { usePieMenuInteraction } from '../hooks/usePieMenuInteraction';
 
 interface SceneViewProps {
   entities: Entity[];
@@ -35,8 +36,66 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         setTool
     } = useContext(EditorContext)!;
     
-    // Use the custom hook for brush interaction (B key)
+    // --- HOOKS ---
     const { isAdjustingBrush, isBrushKeyHeld } = useBrushInteraction();
+    
+    // State for local view settings
+    const [renderMode, setRenderMode] = useState(0);
+    const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
+    
+    const handleModeSelect = (modeId: number) => { 
+        engineInstance.setRenderMode(modeId); 
+        setRenderMode(modeId); 
+        setIsViewMenuOpen(false); 
+    };
+
+    // Camera Focus Logic (Needed by Pie Menu Hook)
+    const handleFocus = useCallback(() => {
+        if (selectedIds.length > 0) {
+            const bounds = AABBUtils.create();
+            let valid = false;
+            selectedIds.forEach(id => {
+                const pos = sceneGraph.getWorldPosition(id);
+                if (pos) {
+                    valid = true;
+                    const idx = engineInstance.ecs.idToIndex.get(id);
+                    let radius = 0.5;
+                    if (idx !== undefined) {
+                        const sx = Math.abs(engineInstance.ecs.store.scaleX[idx]);
+                        const sy = Math.abs(engineInstance.ecs.store.scaleY[idx]);
+                        const sz = Math.abs(engineInstance.ecs.store.scaleZ[idx]);
+                        radius = Math.max(sx, Math.max(sy, sz)) * 0.5; 
+                    }
+                    AABBUtils.expandPoint(bounds, { x: pos.x - radius, y: pos.y - radius, z: pos.z - radius });
+                    AABBUtils.expandPoint(bounds, { x: pos.x + radius, y: pos.y + radius, z: pos.z + radius });
+                }
+            });
+            if (valid) {
+                const center = AABBUtils.center(bounds, Vec3Utils.create());
+                const size = AABBUtils.size(bounds, Vec3Utils.create());
+                const maxDim = Math.max(size.x, Math.max(size.y, size.z));
+                setCamera(prev => ({ ...prev, target: center, radius: Math.max(maxDim * 1.5, 2.0) }));
+            }
+        } else {
+            setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
+        }
+    }, [selectedIds, sceneGraph]);
+
+    // Use Pie Menu Hook
+    const { 
+        pieMenuState, 
+        openPieMenu, 
+        closePieMenu, 
+        handlePieAction 
+    } = usePieMenuInteraction({
+        sceneGraph,
+        selectedIds,
+        onSelect,
+        setTool,
+        setMeshComponentMode,
+        handleFocus,
+        handleModeSelect
+    });
 
     useEffect(() => {
         engineInstance.meshComponentMode = meshComponentMode;
@@ -61,10 +120,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const viewMenuRef = useRef<HTMLDivElement>(null);
 
-    const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
-    const [renderMode, setRenderMode] = useState(0);
-    const [pieMenuState, setPieMenuState] = useState<{ x: number, y: number, entityId?: string } | null>(null);
-    
     const [camera, setCamera] = useState({ theta: 0.5, phi: 1.2, radius: 10, target: { x: 0, y: 0, z: 0 } });
     
     const [dragState, setDragState] = useState<{
@@ -114,17 +169,14 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             
             const width = containerRef.current?.clientWidth || 1;
             const height = containerRef.current?.clientHeight || 1;
-            const aspect = width / height;
             
+            const aspect = width / height;
             const proj = Mat4Utils.create();
             Mat4Utils.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0, proj);
-            
             const view = Mat4Utils.create();
             Mat4Utils.lookAt({x:eyeX, y:eyeY, z:eyeZ}, camera.target, {x:0,y:1,z:0}, view);
-            
             const vp = Mat4Utils.create();
             Mat4Utils.multiply(proj, view, vp);
-            
             engineInstance.updateCamera(vp, {x:eyeX, y:eyeY, z:eyeZ}, width, height);
             gizmoSystem.setTool(tool);
 
@@ -158,39 +210,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         return () => cancelAnimationFrame(frameId);
     }, [camera, tool, softSelectionEnabled, softSelectionRadius]); 
 
-    const handleFocus = useCallback(() => {
-        if (selectedIds.length > 0) {
-            const bounds = AABBUtils.create();
-            let valid = false;
-
-            selectedIds.forEach(id => {
-                const pos = sceneGraph.getWorldPosition(id);
-                if (pos) {
-                    valid = true;
-                    const idx = engineInstance.ecs.idToIndex.get(id);
-                    let radius = 0.5;
-                    if (idx !== undefined) {
-                        const sx = Math.abs(engineInstance.ecs.store.scaleX[idx]);
-                        const sy = Math.abs(engineInstance.ecs.store.scaleY[idx]);
-                        const sz = Math.abs(engineInstance.ecs.store.scaleZ[idx]);
-                        radius = Math.max(sx, Math.max(sy, sz)) * 0.5; 
-                    }
-                    AABBUtils.expandPoint(bounds, { x: pos.x - radius, y: pos.y - radius, z: pos.z - radius });
-                    AABBUtils.expandPoint(bounds, { x: pos.x + radius, y: pos.y + radius, z: pos.z + radius });
-                }
-            });
-
-            if (valid) {
-                const center = AABBUtils.center(bounds, Vec3Utils.create());
-                const size = AABBUtils.size(bounds, Vec3Utils.create());
-                const maxDim = Math.max(size.x, Math.max(size.y, size.z));
-                setCamera(prev => ({ ...prev, target: center, radius: Math.max(maxDim * 1.5, 2.0) }));
-            }
-        } else {
-            setCamera(prev => ({ ...prev, target: {x:0, y:0, z:0}, radius: 10 }));
-        }
-    }, [selectedIds, sceneGraph]);
-
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const active = document.activeElement;
@@ -205,10 +224,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }, [handleFocus]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
-        // PROTECTED FEATURE CHECK: Block selection if brush key is held
         if (isBrushKeyHeld.current) return;
 
-        if (pieMenuState && e.button !== 2) setPieMenuState(null);
+        if (pieMenuState && e.button !== 2) closePieMenu();
         if (pieMenuState) return;
         
         if (!containerRef.current) return;
@@ -225,9 +243,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             const hitId = engineInstance.selectionSystem.selectEntityAt(mx, my, rect.width, rect.height);
             if (hitId) {
                 if (!selectedIds.includes(hitId)) onSelect([hitId]);
-                setPieMenuState({ x: e.clientX, y: e.clientY, entityId: hitId });
+                openPieMenu(e.clientX, e.clientY, hitId);
             } else if (selectedIds.length > 0) {
-                setPieMenuState({ x: e.clientX, y: e.clientY });
+                openPieMenu(e.clientX, e.clientY);
             }
             return;
         }
@@ -419,34 +437,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         }
     };
 
-    const handleModeSelect = (modeId: number) => { 
-        engineInstance.setRenderMode(modeId); 
-        setRenderMode(modeId); 
-        setIsViewMenuOpen(false); 
-    };
-
-    const handlePieAction = (action: string) => {
-        if (action === 'tool_select') setTool('SELECT');
-        if (action === 'tool_move') setTool('MOVE');
-        if (action === 'tool_rotate') setTool('ROTATE');
-        if (action === 'tool_scale') setTool('SCALE');
-        if (action === 'toggle_grid') engineInstance.toggleGrid();
-        if (action === 'toggle_wire') handleModeSelect(3); 
-        if (action === 'reset_cam') handleFocus();
-        if (action === 'delete') { selectedIds.forEach(id => engineInstance.deleteEntity(id, sceneGraph)); onSelect([]); }
-        if (action === 'duplicate') { selectedIds.forEach(id => engineInstance.duplicateEntity(id)); }
-        if (action === 'focus') { handleFocus(); }
-        if (action === 'extrude') engineInstance.extrudeFaces();
-        if (action === 'bevel') engineInstance.bevelEdges();
-        if (action === 'weld') engineInstance.weldVertices();
-        if (action === 'connect') engineInstance.connectComponents();
-        if (action === 'delete_face') engineInstance.deleteSelectedFaces();
-        if (action === 'loop_vert') engineInstance.selectionSystem.selectLoop('VERTEX');
-        if (action === 'loop_edge') engineInstance.selectionSystem.selectLoop('EDGE');
-        if (action === 'loop_face') engineInstance.selectionSystem.selectLoop('FACE');
-        setPieMenuState(null);
-    };
-
     return (
         <div ref={containerRef} 
              className={`w-full h-full bg-[#151515] relative overflow-hidden select-none group/scene ${isAdjustingBrush ? 'cursor-ew-resize' : (dragState ? (dragState.mode === 'PAN' ? 'cursor-move' : 'cursor-grabbing') : 'cursor-default')}`} 
@@ -516,9 +506,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
                     y={pieMenuState.y}
                     entityId={pieMenuState.entityId}
                     currentMode={meshComponentMode}
-                    onSelectMode={(m) => { setMeshComponentMode(m); setPieMenuState(null); }}
+                    onSelectMode={(m) => { setMeshComponentMode(m); closePieMenu(); }}
                     onAction={handlePieAction}
-                    onClose={() => setPieMenuState(null)}
+                    onClose={closePieMenu}
                 />, 
                 document.body
             )}
