@@ -1,5 +1,3 @@
-
-here is new update, it much better, is there any approach to match Maya 
 import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh, FolderAsset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
@@ -670,8 +668,8 @@ class AssetManagerService {
         }
 
         const opts = {
-            planarThreshold: 0.85,
-            angleTolerance: 0.3,
+            planarThreshold: 0.7, // ~45 degrees, stricter than before to respect hard edges
+            angleTolerance: 0.2,  // ~78 degrees min angle for corner
             maxEdgeLengthRatio: 3.0,
             ...options
         };
@@ -690,32 +688,33 @@ class AssetManagerService {
         const cross = (a: any, b: any) => ({ x: a.y*b.z - a.z*b.y, y: a.z*b.x - a.x*b.z, z: a.x*b.y - a.y*b.x });
         const len = (v: any) => Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
         const normalize = (v: any) => { const l=len(v); return l>0?{x:v.x/l, y:v.y/l, z:v.z/l}:{x:0,y:0,z:0}; };
-        const angleCos = (a: any, b: any) => Math.abs(dot(normalize(a), normalize(b)));
+        
+        // Return 1.0 for 90deg, 0.0 for 0/180deg
+        const orthogonality = (a: any, b: any) => {
+            const d = dot(normalize(a), normalize(b));
+            return 1.0 - Math.abs(d); 
+        };
 
         // 2. Precompute Triangle Normals
         const triCount = indices.length / 3;
         const triNormals = new Float32Array(triCount * 3);
         
         for(let t=0; t<triCount; t++) {
-            // Use existing normals if available for better shading boundary detection
-            if (normals.length > 0) {
-                 const i0 = indices[t*3], i1 = indices[t*3+1], i2 = indices[t*3+2];
-                 const nx = (normals[i0*3]+normals[i1*3]+normals[i2*3])/3;
-                 const ny = (normals[i0*3+1]+normals[i1*3+1]+normals[i2*3+1])/3;
-                 const nz = (normals[i0*3+2]+normals[i1*3+2]+normals[i2*3+2])/3;
-                 const l = Math.sqrt(nx*nx+ny*ny+nz*nz);
-                 triNormals[t*3] = nx/l; triNormals[t*3+1] = ny/l; triNormals[t*3+2] = nz/l;
-            } else {
-                 const i0 = indices[t*3], i1 = indices[t*3+1], i2 = indices[t*3+2];
-                 const v0 = getVec(i0), v1 = getVec(i1), v2 = getVec(i2);
-                 const e1 = sub(v1, v0), e2 = sub(v2, v0);
-                 const n = normalize(cross(e1, e2));
-                 triNormals[t*3] = n.x; triNormals[t*3+1] = n.y; triNormals[t*3+2] = n.z;
-            }
+            // Calculate geometric normal for flatness check
+            const i0 = indices[t*3], i1 = indices[t*3+1], i2 = indices[t*3+2];
+            const v0 = getVec(i0), v1 = getVec(i1), v2 = getVec(i2);
+            const e1 = sub(v1, v0), e2 = sub(v2, v0);
+            const n = normalize(cross(e1, e2));
+            triNormals[t*3] = n.x; triNormals[t*3+1] = n.y; triNormals[t*3+2] = n.z;
         }
 
-        // 3. Build Edge Map using WELDED indices
+        // 3. Build Edge Map & Valence using WELDED indices
         const edgeMap = new Map<string, number[]>();
+        const valence = new Map<number, number>(); // Counts unique edges connected to vertex
+        
+        // First pass: Count valence based on edges
+        const uniqueEdges = new Set<string>();
+        
         for (let t = 0; t < triCount; t++) {
             const w0 = weldedIndices[t*3], w1 = weldedIndices[t*3+1], w2 = weldedIndices[t*3+2];
             const edges = [
@@ -723,17 +722,18 @@ class AssetManagerService {
                 [w1, w2].sort((a,b)=>a-b).join('|'),
                 [w2, w0].sort((a,b)=>a-b).join('|')
             ];
+            
             edges.forEach(e => {
                 if(!edgeMap.has(e)) edgeMap.set(e, []);
                 edgeMap.get(e)!.push(t);
+                
+                if (!uniqueEdges.has(e)) {
+                    uniqueEdges.add(e);
+                    const [v1, v2] = e.split('|').map(Number);
+                    valence.set(v1, (valence.get(v1)||0)+1);
+                    valence.set(v2, (valence.get(v2)||0)+1);
+                }
             });
-        }
-
-        // 4. Compute Valence on Welded Topology
-        const valence = new Map<number, number>();
-        for (let i = 0; i < weldedIndices.length; i++) {
-             const v = weldedIndices[i];
-             valence.set(v, (valence.get(v)||0)+1);
         }
 
         // 5. Candidate Evaluation
@@ -745,12 +745,14 @@ class AssetManagerService {
             
             const t1 = tris[0];
             const t2 = tris[1];
-            if (used[t1] || used[t2]) continue; // Optimization: Skip if already grabbed? No, sort later.
             
-            // Planarity Check
+            // Hard Edge / Planarity Check
+            // We use the geometric normals to detect sharp creases which should NOT be bridged
             const n1 = { x: triNormals[t1*3], y: triNormals[t1*3+1], z: triNormals[t1*3+2] };
             const n2 = { x: triNormals[t2*3], y: triNormals[t2*3+1], z: triNormals[t2*3+2] };
-            if (dot(n1, n2) < opts.planarThreshold) continue;
+            const planarity = dot(n1, n2);
+            
+            if (planarity < opts.planarThreshold) continue;
 
             // Get Welded Indices to find topology
             const w1 = [weldedIndices[t1*3], weldedIndices[t1*3+1], weldedIndices[t1*3+2]];
@@ -772,13 +774,12 @@ class AssetManagerService {
                  return indices[base+2];
             };
             
-            // Determine winding order for T1: U1 -> S1 -> S2
+            // Winding Check
             const idxU1 = w1.indexOf(u1W);
             const wS1 = w1[(idxU1 + 1) % 3];
             const wS2 = w1[(idxU1 + 2) % 3];
             
-            // Validate T2 shares S1, S2 in compatible winding
-            // T2 should be U2 -> S2 -> S1
+            // T2 must share S1 and S2. T2 should be U2 -> S2 -> S1 for manifold consistency
             const idxU2 = w2.indexOf(u2W);
             const wS2_check = w2[(idxU2 + 1) % 3];
             const wS1_check = w2[(idxU2 + 2) % 3];
@@ -789,7 +790,7 @@ class AssetManagerService {
             const qU1 = getOriginal(t1, u1W);
             const qS1 = getOriginal(t1, wS1);
             const qU2 = getOriginal(t2, u2W);
-            const qS2 = getOriginal(t1, wS2); // Use T1's index for S2 (arbitrary choice for connectivity)
+            const qS2 = getOriginal(t1, wS2); 
 
             const quad = [qU1, qS1, qU2, qS2];
 
@@ -800,25 +801,48 @@ class AssetManagerService {
                 sub(p[3], p[2]), sub(p[0], p[3])
             ];
             const lens = edges.map(len);
-            if (Math.max(...lens) / Math.min(...lens) > opts.maxEdgeLengthRatio) continue;
-
-            // Hard Angle Reject
-            let maxCos = 0;
+            
+            // Rectangularity (Corner Angles)
+            let angleScore = 0;
+            let badAngle = false;
             for(let k=0; k<4; k++) {
-                const c = angleCos(edges[k], edges[(k+1)%4]);
-                if(c > maxCos) maxCos = c;
+                const orth = orthogonality(edges[k], edges[(k+1)%4]); // 1.0 is 90deg
+                if (orth < 0.2) badAngle = true; // Reject extremely skewed corners (< ~12 deg from 90)
+                angleScore += orth;
             }
-            if (maxCos > opts.angleTolerance) continue;
+            if (badAngle) continue;
 
-            // Score
-            candidates.push({ t1, t2, quad, score: maxCos });
+            // Aspect Ratio Check
+            const maxLen = Math.max(...lens);
+            const minLen = Math.min(...lens);
+            if (maxLen / minLen > opts.maxEdgeLengthRatio) continue;
+
+            // Valence Steering (Maya Style)
+            // We penalize removing edges from vertices that are already valence 4 or less.
+            // We encourage removing edges from high-valence poles (>4).
+            // sharedW[0] and sharedW[1] are the vertices losing an edge.
+            const v1Val = valence.get(sharedW[0]) || 0;
+            const v2Val = valence.get(sharedW[1]) || 0;
+            
+            let valencePenalty = 0;
+            if (v1Val <= 4) valencePenalty += 2.0; // Protect low valence
+            if (v2Val <= 4) valencePenalty += 2.0;
+            
+            // Score (Higher is better)
+            // - Rectangularity (0-4)
+            // - Planarity (0-1)
+            // - Valence (Penalty subtracts)
+            const score = (angleScore * 2.0) + (planarity * 5.0) - valencePenalty;
+
+            candidates.push({ t1, t2, quad, score });
         }
 
-        // 7. Merge
-        candidates.sort((a,b) => a.score - b.score);
+        // 7. Merge (Best Score First)
+        candidates.sort((a,b) => b.score - a.score);
         
         for (const c of candidates) {
             if (used[c.t1] || used[c.t2]) continue;
+            
             faces.push(c.quad);
             const fIdx = faces.length - 1;
             triToFace[c.t1] = fIdx;
