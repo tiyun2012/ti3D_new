@@ -6,7 +6,7 @@ import { RigVisualizer } from '../rig/RigVisualizer';
 import { assetManager } from '../AssetManager';
 import { engineInstance } from '../engine';
 import { Asset } from '../../types';
-import { Mat4Utils, QuatUtils } from '../math';
+import { Mat4Utils, QuatUtils, Vec3Utils } from '../math';
 
 class RigInstance {
     vm: RigVM;
@@ -23,10 +23,13 @@ class RigInstance {
 export class ControlRigSystem {
     private instances = new Map<string, RigInstance>(); // EntityID (Root) -> RigInstance
     private _tempQuat = { x: 0, y: 0, z: 0, w: 1 };
+    private _tempMat = new Float32Array(16);
+    private _invParent = new Float32Array(16);
 
     update(dt: number) {
         const store = engineInstance.ecs.store;
         const idToIndex = engineInstance.ecs.idToIndex;
+        const selectedIndices = engineInstance.selectionSystem.selectedIndices;
 
         // 1. Cleanup Pass: Remove instances for deleted/disabled entities or removed rigs
         for (const [entityId, instance] of this.instances.entries()) {
@@ -82,30 +85,51 @@ export class ControlRigSystem {
             }
 
             // B. Sync Interactive Controls (Node 1) from Visualizer
-            // If the user moved the Green Box with Gizmo, we read that back into the VM
+            // Only update input if the user is explicitly interacting with this node
             if (instance.visualizer) {
                 const ctrlEcsIdx = instance.visualizer.entityMap.get(1); // Node 1 is Root_Ctrl
                 if (ctrlEcsIdx !== undefined) {
-                    const baseInputIdx = 1; // Node 1 index
                     
-                    // Read Local Transform from ECS (which Gizmo modifies)
-                    // Note: Gizmo sets local transform relative to parent.
-                    // Visualizer hierarchy is flat in SceneGraph (controlled by VM), so Gizmo acts on World Space basically?
-                    // Actually, since we bypass SceneGraph hierarchy in Visualizer.update, the ECS values are effectively "Input Values" for the VM.
-                    
-                    pose.inputPos[baseInputIdx*3] = store.posX[ctrlEcsIdx];
-                    pose.inputPos[baseInputIdx*3+1] = store.posY[ctrlEcsIdx];
-                    pose.inputPos[baseInputIdx*3+2] = store.posZ[ctrlEcsIdx];
+                    // Check if this control is selected
+                    if (selectedIndices.has(ctrlEcsIdx)) {
+                        // User is interacting: Read ECS transform -> Compute Local -> Update Input
+                        // 1. Get Current World from ECS (set by Gizmo)
+                        const worldMat = store.worldMatrix.subarray(ctrlEcsIdx*16, ctrlEcsIdx*16+16);
+                        
+                        // 2. Get Parent World (Anchor/Node 0) from Rig (calculated last frame or Step A)
+                        // Note: Step A updated Input 0, but VM hasn't run yet. 
+                        // However, we can use the Mesh Entity's World Matrix directly as parent.
+                        const anchorMat = store.worldMatrix.subarray(rootIdx!*16, rootIdx!*16+16);
+                        
+                        // 3. Compute Local = Inv(Anchor) * CtrlWorld
+                        if (Mat4Utils.invert(anchorMat, this._invParent)) {
+                            Mat4Utils.multiply(this._invParent, worldMat, this._tempMat);
+                            
+                            // 4. Decompose Local Matrix to Input
+                            const m = this._tempMat;
+                            // Pos
+                            pose.inputPos[3] = m[12];
+                            pose.inputPos[4] = m[13];
+                            pose.inputPos[5] = m[14];
+                            
+                            // Scale
+                            const sx = Math.sqrt(m[0]*m[0] + m[1]*m[1] + m[2]*m[2]);
+                            const sy = Math.sqrt(m[4]*m[4] + m[5]*m[5] + m[6]*m[6]);
+                            const sz = Math.sqrt(m[8]*m[8] + m[9]*m[9] + m[10]*m[10]);
+                            pose.inputScl[3] = sx; pose.inputScl[4] = sy; pose.inputScl[5] = sz;
 
-                    QuatUtils.fromEuler(store.rotX[ctrlEcsIdx], store.rotY[ctrlEcsIdx], store.rotZ[ctrlEcsIdx], this._tempQuat);
-                    pose.inputRot[baseInputIdx*4] = this._tempQuat.x;
-                    pose.inputRot[baseInputIdx*4+1] = this._tempQuat.y;
-                    pose.inputRot[baseInputIdx*4+2] = this._tempQuat.z;
-                    pose.inputRot[baseInputIdx*4+3] = this._tempQuat.w;
-
-                    pose.inputScl[baseInputIdx*3] = store.scaleX[ctrlEcsIdx];
-                    pose.inputScl[baseInputIdx*3+1] = store.scaleY[ctrlEcsIdx];
-                    pose.inputScl[baseInputIdx*3+2] = store.scaleZ[ctrlEcsIdx];
+                            // Rot
+                            QuatUtils.fromMat4(m, this._tempQuat);
+                            pose.inputRot[4] = this._tempQuat.x;
+                            pose.inputRot[5] = this._tempQuat.y;
+                            pose.inputRot[6] = this._tempQuat.z;
+                            pose.inputRot[7] = this._tempQuat.w;
+                        }
+                    }
+                    // If NOT selected, we do nothing. 
+                    // The VM will use the existing `pose.input` (Local Transform).
+                    // Since Node 0 (Parent) changed in Step A, the VM will re-calculate Global for Node 1.
+                    // This creates the "Follow Parent" behavior.
                 }
             }
 
@@ -163,7 +187,7 @@ export class ControlRigSystem {
             { op: OpCode.CALC_GLOBAL, target: 0, srcA: -1 },
             
             // Node 1 (Root_Ctrl): Driven by User Input (Synced in update step B)
-            // Local = Input (from Gizmo)
+            // Local = Input (from Gizmo interaction or default)
             // Global = Parent(0) * Local
             { op: OpCode.CALC_LOCAL, target: 1, srcA: -1, param: 1 },
             { op: OpCode.CALC_GLOBAL, target: 1, srcA: 0 },

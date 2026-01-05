@@ -423,6 +423,34 @@ export class Engine {
         this.sceneGraph.registerEntity(pivot);
         
         consoleService.success("Default Scene Created");
+
+        // ---------------------------------------------------------
+        // ADD THIS BLOCK TO SPAWN THE RIG
+        // ---------------------------------------------------------
+        
+        // 1. Create the Rig Entity
+        const rigEntityId = this.ecs.createEntity("Test Character Rig");
+        const rigIdx = this.ecs.idToIndex.get(rigEntityId)!;
+        
+        // Add Transform so it can be moved
+        this.ecs.addComponent(rigEntityId, ComponentType.TRANSFORM);
+        this.ecs.store.setPosition(rigIdx, 0, 0, 0); // Center of world
+        this.sceneGraph.registerEntity(rigEntityId);
+
+        // 2. Mock a Rig Asset in AssetManager (so the System accepts it)
+        const TEST_RIG_ID = 99;
+        const TEST_RIG_UUID = 'Rig_Simple_Test';
+
+        // Ensure the internal map exists and set our fake rig
+        const am = assetManager as any;
+        if (!am.rigIntToUuid) am.rigIntToUuid = new Map<number, string>();
+        am.rigIntToUuid.set(TEST_RIG_ID, TEST_RIG_UUID);
+
+        // 3. Assign the Rig to the Entity
+        // This is the trigger that makes ControlRigSystem.update() spawn the visualizer
+        this.ecs.store.rigIndex[rigIdx] = TEST_RIG_ID;
+
+        consoleService.success("Simple Rig Added to Scene");
     }
 
     resize(width: number, height: number) { this.renderer.resize(width, height); }
