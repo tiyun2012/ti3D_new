@@ -1,13 +1,13 @@
-import { Engine } from '../engine';
+
 import { Mat4Utils, RayUtils, Vec3Utils, AABBUtils } from '../math';
 import { COMPONENT_MASKS } from '../constants';
 import { assetManager } from '../AssetManager';
-import { StaticMeshAsset, MeshComponentMode } from '../../types';
+import { StaticMeshAsset, MeshComponentMode, IEngine } from '../../types';
 import { MeshTopologyUtils, MeshPickingResult } from '../MeshTopologyUtils';
 import { consoleService } from '../Console';
 
 export class SelectionSystem {
-    engine: Engine;
+    engine: IEngine;
     selectedIndices = new Set<number>();
     subSelection = {
         vertexIds: new Set<number>(),
@@ -16,7 +16,7 @@ export class SelectionSystem {
     };
     hoveredVertex: { entityId: string, index: number } | null = null;
 
-    constructor(engine: Engine) {
+    constructor(engine: IEngine) {
         this.engine = engine;
     }
 

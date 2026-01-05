@@ -24,6 +24,24 @@ export enum ComponentType {
   PARTICLE_SYSTEM = 'ParticleSystem'
 }
 
+// --- ENGINE INTERFACE (For Circular Dependency Breaking) ---
+export interface IEngine {
+    ecs: any; // SoAEntitySystem
+    sceneGraph: any; // SceneGraph
+    currentViewProj: Float32Array | null;
+    currentCameraPos: { x: number, y: number, z: number };
+    currentWidth: number;
+    currentHeight: number;
+    meshComponentMode: MeshComponentMode;
+    softSelectionRadius: number;
+    recalculateSoftSelection(trigger?: boolean): void;
+    clearDeformation(): void;
+    notifyUI(): void;
+    startVertexDrag(entityId: string): void;
+    updateVertexDrag(entityId: string, delta: Vector3): void;
+    endVertexDrag(): void;
+}
+
 // --- CONFIGURATION TYPES ---
 
 export interface UIConfiguration {

@@ -135,6 +135,38 @@ export class Engine {
         return this.renderer.meshSystem;
     }
 
+    // --- DELEGATE METHODS FOR BACKWARDS COMPATIBILITY ---
+    // These ensure UI components calling old engine methods still work by forwarding to SelectionSystem
+    
+    get hoveredVertex() { return this.selectionSystem.hoveredVertex; }
+    
+    setSelected(ids: string[]) { this.selectionSystem.setSelected(ids); }
+    
+    selectEntityAt(mx: number, my: number, w: number, h: number) {
+        return this.selectionSystem.selectEntityAt(mx, my, w, h);
+    }
+    
+    selectEntitiesInRect(x: number, y: number, w: number, h: number) {
+        return this.selectionSystem.selectEntitiesInRect(x, y, w, h);
+    }
+    
+    highlightVertexAt(mx: number, my: number, w: number, h: number) {
+        this.selectionSystem.highlightVertexAt(mx, my, w, h);
+    }
+    
+    selectVerticesInBrush(mx: number, my: number, w: number, h: number, add: boolean) {
+        this.selectionSystem.selectVerticesInBrush(mx, my, w, h, add);
+    }
+    
+    selectLoop(mode: MeshComponentMode) {
+        this.selectionSystem.selectLoop(mode);
+    }
+    
+    getSelectionAsVertices() {
+        return this.selectionSystem.getSelectionAsVertices();
+    }
+    // ---------------------------------------------------
+
     subscribe(cb: () => void) {
         this.listeners.push(cb);
         return () => {
