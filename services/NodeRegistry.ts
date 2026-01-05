@@ -1,3 +1,4 @@
+
 import { GraphNode, GraphConnection } from '../types';
 import { assetManager } from './AssetManager';
 
@@ -257,5 +258,55 @@ export const NodeRegistry: Record<string, NodeDefinition> = {
         inputs: [{ id: 'in', name: 'Roughness', type: 'float' }],
         outputs: [{ id: 'out', name: 'Smoothness', type: 'float' }],
         glsl: (i, v) => `float ${v} = 1.0 - (${i[0] || '0.0'});`
+    },
+
+    // --- RIGGING NODES ---
+    'RigController': {
+        type: 'RigController', 
+        category: 'Rigging', 
+        title: 'Controller',
+        inputs: [
+            { id: 'parent', name: 'Parent', type: 'pose' }, 
+            { id: 'offset', name: 'Home Offset', type: 'vec3' }
+        ],
+        outputs: [
+            { id: 'pose', name: 'Pose', type: 'pose' }
+        ],
+        data: {
+            name: 'Ctrl',
+            shape: 'Box',
+            color: '#00ff00',
+            size: '0.5',
+            homePosition: { x: 0, y: 0, z: 0 },
+            homeRotation: { x: 0, y: 0, z: 0 }
+        }
+    },
+
+    'RigJoint': {
+        type: 'RigJoint', 
+        category: 'Rigging', 
+        title: 'Bone / Joint',
+        inputs: [
+            { id: 'parent', name: 'Parent', type: 'pose' },
+            { id: 'bind', name: 'Bind Transform', type: 'vec3' } 
+        ],
+        outputs: [
+            { id: 'pose', name: 'Pose', type: 'pose' }
+        ],
+        data: {
+            name: 'Joint_Name',
+            boneIndex: -1 
+        }
+    },
+
+    'RigRoot': {
+        type: 'RigRoot', 
+        category: 'Rigging', 
+        title: 'Rig Anchor',
+        inputs: [],
+        outputs: [
+            { id: 'pose', name: 'Root Pose', type: 'pose' }
+        ],
+        data: {}
     }
 };

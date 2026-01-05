@@ -18,6 +18,14 @@ export interface RigTemplate {
 
 export const RIG_TEMPLATES: RigTemplate[] = [
     {
+        name: 'Empty Rig',
+        description: 'A blank canvas for custom control rigs.',
+        nodes: [
+            { id: 'root', type: 'RigRoot', position: { x: 100, y: 300 } }
+        ],
+        connections: []
+    },
+    {
         name: 'Locomotion IK Logic',
         description: 'Basic two-bone IK setup for leg movement.',
         nodes: [
@@ -27,7 +35,7 @@ export const RIG_TEMPLATES: RigTemplate[] = [
             { id: 'sin', type: 'Sine', position: { x: 400, y: 100 } },
             { id: 'zero', type: 'Float', position: { x: 400, y: 200 }, data: { value: '0.0' } },
             { id: 'gt', type: 'GreaterThan', position: { x: 550, y: 150 } },
-            { id: 'in', type: 'RigInput', position: { x: 50, y: 400 } },
+            { id: 'root', type: 'RigRoot', position: { x: 50, y: 400 } },
             { id: 'branch', type: 'Branch', position: { x: 750, y: 300 } },
             { id: 'target', type: 'Vec3', position: { x: 750, y: 500 }, data: { x: '0.2', y: '0.5', z: '0.0' } },
             { id: 'ik', type: 'TwoBoneIK', position: { x: 950, y: 450 }, data: { root: 'Thigh_L', mid: 'Calf_L', eff: 'Foot_L' } },
@@ -40,8 +48,8 @@ export const RIG_TEMPLATES: RigTemplate[] = [
             { id: 'l4', fromNode: 'sin', fromPin: 'out', toNode: 'gt', toPin: 'a' },
             { id: 'l5', fromNode: 'zero', fromPin: 'out', toNode: 'gt', toPin: 'b' },
             { id: 'f1', fromNode: 'gt', fromPin: 'out', toNode: 'branch', toPin: 'condition' },
-            { id: 'f2', fromNode: 'in', fromPin: 'pose', toNode: 'branch', toPin: 'false' },
-            { id: 'f3', fromNode: 'in', fromPin: 'pose', toNode: 'ik', toPin: 'pose' },
+            { id: 'f2', fromNode: 'root', fromPin: 'pose', toNode: 'branch', toPin: 'false' },
+            { id: 'f3', fromNode: 'root', fromPin: 'pose', toNode: 'ik', toPin: 'pose' },
             { id: 'f4', fromNode: 'target', fromPin: 'out', toNode: 'ik', toPin: 'target' },
             { id: 'f5', fromNode: 'ik', fromPin: 'outPose', toNode: 'branch', toPin: 'true' },
             { id: 'f6', fromNode: 'branch', fromPin: 'out', toNode: 'out', toPin: 'pose' }
@@ -78,7 +86,9 @@ class AssetManagerService {
         this.createMaterial('Standard', MATERIAL_TEMPLATES[0]);
         this.createDefaultPhysicsMaterials();
         this.createScript('New Visual Script');
-        this.createRig('Locomotion IK Logic', RIG_TEMPLATES[0]);
+        // Default rig creation removed from constructor to keep scene clean or use empty if desired.
+        // If we want a default rig asset available:
+        this.createRig('New Control Rig', RIG_TEMPLATES[0]); 
     }
 
     private computeAABB(vertices: Float32Array) {
@@ -299,6 +309,7 @@ class AssetManagerService {
 
     createRig(name: string, template?: RigTemplate, path: string = '/Content/Rigs'): RigAsset {
         const id = crypto.randomUUID();
+        // Use the first template (Empty Rig) by default
         const base = template || RIG_TEMPLATES[0];
         const asset: RigAsset = { id, name, type: 'RIG', path, data: { nodes: JSON.parse(JSON.stringify(base.nodes)), connections: JSON.parse(JSON.stringify(base.connections)) } };
         this.registerAsset(asset);
