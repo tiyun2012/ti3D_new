@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState, useLayoutEffect, useContext, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Entity, ToolType, MeshComponentMode } from '../types';
@@ -13,6 +14,7 @@ import { MeshTopologyUtils } from '../services/MeshTopologyUtils';
 import { assetManager } from '../services/AssetManager';
 import { StaticMeshAsset } from '../types';
 import { consoleService } from '../services/Console';
+import { useBrushInteraction } from '../hooks/useBrushInteraction';
 
 interface SceneViewProps {
   entities: Entity[];
@@ -33,6 +35,9 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         setTool
     } = useContext(EditorContext)!;
     
+    // Use the custom hook for brush interaction (B key)
+    const { isAdjustingBrush, isBrushKeyHeld } = useBrushInteraction();
+
     useEffect(() => {
         engineInstance.meshComponentMode = meshComponentMode;
         engineInstance.softSelectionEnabled = softSelectionEnabled;
@@ -59,8 +64,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
     const [renderMode, setRenderMode] = useState(0);
     const [pieMenuState, setPieMenuState] = useState<{ x: number, y: number, entityId?: string } | null>(null);
-    const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
-    const brushStartPos = useRef({ x: 0, y: 0, startRadius: 0 });
     
     const [camera, setCamera] = useState({ theta: 0.5, phi: 1.2, radius: 10, target: { x: 0, y: 0, z: 0 } });
     
@@ -202,9 +205,12 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
     }, [handleFocus]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
+        // PROTECTED FEATURE CHECK: Block selection if brush key is held
+        if (isBrushKeyHeld.current) return;
+
         if (pieMenuState && e.button !== 2) setPieMenuState(null);
         if (pieMenuState) return;
-
+        
         if (!containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
         const mx = e.clientX - rect.left; 
@@ -322,13 +328,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
 
-        if (isAdjustingBrush) {
-            const dx = e.clientX - brushStartPos.current.x;
-            const sensitivity = 0.05;
-            const newRad = Math.max(0.1, brushStartPos.current.startRadius + dx * sensitivity);
-            setSoftSelectionRadius(newRad);
-            return;
-        }
+        if (isAdjustingBrush) return; // Handled by hook
 
         if (engineInstance.isInputDown && !dragState && !selectionBox && meshComponentMode === 'VERTEX') {
             engineInstance.selectionSystem.selectVerticesInBrush(mx, my, rect.width, rect.height, !e.ctrlKey); 
@@ -377,33 +377,7 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             gizmoSystem.update(0, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, false, true);
         }
         setDragState(null);
-        setIsAdjustingBrush(false);
     };
-
-    useEffect(() => {
-        let bDown = false;
-        const onDown = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = true; };
-        const onUp = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bDown = false; };
-        
-        const onWindowMouseDown = (e: MouseEvent) => {
-            if (bDown && e.button === 0) {
-                e.preventDefault(); e.stopPropagation();
-                if (!softSelectionEnabled) setSoftSelectionEnabled(true);
-                setIsAdjustingBrush(true);
-                brushStartPos.current = { x: e.clientX, y: e.clientY, startRadius: softSelectionRadius };
-            }
-        };
-
-        window.addEventListener('keydown', onDown);
-        window.addEventListener('keyup', onUp);
-        window.addEventListener('mousedown', onWindowMouseDown); 
-        
-        return () => {
-            window.removeEventListener('keydown', onDown);
-            window.removeEventListener('keyup', onUp);
-            window.removeEventListener('mousedown', onWindowMouseDown);
-        };
-    }, [softSelectionRadius, setSoftSelectionEnabled, softSelectionEnabled]);
 
     useEffect(() => {
         window.addEventListener('mousemove', handleGlobalMouseMove);

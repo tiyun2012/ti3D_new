@@ -96,14 +96,9 @@ export class AnimationSystem {
                         }
                         if (rotTrack) {
                             const r = this.evaluateTrack(rotTrack, localTime);
-                            // Convert Quat to Euler for ECS?
-                            // ECS uses Euler. We need Quat->Euler.
                             const q = { x: r[0], y: r[1], z: r[2], w: r[3] };
-                            // Simple YXZ conversion for bones
-                            // euler = ... 
-                            // For MVP, we skip applying rotation to ECS if we don't have robust Quat->Euler util
-                            // But to visualize animation we must.
-                            // Let's rely on SceneGraph to update world matrix next frame.
+                            const euler = QuatUtils.toEuler(q, { x: 0, y: 0, z: 0 });
+                            ecs.store.setRotation(bIdxECS, euler.x, euler.y, euler.z);
                         }
                         if (sclTrack) {
                             const s = this.evaluateTrack(sclTrack, localTime);
@@ -114,32 +109,10 @@ export class AnimationSystem {
                 }
 
                 // --- 2. Read Back World Matrix for Skinning ---
-                // This allows the manual Gizmo edits to affect skinning instantly
                 const worldMat = sceneGraph.getWorldMatrix(boneEntityId);
                 if (worldMat) {
-                    // Skin Matrix = World * InverseBindPose
-                    // InverseBindPose transforms from Model Space to Bone Local Space
-                    // Wait. Standard Skinning: 
-                    // Vertex (Bind Pose) -> Bone Space (via InvBind) -> World Space (via Bone World) -> View Space
-                    // Our shader expects: Matrix that takes Vertex from Bind Pose to World.
-                    // Matrix = BoneWorld * InverseBindPose
-                    // BUT: InverseBindPose usually takes World (Bind) -> Bone Local.
-                    // If stored relative to Mesh Root, then we need Mesh World Inverse?
-                    // Typically: SkinMat = BoneWorld * InvBoneWorld(Bind)
-                    
-                    // Our stored `inverseBindPose` is likely Global Inverse at Bind Time if standard THREE loader usage.
-                    // If we assume the hierarchy is correct:
-                    
                     const skinM = Mat4Utils.create();
-                    // We need to multiply the Bone's Current World Matrix by the Inverse Bind Pose
-                    // However, we must ensure everything is in the same coordinate space (World).
-                    // `bone.inverseBindPose` from loader is usually World-Space-Inverse (if updateMatrixWorld was called).
-                    
-                    // Note: If the mesh itself moves, we need to account for Mesh World Matrix?
-                    // Usually skinning happens in World Space in vertex shader.
-                    // `v_worldPos = skinMatrix * localPos`
-                    // So skinMatrix must output World Coordinates.
-                    
+                    // Skin Matrix = World * InverseBindPose
                     Mat4Utils.multiply(worldMat, bone.inverseBindPose, skinM);
                     boneMatrices.set(skinM, bIdx * 16);
 

@@ -341,6 +341,28 @@ export const QuatUtils = {
         return out;
     },
 
+    // NEW: Convert Quaternion to Euler Angles (XYZ)
+    toEuler: (q: Quat, out: Vec3): Vec3 => {
+        const x = q.x, y = q.y, z = q.z, w = q.w;
+        
+        // Pitch (X-axis rotation)
+        const sinr_cosp = 2 * (w * x + y * z);
+        const cosr_cosp = 1 - 2 * (x * x + y * y);
+        out.x = Math.atan2(sinr_cosp, cosr_cosp);
+
+        // Yaw (Y-axis rotation)
+        const sinp = 2 * (w * y - z * x);
+        if (Math.abs(sinp) >= 1) out.y = Math.sign(sinp) * Math.PI / 2; // use 90 degrees if out of range
+        else out.y = Math.asin(sinp);
+
+        // Roll (Z-axis rotation)
+        const siny_cosp = 2 * (w * z + x * y);
+        const cosy_cosp = 1 - 2 * (y * y + z * z);
+        out.z = Math.atan2(siny_cosp, cosy_cosp);
+
+        return out;
+    },
+
     // Fixed: Uses Mat4 input for safety
     fromMat4: (m: Mat4, out: Quat): Quat => {
         const m00 = m[0], m01 = m[1], m02 = m[2];
