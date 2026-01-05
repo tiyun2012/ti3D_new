@@ -12,12 +12,14 @@
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "lucide-react": "^0.559.0",
-    "rc-dock": "3.3.1"
+    "rc-dock": "3.3.1",
+    "three": "^0.174.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.174.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
