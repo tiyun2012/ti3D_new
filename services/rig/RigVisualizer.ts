@@ -8,7 +8,7 @@ import { ComponentType } from '../../types';
 export class RigVisualizer {
     private _layout: RigLayout;
     // Map RigNode Index -> ECS Entity Index
-    private _entityMap: Map<number, number> = new Map();
+    public entityMap: Map<number, number> = new Map();
     private _bonePairs: {pIdx: number, cIdx: number}[] = [];
 
     constructor(layout: RigLayout) {
@@ -58,7 +58,7 @@ export class RigVisualizer {
                 // Register with SceneGraph (though we manually control matrix, registration ensures cleanup/visibility)
                 engineInstance.sceneGraph.registerEntity(id);
                 
-                this._entityMap.set(node.index, idx);
+                this.entityMap.set(node.index, idx);
             }
 
             if (node.parentId !== -1) {
@@ -72,7 +72,7 @@ export class RigVisualizer {
         const ecsWorld = engineInstance.ecs.store.worldMatrix;
 
         // A. Update Shapes
-        this._entityMap.forEach((ecsIdx, rigIdx) => {
+        this.entityMap.forEach((ecsIdx, rigIdx) => {
             const rigOffset = rigIdx * 16;
             const ecsOffset = ecsIdx * 16;
             
@@ -101,10 +101,10 @@ export class RigVisualizer {
     
     public destroy() {
         // Cleanup entities
-        this._entityMap.forEach((ecsIdx) => {
+        this.entityMap.forEach((ecsIdx) => {
             const id = engineInstance.ecs.store.ids[ecsIdx];
             if (id) engineInstance.deleteEntity(id, engineInstance.sceneGraph);
         });
-        this._entityMap.clear();
+        this.entityMap.clear();
     }
 }
