@@ -286,7 +286,10 @@ export class WebGLRenderer {
         gl.depthMask(true);
         gl.disable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
+        // Ensure the viewport always matches the latest canvas size. Relying only on resize events
+        // can miss the initial layout pass, which leaves the viewport at a stale 300x150 default
+        // and distorts or clips the rendered mesh.
+        gl.viewport(0, 0, width, height);
         // Reset draw buffer blending states if any were modified by particles in previous frame
         // (Though technically we do it right before particles)
         // Check for WebGL 2 features
