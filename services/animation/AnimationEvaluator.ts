@@ -31,18 +31,42 @@ export class AnimationEvaluator {
                 high = mid - 1;
             }
         }
-        // idx is now the largest index where times[idx] <= time. 
-        // We want interval [idx, idx+1]. 
-        // If exact match wasn't found at mid, binary search logic might need slight adjustment depending on implementation, 
-        // but generally for "upper_bound" style behavior:
-        // Actually standard binary search finds exact or insertion point.
-        // Let's ensure idx is the start of the interval.
-        if (times[idx] > time && idx > 0) idx--;
+        
+        // idx is the insertion point or exact match from the loop.
+        // We want the frame *before* or *at* the time.
+        // The implementation logic suggests idx tracks the upper bound in standard bisect_right logic if condition is <=
+        // Let's rely on standard binary search behavior finding the element.
+        // If times[mid] <= time, we moved low up. The last valid idx where times[idx] <= time is what we want.
+        // Refined logic:
+        // We want `i` such that `times[i] <= time < times[i+1]`
+        
+        // Since we did `low = mid + 1` when `<=`, idx (which was set to mid) is a candidate.
+        // The loop finishes when low > high.
+        // Let's refine the search for clarity:
+        
+        low = 0; 
+        high = count - 1;
+        
+        while (low <= high) {
+            const mid = (low + high) >>> 1;
+            if (times[mid] <= time) {
+                idx = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        // `idx` holds the index of the largest time value <= `time`
 
         // 3. Interpolate
         const t1 = times[idx];
-        const t2 = times[idx + 1];
-        const factor = (time - t1) / (t2 - t1);
+        const nextIdx = Math.min(idx + 1, count - 1);
+        const t2 = times[nextIdx];
+        
+        let factor = 0;
+        if (t2 > t1) {
+            factor = (time - t1) / (t2 - t1);
+        }
         const t = Math.max(0, Math.min(1, isNaN(factor) ? 0 : factor));
 
         if (track.type === 'rotation') {
