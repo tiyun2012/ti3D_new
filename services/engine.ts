@@ -538,6 +538,8 @@ export class Engine {
                 this.debugRenderer,
                 this.particleSystem
             );
+            // This ensures they render over the scene geometry
+            gizmoSystem.render();
         }
         
         this.debugRenderer.begin();

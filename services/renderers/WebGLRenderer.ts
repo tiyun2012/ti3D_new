@@ -186,6 +186,8 @@ export class WebGLRenderer {
         this.meshSystem.init(gl);
         this.initPostProcess(gl);
         this.gridProgram = this.createProgram(gl, GRID_VS, GRID_FS);
+        // ✅ REQUIRED: Compile the Gizmo shaders
+        this.initGizmo();
     }
 
     initPostProcess(gl: WebGL2RenderingContext) {
