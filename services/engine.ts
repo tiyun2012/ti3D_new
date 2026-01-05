@@ -219,7 +219,14 @@ export class Engine {
 
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             this.ecs.addComponent(entityId, ComponentType.MESH);
-            this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
+            const meshIntId = assetManager.getMeshID(asset.id);
+            this.ecs.store.meshType[idx] = meshIntId;
+            
+            // LAZY REGISTRATION: Ensure mesh is on GPU if it hasn't been registered yet
+            if (this.renderer.gl && !this.meshSystem.meshes.has(meshIntId)) {
+                this.registerAssetWithGPU(asset);
+            }
+
             if (asset.type === 'SKELETAL_MESH') {
                 // Skeleton setup logic if needed
             }
@@ -260,6 +267,10 @@ export class Engine {
             this.selectionSystem.setSelected([newId]);
         }
         this.notifyUI();
+    }
+
+    get renderMode() {
+        return this.renderer.renderMode;
     }
 
     setRenderMode(mode: number) {
@@ -365,7 +376,7 @@ export class Engine {
         }
         
         // Upload to GPU
-        this.renderer.updateSoftSelectionBuffer(meshIntId, weights);
+        (this.renderer as any).updateSoftSelectionBuffer(meshIntId, weights);
         
         if(trigger) this.notifyUI();
     }

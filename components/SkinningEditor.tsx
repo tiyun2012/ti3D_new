@@ -44,11 +44,11 @@ export const SkinningEditor: React.FC = () => {
         } else {
             setAsset(null);
             setBones([]);
-            if (engineInstance.renderMode === 5) engineInstance.setRenderMode(0);
+            if (engineInstance.renderer.renderMode === 5) engineInstance.setRenderMode(0);
         }
         
         return () => {
-             if (engineInstance.renderMode === 5) engineInstance.setRenderMode(0);
+             if (engineInstance.renderer.renderMode === 5) engineInstance.setRenderMode(0);
         };
     }, [selectedIds, selectedAssetIds]);
 
