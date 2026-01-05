@@ -3,13 +3,10 @@ import { SkeletalMeshAsset } from '../../types';
 import { Mat4Utils, QuatUtils } from '../math';
 import { assetManager } from '../AssetManager';
 import { DebugRenderer } from '../renderers/DebugRenderer';
-import { engineInstance } from '../engine';
 import { AnimationEvaluator } from '../animation/AnimationEvaluator';
 import { SkeletonBinder } from '../animation/SkeletonBinder';
 
 export class AnimationSystem {
-    
-    // The binder persists across frames to keep the cache alive
     private binder = new SkeletonBinder();
 
     update(dt: number, time: number, isPlaying: boolean, skeletonMap: Map<string, string[]>, meshSystem: any, ecs: any, sceneGraph: any, debugRenderer?: DebugRenderer, selectedIndices?: Set<number>, meshComponentMode?: string) {
@@ -32,25 +29,18 @@ export class AnimationSystem {
             const boneIds = skeletonMap.get(entityId);
             if (!boneIds) continue; 
 
-            // --- ANIMATION LOGIC ---
             const animIndex = store.animationIndex[i] || 0;
             const clip = skelAsset.animations[animIndex];
             
             if (isPlaying && clip) {
                 const localTime = time % clip.duration;
-                
-                // 1. Get Fast Bindings (O(1))
                 const bindings = this.binder.getBindings(entityId, clip, boneIds, ecs);
 
-                // 2. Evaluate & Apply (Batch Process)
                 for (let k = 0; k < bindings.length; k++) {
                     const bind = bindings[k];
                     const track = clip.tracks[bind.trackIndex];
-                    
-                    // Pure Math Evaluation
                     const value = AnimationEvaluator.evaluateTrack(track, localTime);
                     
-                    // Direct ECS Write
                     if (bind.type === 'position') {
                         ecs.store.setPosition(bind.ecsIndex, value[0], value[1], value[2]);
                     } else if (bind.type === 'rotation') {
@@ -60,12 +50,9 @@ export class AnimationSystem {
                     } else if (bind.type === 'scale') {
                         ecs.store.setScale(bind.ecsIndex, value[0], value[1], value[2]);
                     }
-                    
                     sceneGraph.setDirty(store.ids[bind.ecsIndex]);
                 }
             }
-
-            // --- SKINNING & DEBUG (Always run to support manual bone movement) ---
             this.updateSkinMatrices(skelAsset, boneIds, sceneGraph, meshSystem, debugRenderer, ecs, selectedIndices, meshComponentMode);
         }
     }
@@ -92,7 +79,6 @@ export class AnimationSystem {
                 Mat4Utils.multiply(worldMat, bone.inverseBindPose, skinM);
                 boneMatrices.set(skinM, bIdx * 16);
 
-                // Debug Visualization
                 if (debugRenderer && selectedIndices) {
                     const bPos = { x: worldMat[12], y: worldMat[13], z: worldMat[14] };
                     const idx = ecs.idToIndex.get(boneEntityId);
@@ -112,7 +98,6 @@ export class AnimationSystem {
                 }
             }
         });
-        
         meshSystem.uploadBoneMatrices(boneMatrices);
     }
 }

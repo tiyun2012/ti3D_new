@@ -273,7 +273,7 @@ export class WebGLRenderer {
         }
     }
 
-    render(store: ComponentStorage, count: number, selectedIndices: Set<number>, vp: Float32Array, width: number, height: number, cam: any, softSelData: { enabled: boolean, center: {x:number,y:number,z:number}, radius: number }, debugRenderer?: DebugRenderer, particleSystem?: ParticleSystem) {
+    render(store: ComponentStorage, count: number, selectedIndices: Set<number>, vp: Float32Array, width: number, height: number, cam: any, softSelData: { enabled: boolean, center: {x:number,y:number,z:number}, radius: number, heatmapVisible: boolean }, debugRenderer?: DebugRenderer, particleSystem?: ParticleSystem) {
         if (!this.gl || !this.ppProgram) return;
         const gl = this.gl; const time = performance.now() / 1000;
         

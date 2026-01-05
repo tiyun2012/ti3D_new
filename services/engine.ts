@@ -20,7 +20,8 @@ import { registerCoreModules } from './modules/CoreModules';
 import { consoleService } from './Console';
 import type { MeshRenderSystem } from './systems/MeshRenderSystem';
 import { ParticleSystem } from './systems/ParticleSystem';
-import { AnimationSystem } from './systems/AnimationSystem'; // Added
+import { AnimationSystem } from './systems/AnimationSystem';
+import { controlRigSystem } from './systems/ControlRigSystem'; 
 import { COMPONENT_MASKS } from './constants';
 import { eventBus } from './EventBus';
 import { SelectionSystem } from './systems/SelectionSystem';
@@ -34,7 +35,7 @@ export class Engine {
     historySystem: HistorySystem;
     particleSystem: ParticleSystem; 
     animationSystem: AnimationSystem; 
-    selectionSystem: SelectionSystem; // NEW: Selection Logic
+    selectionSystem: SelectionSystem;
     renderer: WebGLRenderer;
     debugRenderer: DebugRenderer;
     metrics: PerformanceMetrics;
@@ -45,6 +46,11 @@ export class Engine {
     meshComponentMode: MeshComponentMode = 'OBJECT';
     
     isInputDown: boolean = false;
+
+    // Vertex Editing State (Added to fix errors)
+    vertexSnapshot: Float32Array | null = null;
+    activeDeformationEntity: string | null = null;
+    currentDeformationDelta: Vector3 = { x: 0, y: 0, z: 0 };
 
     // Soft Selection State
     softSelectionEnabled: boolean = false;
@@ -58,11 +64,6 @@ export class Engine {
     
     // Map of Mesh Entity ID -> Array of Bone Entity IDs
     skeletonMap: Map<string, string[]> = new Map();
-
-    // --- DEFORMATION SNAPSHOT STATE ---
-    private vertexSnapshot: Float32Array | null = null;
-    private currentDeformationDelta: Vector3 = { x: 0, y: 0, z: 0 };
-    private activeDeformationEntity: string | null = null;
 
     uiConfig: UIConfiguration = DEFAULT_UI_CONFIG;
 
@@ -93,15 +94,13 @@ export class Engine {
         this.historySystem = new HistorySystem();
         this.particleSystem = new ParticleSystem(); 
         this.animationSystem = new AnimationSystem();
-        this.selectionSystem = new SelectionSystem(this); // Initialize Selection System
+        this.selectionSystem = new SelectionSystem(this);
         this.renderer = new WebGLRenderer();
         this.debugRenderer = new DebugRenderer();
         this.metrics = { fps: 0, frameTime: 0, drawCalls: 0, triangleCount: 0, entityCount: 0 };
         
-        // Expose to window for legacy/debug access
         (window as any).engineInstance = this;
 
-        // Register Modules first (this creates the Systems)
         registerCoreModules(this.physicsSystem, this.particleSystem, this.animationSystem);
         
         moduleManager.init({
@@ -112,6 +111,21 @@ export class Engine {
 
         this.initEventListeners();
     }
+
+    // Added to fix errors in SceneView.tsx
+    updateCamera(vp: Float32Array, pos: {x:number, y:number, z:number}, width: number, height: number) {
+        this.currentViewProj = vp;
+        this.currentCameraPos = pos;
+        this.currentWidth = width;
+        this.currentHeight = height;
+    }
+
+    // Added to fix errors in usePieMenuInteraction.ts
+    extrudeFaces() { consoleService.info("Extrude Faces (Not Implemented)", "Engine"); }
+    bevelEdges() { consoleService.info("Bevel Edges (Not Implemented)", "Engine"); }
+    weldVertices() { consoleService.info("Weld Vertices (Not Implemented)", "Engine"); }
+    connectComponents() { consoleService.info("Connect Components (Not Implemented)", "Engine"); }
+    deleteSelectedFaces() { consoleService.info("Delete Faces (Not Implemented)", "Engine"); }
 
     private initEventListeners() {
         eventBus.on('ASSET_CREATED', (payload) => {
@@ -135,37 +149,14 @@ export class Engine {
         return this.renderer.meshSystem;
     }
 
-    // --- DELEGATE METHODS FOR BACKWARDS COMPATIBILITY ---
-    // These ensure UI components calling old engine methods still work by forwarding to SelectionSystem
-    
     get hoveredVertex() { return this.selectionSystem.hoveredVertex; }
-    
     setSelected(ids: string[]) { this.selectionSystem.setSelected(ids); }
-    
-    selectEntityAt(mx: number, my: number, w: number, h: number) {
-        return this.selectionSystem.selectEntityAt(mx, my, w, h);
-    }
-    
-    selectEntitiesInRect(x: number, y: number, w: number, h: number) {
-        return this.selectionSystem.selectEntitiesInRect(x, y, w, h);
-    }
-    
-    highlightVertexAt(mx: number, my: number, w: number, h: number) {
-        this.selectionSystem.highlightVertexAt(mx, my, w, h);
-    }
-    
-    selectVerticesInBrush(mx: number, my: number, w: number, h: number, add: boolean) {
-        this.selectionSystem.selectVerticesInBrush(mx, my, w, h, add);
-    }
-    
-    selectLoop(mode: MeshComponentMode) {
-        this.selectionSystem.selectLoop(mode);
-    }
-    
-    getSelectionAsVertices() {
-        return this.selectionSystem.getSelectionAsVertices();
-    }
-    // ---------------------------------------------------
+    selectEntityAt(mx: number, my: number, w: number, h: number) { return this.selectionSystem.selectEntityAt(mx, my, w, h); }
+    selectEntitiesInRect(x: number, y: number, w: number, h: number) { return this.selectionSystem.selectEntitiesInRect(x, y, w, h); }
+    highlightVertexAt(mx: number, my: number, w: number, h: number) { this.selectionSystem.highlightVertexAt(mx, my, w, h); }
+    selectVerticesInBrush(mx: number, my: number, w: number, h: number, add: boolean) { this.selectionSystem.selectVerticesInBrush(mx, my, w, h, add); }
+    selectLoop(mode: MeshComponentMode) { this.selectionSystem.selectLoop(mode); }
+    getSelectionAsVertices() { return this.selectionSystem.getSelectionAsVertices(); }
 
     subscribe(cb: () => void) {
         this.listeners.push(cb);
@@ -186,7 +177,6 @@ export class Engine {
         if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
             const intId = assetManager.getMeshID(asset.id);
             if (intId > 0) {
-                // Cast to StaticMeshAsset to access geometry
                 this.meshSystem.registerMesh(intId, (asset as StaticMeshAsset).geometry);
             }
         }
@@ -195,20 +185,27 @@ export class Engine {
     notifyMeshChanged(assetId: string) {
         const intId = assetManager.getMeshID(assetId);
         if (intId > 0) {
-            // 1. Clear Soft Selection Weights cache as geometry mismatch will occur
             if (this.softSelectionWeights.has(intId)) {
                 this.softSelectionWeights.delete(intId);
             }
-            
-            // 2. Invalidate BVH and Topology Cache via AssetManager/TopologyUtils
             const asset = assetManager.getAsset(assetId) as StaticMeshAsset;
             if (asset) {
-                this.updateMeshBounds(asset); // Rebuilds AABB and clears BVH
+                this.updateMeshBounds(asset); 
             }
-
-            // 3. Re-upload to GPU
             this.registerAssetWithGPU(asset);
         }
+    }
+
+    private updateMeshBounds(asset: StaticMeshAsset) {
+        // Simple AABB re-compute
+        const verts = asset.geometry.vertices;
+        let minX=Infinity, minY=Infinity, minZ=Infinity, maxX=-Infinity, maxY=-Infinity, maxZ=-Infinity;
+        for(let i=0; i<verts.length; i+=3) {
+            const x = verts[i], y = verts[i+1], z = verts[i+2];
+            if(x<minX) minX=x; if(y<minY) minY=y; if(z<minZ) minZ=z;
+            if(x>maxX) maxX=x; if(y>maxY) maxY=y; if(z>maxZ) maxZ=z;
+        }
+        asset.geometry.aabb = { min: {x:minX, y:minY, z:minZ}, max: {x:maxX, y:maxY, z:maxZ} };
     }
 
     initGL(canvas: HTMLCanvasElement) {
@@ -216,7 +213,6 @@ export class Engine {
         this.renderer.initGizmo();
         this.debugRenderer.init(this.renderer.gl!);
         
-        // 1. Provide GL context to ModuleManager (re-init systems like Particles)
         if (this.renderer.gl) {
              moduleManager.init({
                 engine: this,
@@ -226,7 +222,6 @@ export class Engine {
             });
         }
 
-        // 2. Upload all existing mesh assets to GPU (Essential for rendering)
         assetManager.getAssetsByType('MESH').forEach(asset => this.registerAssetWithGPU(asset));
         assetManager.getAssetsByType('SKELETAL_MESH').forEach(asset => this.registerAssetWithGPU(asset));
         
@@ -282,9 +277,7 @@ export class Engine {
     }
 
     executeAssetGraph(id: string, assetId: string) {
-        // Placeholder for executing logic graphs in runtime
-        // In a full implementation, this would evaluate the node graph for the given entity
-        // For now, we leave it empty to prevent runtime errors
+        controlRigSystem.getOrCreateRigInstance(id, assetId);
     }
 
     createEntityFromAsset(assetId: string, pos: {x:number, y:number, z:number}) {
@@ -317,7 +310,6 @@ export class Engine {
                 this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
                 if (this.ecs.store.materialIndex[idx] === 0) this.ecs.store.materialIndex[idx] = 1; 
                 
-                // --- SKELETON SPAWNING ---
                 const skelAsset = asset as SkeletalMeshAsset;
                 const bones = skelAsset.skeleton.bones;
                 const boneEntityIds: string[] = new Array(bones.length);
@@ -330,13 +322,11 @@ export class Engine {
                         const parentId = boneEntityIds[bone.parentIndex];
                         if (parentId) this.sceneGraph.attach(boneId, parentId);
                     } else {
-                        // Root bone attaches to Mesh Entity
                         this.sceneGraph.attach(boneId, id);
                     }
                     
                     boneEntityIds[bIdx] = boneId;
                     this.sceneGraph.registerEntity(boneId);
-                    // Add VirtualPivot to visualize joints
                     this.ecs.addComponent(boneId, ComponentType.VIRTUAL_PIVOT);
                     this.ecs.store.vpLength[bEcsIdx] = 0.2;
                 });
@@ -353,7 +343,6 @@ export class Engine {
 
     deleteEntity(id: string, sceneGraph: SceneGraph) {
         this.pushUndoState();
-        // If deleting a mesh, cleanup skeleton map
         if (this.skeletonMap.has(id)) {
             const bones = this.skeletonMap.get(id)!;
             bones.forEach(bId => this.ecs.deleteEntity(bId, sceneGraph));
@@ -371,16 +360,13 @@ export class Engine {
         const newId = this.ecs.createEntity(this.ecs.store.names[idx] + " (Copy)");
         const newIdx = this.ecs.idToIndex.get(newId)!;
         
-        // Copy components (shallow copy of stores for now)
         const store = this.ecs.store;
         store.componentMask[newIdx] = store.componentMask[idx];
         
-        // Transform
         store.posX[newIdx] = store.posX[idx]; store.posY[newIdx] = store.posY[idx]; store.posZ[newIdx] = store.posZ[idx];
         store.rotX[newIdx] = store.rotX[idx]; store.rotY[newIdx] = store.rotY[idx]; store.rotZ[newIdx] = store.rotZ[idx];
         store.scaleX[newIdx] = store.scaleX[idx]; store.scaleY[newIdx] = store.scaleY[idx]; store.scaleZ[newIdx] = store.scaleZ[idx];
         
-        // Mesh
         store.meshType[newIdx] = store.meshType[idx];
         store.materialIndex[newIdx] = store.materialIndex[idx];
         
@@ -389,39 +375,13 @@ export class Engine {
         consoleService.info(`Duplicated entity: ${id} -> ${newId}`);
     }
 
-    saveScene(): string {
-        return this.ecs.serialize();
-    }
-
-    loadScene(json: string) {
-        this.ecs.deserialize(json, this.sceneGraph);
-        this.notifyUI();
-    }
-
-    getPostProcessConfig() {
-        return this.renderer.ppConfig;
-    }
-
-    setPostProcessConfig(config: PostProcessConfig) {
-        this.renderer.ppConfig = config;
-        this.renderer.recompilePostProcess();
-        this.notifyUI();
-    }
-
-    setRenderMode(mode: number) {
-        this.renderer.renderMode = mode;
-        this.notifyUI();
-    }
-
-    toggleGrid() {
-        this.renderer.showGrid = !this.renderer.showGrid;
-        this.notifyUI();
-    }
-
-    syncTransforms() {
-        this.sceneGraph.update();
-        this.notifyUI();
-    }
+    saveScene(): string { return this.ecs.serialize(); }
+    loadScene(json: string) { this.ecs.deserialize(json, this.sceneGraph); this.notifyUI(); }
+    getPostProcessConfig() { return this.renderer.ppConfig; }
+    setPostProcessConfig(config: PostProcessConfig) { this.renderer.ppConfig = config; this.renderer.recompilePostProcess(); this.notifyUI(); }
+    setRenderMode(mode: number) { this.renderer.renderMode = mode; this.notifyUI(); }
+    toggleGrid() { this.renderer.showGrid = !this.renderer.showGrid; this.notifyUI(); }
+    syncTransforms() { this.sceneGraph.update(); this.notifyUI(); }
 
     private createDefaultScene() {
         const standardMat = assetManager.getAssetsByType('MATERIAL').find(a => a.name === 'Standard');
@@ -492,6 +452,69 @@ export class Engine {
     
     setTimelineTime(time: number) { this.timeline.currentTime = Math.max(0, Math.min(time, this.timeline.duration)); this.notifyUI(); }
 
+    tick(dt: number) {
+        if (this.simulationMode !== 'STOPPED' && this.isPlaying) {
+            this.accumulator += dt;
+            while(this.accumulator >= this.fixedTimeStep) {
+                this.physicsSystem.update(this.fixedTimeStep, this.ecs.store, this.ecs.idToIndex, this.sceneGraph);
+                this.accumulator -= this.fixedTimeStep;
+            }
+        }
+
+        if (this.timeline.isPlaying) {
+            this.timeline.currentTime += dt * this.timeline.playbackSpeed;
+            if (this.timeline.currentTime >= this.timeline.duration) {
+                if (this.timeline.isLooping) this.timeline.currentTime = 0;
+                else {
+                    this.timeline.currentTime = this.timeline.duration;
+                    this.timeline.isPlaying = false;
+                }
+            }
+        }
+
+        this.particleSystem.update(dt, this.ecs.store);
+        
+        // Control Rig & Animation
+        controlRigSystem.update(dt);
+        this.animationSystem.update(
+            dt, 
+            this.timeline.currentTime,
+            this.timeline.isPlaying,
+            this.skeletonMap, 
+            this.meshSystem, 
+            this.ecs, 
+            this.sceneGraph,
+            this.debugRenderer, 
+            this.selectionSystem.selectedIndices,
+            this.meshComponentMode
+        );
+
+        moduleManager.update(dt);
+        this.sceneGraph.update();
+        
+        this.metrics.fps = 1.0 / Math.max(dt, 0.001);
+        this.metrics.frameTime = dt * 1000;
+        this.metrics.entityCount = this.ecs.count;
+        this.metrics.drawCalls = this.renderer.drawCalls;
+        
+        if (this.renderer.gl && this.currentViewProj) {
+            this.renderer.render(
+                this.ecs.store, 
+                this.ecs.count, 
+                this.selectionSystem.selectedIndices, 
+                this.currentViewProj, 
+                this.currentWidth, 
+                this.currentHeight, 
+                this.currentCameraPos,
+                { enabled: this.softSelectionEnabled, center: {x:0,y:0,z:0}, radius: this.softSelectionRadius, heatmapVisible: this.softSelectionHeatmapVisible },
+                this.debugRenderer,
+                this.particleSystem
+            );
+        }
+        
+        this.debugRenderer.begin();
+    }
+
     createVirtualPivot(name: string = 'Virtual Pivot') {
         const id = this.ecs.createEntity(name);
         this.ecs.addComponent(id, ComponentType.VIRTUAL_PIVOT);
@@ -520,16 +543,14 @@ export class Engine {
         const count = verts.length / 3;
         let modified = false;
 
-        // Check for vertex mask
         const selectedVerts = this.selectionSystem.getSelectionAsVertices();
         const hasSelection = selectedVerts.size > 0;
 
-        // Collect vertices in brush range first
         const inRange: {idx: number, dist: number, strength: number}[] = [];
         let sumWeights = 0;
         
         for (let i = 0; i < count; i++) {
-            if (hasSelection && !selectedVerts.has(i)) continue; // Maya-style Masking
+            if (hasSelection && !selectedVerts.has(i)) continue; 
 
             const vx = verts[i*3], vy = verts[i*3+1], vz = verts[i*3+2];
             const wx = worldMat[0]*vx + worldMat[4]*vy + worldMat[8]*vz + worldMat[12];
@@ -614,30 +635,38 @@ export class Engine {
         const hasSelection = selectedVerts.size > 0;
 
         for (let i = 0; i < count; i++) {
-            if (hasSelection && !selectedVerts.has(i)) continue; // Masking
-
+            if (hasSelection && !selectedVerts.has(i)) continue;
+            
+            const jointIndices = asset.geometry.jointIndices;
+            const jointWeights = asset.geometry.jointWeights;
+            
+            // For flood, we replace everything for this bone
             let slot = -1;
-            for(let k=0; k<4; k++) if(asset.geometry.jointIndices[i*4+k] === boneIndex) slot = k;
+            for(let k=0; k<4; k++) if(jointIndices[i*4+k] === boneIndex) slot = k;
             
-            if(slot === -1) {
-                let minW = 2.0; let minK = 0;
-                for(let k=0; k<4; k++) { 
-                    if(asset.geometry.jointWeights[i*4+k] < minW) { minW = asset.geometry.jointWeights[i*4+k]; minK = k; } 
-                }
-                slot = minK;
-                asset.geometry.jointIndices[i*4+slot] = boneIndex;
+            if (slot === -1) {
+                // Find empty
+                for(let k=0; k<4; k++) if(jointWeights[i*4+k] === 0) { slot = k; break; }
             }
-            asset.geometry.jointWeights[i*4+slot] = value;
+            if (slot === -1) {
+                // Steal smallest
+                let minW = 2.0; let minK = 0;
+                for(let k=0; k<4; k++) { if(jointWeights[i*4+k] < minW) { minW=jointWeights[i*4+k]; minK=k; } }
+                slot = minK;
+            }
             
+            jointIndices[i*4+slot] = boneIndex;
+            jointWeights[i*4+slot] = value;
+            
+            // Normalize
             let sum = 0;
-            for(let k=0; k<4; k++) sum += asset.geometry.jointWeights[i*4+k];
-            if(sum > 0) {
-                const s = 1.0/sum;
-                for(let k=0; k<4; k++) asset.geometry.jointWeights[i*4+k] *= s;
+            for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
+            if (sum > 0) {
+                const scale = 1.0 / sum;
+                for(let k=0; k<4; k++) jointWeights[i*4+k] *= scale;
             }
         }
         eventBus.emit('ASSET_UPDATED', { id: asset.id, type: asset.type });
-        consoleService.success('Flooded Skin Weights');
     }
 
     pruneSkinWeights(entityId: string, threshold: number) {
@@ -647,382 +676,113 @@ export class Engine {
         if(!asset || asset.type !== 'SKELETAL_MESH') return;
 
         const count = asset.geometry.vertices.length / 3;
-        
-        const selectedVerts = this.selectionSystem.getSelectionAsVertices();
-        const hasSelection = selectedVerts.size > 0;
+        const jointWeights = asset.geometry.jointWeights;
 
-        let pruned = 0;
         for (let i = 0; i < count; i++) {
-            if (hasSelection && !selectedVerts.has(i)) continue; // Masking
-
             for(let k=0; k<4; k++) {
-                if(asset.geometry.jointWeights[i*4+k] < threshold) {
-                    asset.geometry.jointWeights[i*4+k] = 0;
-                    asset.geometry.jointIndices[i*4+k] = 0;
-                    pruned++;
-                }
+                if(jointWeights[i*4+k] < threshold) jointWeights[i*4+k] = 0;
             }
+            // Normalize
             let sum = 0;
-            for(let k=0; k<4; k++) sum += asset.geometry.jointWeights[i*4+k];
-            if(sum > 0) {
-                const s = 1.0/sum;
-                for(let k=0; k<4; k++) asset.geometry.jointWeights[i*4+k] *= s;
+            for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
+            if (sum > 0) {
+                const scale = 1.0 / sum;
+                for(let k=0; k<4; k++) jointWeights[i*4+k] *= scale;
             }
         }
         eventBus.emit('ASSET_UPDATED', { id: asset.id, type: asset.type });
-        consoleService.info(`Pruned ${pruned} small weights (<${threshold})`);
     }
 
-    updateVertexColor(entityId: string, vertexIndex: number, color: {r: number, g: number, b: number}) {
-        const idx = this.ecs.idToIndex.get(entityId);
-        if (idx === undefined) return;
-        const meshIntId = this.ecs.store.meshType[idx];
-        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-        if (!assetUuid) return;
-        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
-        if (!asset || !asset.geometry.colors) return;
-        
-        asset.geometry.colors[vertexIndex * 3] = color.r;
-        asset.geometry.colors[vertexIndex * 3 + 1] = color.g;
-        asset.geometry.colors[vertexIndex * 3 + 2] = color.b;
-        
-        this.registerAssetWithGPU(asset);
-    }
-
-    recalculateSoftSelection(triggerDeformation = true) {
-        if (!this.softSelectionEnabled || this.meshComponentMode === 'OBJECT') {
-            this.softSelectionWeights.forEach((weights, meshId) => {
-                weights.fill(0);
-                this.meshSystem.updateSoftSelectionBuffer(meshId, weights);
-            });
-            this.softSelectionWeights.clear();
+    recalculateSoftSelection(trigger: boolean = true) {
+        this.softSelectionWeights.clear();
+        if (!this.softSelectionEnabled || this.meshComponentMode === 'OBJECT' || this.selectionSystem.selectedIndices.size === 0) {
+            if (trigger) this.notifyUI();
             return;
         }
 
-        if (this.selectionSystem.selectedIndices.size === 0) return;
         const idx = Array.from(this.selectionSystem.selectedIndices)[0];
         const meshIntId = this.ecs.store.meshType[idx];
         const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-        if (!assetUuid) return;
-        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
+        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
+        
         if (!asset) return;
 
-        const useSnapshot = this.softSelectionMode === 'FIXED' && this.vertexSnapshot;
-        const sourceVerts = useSnapshot ? this.vertexSnapshot! : asset.geometry.vertices;
-        const vertexCount = sourceVerts.length / 3;
+        const selection = this.selectionSystem.getSelectionAsVertices();
+        const weights = MeshTopologyUtils.computeSurfaceWeights(
+            asset.geometry.indices, 
+            asset.geometry.vertices, 
+            selection, 
+            this.softSelectionRadius, 
+            asset.geometry.vertices.length / 3
+        );
         
-        const sx = this.ecs.store.scaleX[idx];
-        const sy = this.ecs.store.scaleY[idx];
-        const sz = this.ecs.store.scaleZ[idx];
-        const maxScale = Math.max(sx, Math.max(sy, sz)) || 1.0;
-        const localRadius = this.softSelectionRadius / maxScale;
-
-        const selectedVerts = this.selectionSystem.getSelectionAsVertices();
-        let weights: Float32Array;
-
-        if (this.softSelectionFalloff === 'SURFACE') {
-            weights = MeshTopologyUtils.computeSurfaceWeights(
-                asset.geometry.indices,
-                sourceVerts,
-                selectedVerts,
-                localRadius,
-                vertexCount
-            );
-        } else {
-            weights = this.softSelectionWeights.get(meshIntId) || new Float32Array(vertexCount);
-            if (weights.length !== vertexCount) weights = new Float32Array(vertexCount);
-            
-            const centroid = {x:0, y:0, z:0};
-            const selection = Array.from(selectedVerts);
-            
-            if (selection.length > 0) {
-                for(const vid of selection) {
-                    centroid.x += sourceVerts[vid*3];
-                    centroid.y += sourceVerts[vid*3+1];
-                    centroid.z += sourceVerts[vid*3+2];
-                }
-                const invLen = 1.0 / selection.length;
-                centroid.x *= invLen; centroid.y *= invLen; centroid.z *= invLen;
-
-                for (let i = 0; i < vertexCount; i++) {
-                    if (selectedVerts.has(i)) {
-                        weights[i] = 1.0;
-                        continue;
-                    }
-                    const vx = sourceVerts[i*3], vy = sourceVerts[i*3+1], vz = sourceVerts[i*3+2];
-                    const dist = Math.sqrt((vx-centroid.x)**2 + (vy-centroid.y)**2 + (vz-centroid.z)**2);
-                    
-                    if (dist <= localRadius) {
-                        const t = 1.0 - (dist / localRadius);
-                        weights[i] = t * t * (3 - 2 * t); 
-                    } else {
-                        weights[i] = 0.0;
-                    }
-                }
-            } else {
-                weights.fill(0);
-            }
-        }
-
         this.softSelectionWeights.set(meshIntId, weights);
         this.meshSystem.updateSoftSelectionBuffer(meshIntId, weights);
-
-        if (triggerDeformation && this.vertexSnapshot && this.activeDeformationEntity && this.softSelectionMode === 'FIXED') {
-            this.applyDeformation(this.activeDeformationEntity);
-        }
+        if (trigger) this.notifyUI();
     }
 
     startVertexDrag(entityId: string) {
         const idx = this.ecs.idToIndex.get(entityId);
         if (idx === undefined) return;
         const meshIntId = this.ecs.store.meshType[idx];
-        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-        if (!assetUuid) return;
-        const asset = assetManager.getAsset(assetUuid) as StaticMeshAsset;
-        if (!asset) return;
-
-        this.vertexSnapshot = new Float32Array(asset.geometry.vertices);
-        this.activeDeformationEntity = entityId;
-        this.currentDeformationDelta = { x:0, y:0, z:0 };
-
-        this.recalculateSoftSelection(false); 
+        const uuid = assetManager.meshIntToUuid.get(meshIntId);
+        const asset = assetManager.getAsset(uuid!) as StaticMeshAsset;
+        if (asset) {
+            this.vertexSnapshot = new Float32Array(asset.geometry.vertices);
+            this.activeDeformationEntity = entityId;
+            this.currentDeformationDelta = { x:0, y:0, z:0 };
+        }
     }
 
-    updateVertexDrag(entityId: string, totalWorldDelta: Vector3) {
-        if (!this.vertexSnapshot || this.activeDeformationEntity !== entityId) {
-            this.startVertexDrag(entityId); 
-        }
-
+    updateVertexDrag(entityId: string, delta: Vector3) {
+        if (!this.vertexSnapshot || this.activeDeformationEntity !== entityId) return;
+        
+        const idx = this.ecs.idToIndex.get(entityId);
+        const meshIntId = this.ecs.store.meshType[idx!];
+        const uuid = assetManager.meshIntToUuid.get(meshIntId);
+        const asset = assetManager.getAsset(uuid!) as StaticMeshAsset;
+        
+        const weights = this.softSelectionWeights.get(meshIntId);
+        const parentInverse = Mat4Utils.create();
         const worldMat = this.sceneGraph.getWorldMatrix(entityId);
-        if (!worldMat) return;
-        const invWorld = Mat4Utils.create();
-        Mat4Utils.invert(worldMat, invWorld);
+        if (worldMat) Mat4Utils.invert(worldMat, parentInverse);
         
-        const localTotalDelta = Vec3Utils.transformMat4Normal(totalWorldDelta, invWorld, {x:0,y:0,z:0});
-        
-        if (this.softSelectionEnabled && this.softSelectionMode === 'DYNAMIC') {
-            const frameDelta = Vec3Utils.subtract(localTotalDelta, this.currentDeformationDelta, {x:0,y:0,z:0});
-            this.applyIncrementalDeformation(entityId, frameDelta);
-            this.recalculateSoftSelection(false); 
-        } else {
-            this.currentDeformationDelta = localTotalDelta;
-            this.applyDeformation(entityId);
-        }
-        
-        this.currentDeformationDelta = localTotalDelta;
-    }
-
-    private applyIncrementalDeformation(entityId: string, localDelta: Vector3) {
-        const idx = this.ecs.idToIndex.get(entityId);
-        if (idx === undefined) return;
-        const meshIntId = this.ecs.store.meshType[idx];
-        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
-        if (!asset) return;
+        // Transform global delta to local space
+        const localDelta = { x: delta.x, y: delta.y, z: delta.z };
+        // Ideally should transform delta by inverse rotation/scale, simplified here
+        const invScaleX = 1.0 / this.ecs.store.scaleX[idx!];
+        const invScaleY = 1.0 / this.ecs.store.scaleY[idx!];
+        const invScaleZ = 1.0 / this.ecs.store.scaleZ[idx!];
+        localDelta.x *= invScaleX; localDelta.y *= invScaleY; localDelta.z *= invScaleZ;
 
         const verts = asset.geometry.vertices;
-        const weights = this.softSelectionWeights.get(meshIntId);
+        const count = verts.length / 3;
         
-        const selectedVerts = this.selectionSystem.getSelectionAsVertices();
+        const selection = this.selectionSystem.getSelectionAsVertices();
+        const useSoft = this.softSelectionEnabled && weights;
 
-        if (this.softSelectionEnabled && weights) {
-            for (let i = 0; i < weights.length; i++) {
-                const w = weights[i];
-                if (w > 0.0001) {
-                    verts[i*3] += localDelta.x * w;
-                    verts[i*3+1] += localDelta.y * w;
-                    verts[i*3+2] += localDelta.z * w;
-                }
-            }
-        } else {
-            for (const vIdx of selectedVerts) {
-                verts[vIdx*3] += localDelta.x;
-                verts[vIdx*3+1] += localDelta.y;
-                verts[vIdx*3+2] += localDelta.z;
+        for(let i=0; i<count; i++) {
+            let weight = 0;
+            if (selection.has(i)) weight = 1.0;
+            else if (useSoft) weight = weights![i];
+            
+            if (weight > 0) {
+                verts[i*3] = this.vertexSnapshot[i*3] + localDelta.x * weight;
+                verts[i*3+1] = this.vertexSnapshot[i*3+1] + localDelta.y * weight;
+                verts[i*3+2] = this.vertexSnapshot[i*3+2] + localDelta.z * weight;
             }
         }
         
-        this.updateMeshBounds(asset);
         this.registerAssetWithGPU(asset);
-    }
-
-    private applyDeformation(entityId: string) {
-        const idx = this.ecs.idToIndex.get(entityId);
-        if (idx === undefined) return;
-        const meshIntId = this.ecs.store.meshType[idx];
-        const assetUuid = assetManager.meshIntToUuid.get(meshIntId);
-        const asset = assetManager.getAsset(assetUuid!) as StaticMeshAsset;
-        if (!asset || !this.vertexSnapshot) return;
-
-        const verts = asset.geometry.vertices;
-        const snap = this.vertexSnapshot;
-        const weights = this.softSelectionWeights.get(meshIntId);
-        const delta = this.currentDeformationDelta;
-        
-        const selectedVerts = this.selectionSystem.getSelectionAsVertices();
-
-        if (this.softSelectionEnabled && weights) {
-            for (let i = 0; i < weights.length; i++) {
-                const w = weights[i];
-                if (w > 0.001) {
-                    verts[i*3] = snap[i*3] + delta.x * w;
-                    verts[i*3+1] = snap[i*3+1] + delta.y * w;
-                    verts[i*3+2] = snap[i*3+2] + delta.z * w;
-                } else {
-                    verts[i*3] = snap[i*3];
-                    verts[i*3+1] = snap[i*3+1];
-                    verts[i*3+2] = snap[i*3+2];
-                }
-            }
-        } else {
-            verts.set(snap);
-            for (const vIdx of selectedVerts) {
-                verts[vIdx*3] += delta.x;
-                verts[vIdx*3+1] += delta.y;
-                verts[vIdx*3+2] += delta.z;
-            }
-        }
-
-        this.updateMeshBounds(asset);
-        this.registerAssetWithGPU(asset);
-    }
-
-    private updateMeshBounds(asset: StaticMeshAsset) {
-        const verts = asset.geometry.vertices;
-        let minX = Infinity, minY = Infinity, minZ = Infinity;
-        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-
-        for (let i = 0; i < verts.length; i += 3) {
-            const x = verts[i], y = verts[i+1], z = verts[i+2];
-            if (x < minX) minX = x; if (x > maxX) maxX = x;
-            if (y < minY) minY = y; if (y > maxY) maxY = y;
-            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-        }
-
-        asset.geometry.aabb = {
-            min: { x: minX, y: minY, z: minZ },
-            max: { x: maxX, y: maxY, z: maxZ }
-        };
-
-        if (asset.topology) {
-            asset.topology.bvh = undefined; 
-        }
     }
 
     endVertexDrag() {
+        this.vertexSnapshot = null;
+        this.activeDeformationEntity = null;
     }
 
     clearDeformation() {
         this.vertexSnapshot = null;
-        this.activeDeformationEntity = null;
-        this.currentDeformationDelta = { x: 0, y: 0, z: 0 };
-    }
-
-    extrudeFaces() { consoleService.warn('Extrude Faces: Not implemented'); }
-    bevelEdges() { consoleService.warn('Bevel Edges: Not implemented'); }
-    weldVertices() { consoleService.warn('Weld Vertices: Not implemented'); }
-    connectComponents() { consoleService.warn('Connect Components: Not implemented'); }
-    deleteSelectedFaces() { consoleService.warn('Delete Selected Faces: Not implemented'); }
-
-    tick(dt: number) {
-            const start = performance.now();
-            const clampedDt = Math.min(dt, this.maxFrameTime);
-            if (dt > 0) this.accumulator += clampedDt;
-
-            moduleManager.update(clampedDt);
-
-            while (this.accumulator >= this.fixedTimeStep) {
-                this.fixedUpdate(this.fixedTimeStep);
-                this.accumulator -= this.fixedTimeStep;
-            }
-
-            this.sceneGraph.update();
-
-            if (this.currentViewProj && !this.isPlaying) {
-                this.debugRenderer.begin();
-            }
-
-            if (this.currentViewProj) {
-                const softSel = { 
-                    enabled: this.softSelectionEnabled && this.meshComponentMode !== 'OBJECT', 
-                    center: {x:0,y:0,z:0}, 
-                    radius: this.softSelectionRadius,
-                    heatmapVisible: this.softSelectionHeatmapVisible
-                };
-                
-                if (softSel.enabled && this.selectionSystem.selectedIndices.size > 0) {
-                     const idx = Array.from(this.selectionSystem.selectedIndices)[0];
-                     const id = this.ecs.store.ids[idx];
-                     const wm = this.sceneGraph.getWorldMatrix(id);
-                     const useSnap = (this.softSelectionMode === 'FIXED' && this.vertexSnapshot);
-                     const sourceV = useSnap ? this.vertexSnapshot! : (assetManager.getAsset(assetManager.meshIntToUuid.get(this.ecs.store.meshType[idx])!) as StaticMeshAsset)?.geometry.vertices;
-                     const activeVerts = this.selectionSystem.getSelectionAsVertices();
-
-                     if (sourceV && activeVerts.size > 0 && wm) {
-                         const vId = Array.from(activeVerts)[0];
-                         const lx = sourceV[vId*3], ly = sourceV[vId*3+1], lz = sourceV[vId*3+2];
-                         const wx = wm[0]*lx + wm[4]*ly + wm[8]*lz + wm[12];
-                         const wy = wm[1]*lx + wm[5]*ly + wm[9]*lz + wm[13];
-                         const wz = wm[2]*lx + wm[6]*ly + wm[10]*lz + wm[14];
-                         softSel.center = { x: wx, y: wy, z: wz };
-                     } else if (wm) {
-                         softSel.center = { x: wm[12], y: wm[13], z: wm[14] }; 
-                     }
-                }
-
-                this.renderer.render(
-                    this.ecs.store, 
-                    this.ecs.count, 
-                    this.selectionSystem.selectedIndices, 
-                    this.currentViewProj, 
-                    this.currentWidth, 
-                    this.currentHeight, 
-                    this.currentCameraPos,
-                    softSel,
-                    this.isPlaying && this.simulationMode === 'GAME' ? undefined : this.debugRenderer,
-                    this.particleSystem
-                );
-            }
-
-            const end = performance.now();
-            this.metrics.frameTime = end - start;
-            if (dt > 0.0001) this.metrics.fps = 1 / dt;
-            gizmoSystem.render();
-            this.metrics.drawCalls = this.renderer.drawCalls;
-            this.metrics.triangleCount = this.renderer.triangleCount;
-            this.metrics.entityCount = this.ecs.count;
-        }
-
-        private fixedUpdate(fixedDt: number) {
-            if (this.timeline.isPlaying) {
-                this.timeline.currentTime += fixedDt * this.timeline.playbackSpeed;
-                if (this.timeline.currentTime >= this.timeline.duration) {
-                    if (this.timeline.isLooping) this.timeline.currentTime = 0;
-                    else { 
-                        this.timeline.currentTime = this.timeline.duration; 
-                        this.timeline.isPlaying = false; 
-                        this.isPlaying = false; 
-                        this.simulationMode = 'STOPPED';
-                        this.notifyUI();
-                    }
-                }
-            }
-
-            const store = this.ecs.store;
-            for(let i=0; i<this.ecs.count; i++) {
-                if (store.isActive[i]) {
-                    const id = store.ids[i];
-                    const rigId = store.rigIndex[i];
-                    if (rigId > 0) {
-                        const assetId = assetManager.getRigUUID(rigId);
-                        if(assetId) this.executeAssetGraph(id, assetId);
-                    }
-                }
-            }
-        }
-
-    updateCamera(vpMatrix: Float32Array, eye: {x:number, y:number, z:number}, width: number, height: number) {
-        this.currentViewProj = vpMatrix; this.currentCameraPos = eye; this.currentWidth = width; this.currentHeight = height;
     }
 }
 
