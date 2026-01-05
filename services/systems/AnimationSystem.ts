@@ -3,16 +3,25 @@ import { SkeletalMeshAsset } from '../../types';
 import { Mat4Utils, QuatUtils } from '../math';
 import { assetManager } from '../AssetManager';
 import { DebugRenderer } from '../renderers/DebugRenderer';
-import { engineInstance } from '../engine';
 import { AnimationEvaluator } from '../animation/AnimationEvaluator';
 import { SkeletonBinder } from '../animation/SkeletonBinder';
 
 export class AnimationSystem {
     private binder = new SkeletonBinder();
 
-    update(dt: number, time: number, meshSystem: any, ecs: any, sceneGraph: any, debugRenderer?: DebugRenderer, selectedIndices?: Set<number>, meshComponentMode?: string) {
+    update(
+        dt: number, 
+        time: number, 
+        isPlaying: boolean,
+        skeletonMap: Map<string, string[]>,
+        meshSystem: any, 
+        ecs: any, 
+        sceneGraph: any, 
+        debugRenderer?: DebugRenderer, 
+        selectedIndices?: Set<number>, 
+        meshComponentMode?: string
+    ) {
         const store = ecs.store;
-        const isPlaying = engineInstance.timeline.isPlaying;
 
         for (let i = 0; i < ecs.count; i++) {
             if (!store.isActive[i]) continue;
@@ -29,11 +38,10 @@ export class AnimationSystem {
             if (skelAsset.skeleton.bones.length === 0) continue;
             
             const entityId = store.ids[i];
-            const boneIds = engineInstance.skeletonMap.get(entityId);
+            const boneIds = skeletonMap.get(entityId);
             if (!boneIds) continue; 
 
             // 2. Animation Logic
-            // (Future: Logic for Blending/State Machines goes here)
             const animIndex = store.animationIndex[i] || 0;
             const clip = skelAsset.animations[animIndex];
             
@@ -65,7 +73,7 @@ export class AnimationSystem {
             }
 
             // 3. Skinning & Debugging (Always run, even if paused, to handle manual bone moves)
-            this.updateSkinMatrices(skelAsset, boneIds, sceneGraph, meshSystem, ecs, debugRenderer, selectedIndices, meshComponentMode, i);
+            this.updateSkinMatrices(skelAsset, boneIds, sceneGraph, meshSystem, ecs, debugRenderer, selectedIndices, meshComponentMode);
         }
     }
 
@@ -77,8 +85,7 @@ export class AnimationSystem {
         ecs: any,
         debugRenderer?: DebugRenderer, 
         selectedIndices?: Set<number>, 
-        meshComponentMode?: string,
-        meshIdx?: number
+        meshComponentMode?: string
     ) {
         const boneMatrices = new Float32Array(asset.skeleton.bones.length * 16);
         
