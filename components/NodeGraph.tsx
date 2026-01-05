@@ -138,11 +138,14 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
                 }
             } else if (e.key === 'g' || e.key === 'G') {
                 setShowGrid(prev => !prev);
+            } else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
+                if (e.shiftKey) redo(nodes, connections);
+                else undo(nodes, connections);
             }
         };
         window.addEventListener('keydown', handleKey);
         return () => window.removeEventListener('keydown', handleKey);
-    }, [nodes, connections, selectedNodeIds, pushSnapshot]);
+    }, [nodes, connections, selectedNodeIds, pushSnapshot, undo, redo]);
 
     const updateViewportStyle = useCallback(() => {
         if (viewRef.current && containerRef.current) {
@@ -194,7 +197,7 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
         
         const worldPos = GraphUtils.screenToWorld(e.clientX, e.clientY, rect, transformRef.current);
 
-        // --- Restored: Ctrl + Right Click Cutting Logic ---
+        // 1. CUTTING (Ctrl + RMB)
         if (e.ctrlKey && e.button === 2) {
             e.preventDefault(); e.stopPropagation();
             cleanupListeners();
@@ -259,6 +262,44 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
             return;
         }
 
+        // 2. ZOOM (Alt + RMB)
+        if (e.altKey && e.button === 2) {
+            e.preventDefault(); e.stopPropagation();
+            cleanupListeners();
+            isInteracting.current = true;
+            containerRef.current?.classList.add('is-interacting');
+            
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startK = transformRef.current.k;
+            const startTrans = { ...transformRef.current };
+            const pivotX = startX - rect.left;
+            const pivotY = startY - rect.top;
+            
+            const onMove = (ev: MouseEvent) => {
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+                const delta = (dx + dy) * 0.005; // Sensitivity
+                
+                const newK = Math.min(Math.max(startK * Math.exp(delta), 0.1), 3);
+                
+                // Scale relative to initial cursor position (pivot)
+                const mouseWorldX = (pivotX - startTrans.x) / startK;
+                const mouseWorldY = (pivotY - startTrans.y) / startK;
+                
+                const newX = pivotX - (mouseWorldX * newK);
+                const newY = pivotY - (mouseWorldY * newK);
+
+                transformRef.current = { x: newX, y: newY, k: newK };
+                updateViewportStyle();
+            };
+            
+            activeListenersRef.current = { move: onMove, up: cleanupListeners };
+            window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', cleanupListeners);
+            return;
+        }
+
+        // 3. PAN (MMB or Alt + LMB)
         if (e.button === 1 || (e.altKey && e.button === 0)) {
             e.preventDefault(); e.stopPropagation();
             cleanupListeners();
@@ -273,10 +314,18 @@ export const NodeGraph: React.FC<NodeGraphProps> = ({ assetId }) => {
             };
             activeListenersRef.current = { move: onMove, up: cleanupListeners };
             window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', cleanupListeners);
-        } else if (e.button === 2 && !e.altKey) { 
+            return;
+        }
+
+        // 4. CONTEXT MENU (RMB)
+        if (e.button === 2 && !e.altKey) { 
             e.preventDefault(); e.stopPropagation();
             setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, visible: true });
-        } else if (e.button === 0 && !e.altKey) {
+            return;
+        }
+
+        // 5. SELECTION (LMB)
+        if (e.button === 0 && !e.altKey) {
             if (!e.shiftKey && !e.ctrlKey) {
                 setSelectedNodeIds(new Set());
                 setInspectedNode(null);
