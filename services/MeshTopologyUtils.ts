@@ -273,7 +273,7 @@ export const MeshTopologyUtils = {
                 return;
             }
 
-            // 3. Branch Node: Recurse (Front-to-back sorting optimization could be added here, but simple recursion is fine for now)
+            // 3. Branch Node: Recurse
             if (node.left) traverse(node.left);
             if (node.right) traverse(node.right);
         };
@@ -282,43 +282,27 @@ export const MeshTopologyUtils = {
         return bestResult;
     },
 
-    /**
-     * Efficiently find the closest vertex using the BVH raycast result.
-     * MUCH faster than iterating all vertices.
-     */
     findNearestVertexOnRay: (mesh: LogicalMesh, vertices: Float32Array, ray: Ray, threshold: number): number | null => {
-        // reuse the raycast logic to get the closest face first
         const hit = MeshTopologyUtils.raycastMesh(mesh, vertices, ray);
-        
         if (hit) {
-            // Check if the closest vertex on that face is within threshold
             const vIdx = hit.vertexId;
             const px = vertices[vIdx*3], py = vertices[vIdx*3+1], pz = vertices[vIdx*3+2];
-            
-            // Project vertex to ray to get true distance to ray line
             const vPos = {x: px, y: py, z: pz};
             const rayToV = Vec3Utils.subtract(vPos, ray.origin, {x:0,y:0,z:0});
             const t = Vec3Utils.dot(rayToV, ray.direction);
             const closestPointOnRay = Vec3Utils.add(ray.origin, Vec3Utils.scale(ray.direction, t, {x:0,y:0,z:0}), {x:0,y:0,z:0});
             const dist = Vec3Utils.distance(vPos, closestPointOnRay);
-
-            // Note: Threshold here is in World Units.
-            // Screen space conversion should happen in Engine before calling this or we use a generous world tolerance.
             if (dist < threshold) return vIdx;
         }
         return null;
     },
 
-    /**
-     * Brush Selection: Finds all vertices within a 3D sphere using the BVH.
-     */
     getVerticesInWorldSphere: (mesh: LogicalMesh, vertices: Float32Array, center: Vector3, radius: number): number[] => {
         if (!mesh.bvh) mesh.bvh = MeshTopologyUtils.buildBVH(mesh, vertices);
         const root = mesh.bvh as BVHNode;
         const results = new Set<number>();
         const radiusSq = radius * radius;
 
-        // Sphere AABB for fast rejection
         const sphereBox = AABBUtils.create();
         sphereBox.min = { x: center.x - radius, y: center.y - radius, z: center.z - radius };
         sphereBox.max = { x: center.x + radius, y: center.y + radius, z: center.z + radius };
@@ -350,46 +334,26 @@ export const MeshTopologyUtils = {
         return Array.from(results);
     },
 
-    // --- SELECTION ALGORITHMS ---
-
-    /**
-     * Get Edge Ring: Parallel edges (Like ladder rungs).
-     */
     getEdgeRing: (mesh: LogicalMesh, startVertexA: number, startVertexB: number): [number, number][] => {
         const forward = MeshTopologyUtils._walkRing(mesh, startVertexA, startVertexB);
         const backward = MeshTopologyUtils._walkRing(mesh, startVertexA, startVertexB, true);
         return [...backward.reverse(), [startVertexA, startVertexB], ...forward];
     },
 
-    /**
-     * Get Face Loop: A strip of quads.
-     */
     getFaceLoop: (mesh: LogicalMesh, edgeV1: number, edgeV2: number): number[] => {
         const faces = (mesh.vertexToFaces.get(edgeV1) || []).filter(f => (mesh.vertexToFaces.get(edgeV2) || []).includes(f));
         const loop: number[] = [];
-        if (faces.length > 0) {
-            loop.push(...MeshTopologyUtils._walkFaceStrip(mesh, edgeV1, edgeV2, faces[0]).reverse());
-        }
-        if (faces.length > 1) {
-            loop.push(...MeshTopologyUtils._walkFaceStrip(mesh, edgeV1, edgeV2, faces[1]));
-        }
+        if (faces.length > 0) loop.push(...MeshTopologyUtils._walkFaceStrip(mesh, edgeV1, edgeV2, faces[0]).reverse());
+        if (faces.length > 1) loop.push(...MeshTopologyUtils._walkFaceStrip(mesh, edgeV1, edgeV2, faces[1]));
         return [...new Set(loop)];
     },
 
-    /**
-     * Get Edge Loop: Connected edges in a line (Longitudinal).
-     */
     getEdgeLoop: (mesh: LogicalMesh, startV1: number, startV2: number): [number, number][] => {
         const forward = MeshTopologyUtils._walkEdgeLoop(mesh, startV1, startV2);
         const backward = MeshTopologyUtils._walkEdgeLoop(mesh, startV2, startV1);
-        // Combine: backward (reversed) -> start -> forward
         return [...backward.map(e => [e[1], e[0]] as [number, number]).reverse(), [startV1, startV2], ...forward];
     },
 
-    /**
-     * Get Vertex Loop: Vertices along the edge loop defined by v1-v2.
-     * Takes 2 vertices to define the initial direction.
-     */
     getVertexLoop: (mesh: LogicalMesh, v1: number, v2: number): number[] => {
         const edgeLoop = MeshTopologyUtils.getEdgeLoop(mesh, v1, v2);
         const vertices = new Set<number>();
@@ -397,19 +361,15 @@ export const MeshTopologyUtils = {
         return Array.from(vertices);
     },
 
-    // --- Internal Helpers ---
-
     _walkRing: (mesh: LogicalMesh, vA: number, vB: number, reverse: boolean = false): [number, number][] => {
         const edges: [number, number][] = [];
         const visitedFaces = new Set<number>();
         
-        let currA = vA; 
-        let currB = vB;
+        let currA = vA; let currB = vB;
 
         const sharedFaces = (mesh.vertexToFaces.get(vA) || []).filter(f => (mesh.vertexToFaces.get(vB) || []).includes(f));
         if (sharedFaces.length === 0) return [];
         
-        // Directionality
         let startFaceIdx = reverse ? sharedFaces[1] : sharedFaces[0];
         if (startFaceIdx === undefined) return [];
 
@@ -419,14 +379,10 @@ export const MeshTopologyUtils = {
         
         while (next) {
             edges.push([next.a, next.b]);
-            currA = next.a; 
-            currB = next.b;
-            
+            currA = next.a; currB = next.b;
             const nextFaces = (mesh.vertexToFaces.get(currA) || []).filter(f => (mesh.vertexToFaces.get(currB) || []).includes(f));
             const nextFaceIdx = nextFaces.find(f => !visitedFaces.has(f));
-            
             if (nextFaceIdx === undefined) break;
-            
             visitedFaces.add(nextFaceIdx);
             next = MeshTopologyUtils._stepAcrossFace(mesh, currA, currB, nextFaceIdx);
         }
@@ -435,10 +391,9 @@ export const MeshTopologyUtils = {
 
     _stepAcrossFace: (mesh: LogicalMesh, vA: number, vB: number, faceIdx: number) => {
         const face = mesh.faces[faceIdx];
-        if (face.length !== 4) return null; // Only works on quads
+        if (face.length !== 4) return null; 
         const idxA = face.indexOf(vA);
         const idxB = face.indexOf(vB);
-        // Opposite edge in a quad: (0,1) -> (2,3)
         const nextA = face[(idxA + 2) % 4];
         const nextB = face[(idxB + 2) % 4];
         return { a: nextA, b: nextB };
@@ -448,22 +403,15 @@ export const MeshTopologyUtils = {
         const faces: number[] = [startFaceIdx];
         const visited = new Set<number>([startFaceIdx]);
         
-        let currA = vA;
-        let currB = vB;
-        let currFace = startFaceIdx;
+        let currA = vA; let currB = vB; let currFace = startFaceIdx;
 
         while (true) {
             const nextEdge = MeshTopologyUtils._stepAcrossFace(mesh, currA, currB, currFace);
             if (!nextEdge) break;
-
-            currA = nextEdge.a;
-            currB = nextEdge.b;
-
+            currA = nextEdge.a; currB = nextEdge.b;
             const candidates = (mesh.vertexToFaces.get(currA) || []).filter(f => (mesh.vertexToFaces.get(currB) || []).includes(f));
             const nextFace = candidates.find(f => !visited.has(f));
-
             if (nextFace === undefined) break;
-            
             visited.add(nextFace);
             faces.push(nextFace);
             currFace = nextFace;
@@ -473,14 +421,10 @@ export const MeshTopologyUtils = {
 
     _walkEdgeLoop: (mesh: LogicalMesh, fromV: number, currV: number): [number, number][] => {
         const loop: [number, number][] = [];
-        let prev = fromV;
-        let current = currV;
-        
+        let prev = fromV; let current = currV;
         let iter = 0;
         while(iter++ < 1000) {
             const neighborFaces = mesh.vertexToFaces.get(current) || [];
-            
-            // Get all directly connected neighbor vertices via edges
             const neighbors = new Set<number>();
             neighborFaces.forEach(fIdx => {
                 const face = mesh.faces[fIdx];
@@ -488,32 +432,22 @@ export const MeshTopologyUtils = {
                 neighbors.add(face[(idx + 1) % face.length]);
                 neighbors.add(face[(idx + face.length - 1) % face.length]);
             });
-
-            // Incoming edge is (prev, current)
             const incomingFaces = neighborFaces.filter(fIdx => mesh.faces[fIdx].includes(prev));
-
-            // Find 'next' such that edge (current, next) shares NO faces with (prev, current)
             let nextVertex = -1;
-            
             for (const n of Array.from(neighbors)) {
                 if (n === prev) continue;
-                
                 const outgoingFaces = neighborFaces.filter(fIdx => mesh.faces[fIdx].includes(n));
                 const shared = incomingFaces.filter(f => outgoingFaces.includes(f));
-                
-                // If 0 shared faces, this edge is topologically opposite in a valence-4 vertex
                 if (shared.length === 0) {
                     nextVertex = n;
                     break; 
                 }
             }
-
             if (nextVertex !== -1) {
                 loop.push([current, nextVertex]);
-                prev = current;
-                current = nextVertex;
+                prev = current; current = nextVertex;
             } else {
-                break; // Pole or boundary
+                break; 
             }
         }
         return loop;
@@ -529,31 +463,79 @@ export const MeshTopologyUtils = {
         const weights = new Float32Array(vertexCount).fill(0);
         if (selectedIndices.size === 0) return weights;
 
+        // 1. Build Adjacency Graph (Welding Vertices by Position)
+        // This fixes "Missing Features" where soft selection stopped at UV seams/hard edges.
+        
         const adj: number[][] = new Array(vertexCount);
         for(let i=0; i<vertexCount; i++) adj[i] = [];
 
+        // Spatial Map: Position Key -> List of Vertex Indices
+        const posMap = new Map<string, number[]>();
+        
+        for(let i=0; i<vertexCount; i++) {
+            // Quantize position to merge coincident vertices
+            // 4 decimal places should cover most float errors
+            const x = Math.round(vertices[i*3] * 10000);
+            const y = Math.round(vertices[i*3+1] * 10000);
+            const z = Math.round(vertices[i*3+2] * 10000);
+            const key = `${x},${y},${z}`;
+            
+            if(!posMap.has(key)) posMap.set(key, []);
+            posMap.get(key)!.push(i);
+        }
+
+        // Helper: Link two vertices (and their spatial siblings)
+        const addLink = (a: number, b: number) => {
+            if(adj[a].indexOf(b) === -1) adj[a].push(b);
+            if(adj[b].indexOf(a) === -1) adj[b].push(a);
+        };
+
+        // Build edge graph from triangles
         for (let i = 0; i < indices.length; i += 3) {
             const v0 = indices[i];
             const v1 = indices[i+1];
             const v2 = indices[i+2];
             
-            if (adj[v0].indexOf(v1) === -1) adj[v0].push(v1);
-            if (adj[v1].indexOf(v0) === -1) adj[v1].push(v0);
-            
-            if (adj[v1].indexOf(v2) === -1) adj[v1].push(v2);
-            if (adj[v2].indexOf(v1) === -1) adj[v2].push(v1);
-            
-            if (adj[v2].indexOf(v0) === -1) adj[v2].push(v0);
-            if (adj[v0].indexOf(v2) === -1) adj[v0].push(v2);
+            addLink(v0, v1);
+            addLink(v1, v2);
+            addLink(v2, v0);
         }
 
+        // Weld Step: Ensure spatial siblings are fully connected
+        // If vA and vB are at same pos, they are effectively distance 0.
+        // We add them as neighbors with effectively 0 distance logic in Dijkstra.
+        // Actually, we can just treat them as neighbors.
+        posMap.forEach((sibs) => {
+            if (sibs.length > 1) {
+                // Fully connect siblings
+                for(let i=0; i<sibs.length; i++) {
+                    for(let j=i+1; j<sibs.length; j++) {
+                        addLink(sibs[i], sibs[j]);
+                    }
+                }
+            }
+        });
+
+        // 2. Dijkstra
         const dists = new Float32Array(vertexCount).fill(Infinity);
         const pq = new MinHeap();
 
+        // Seed with selection (and their siblings!)
         selectedIndices.forEach(idx => {
-            dists[idx] = 0;
-            weights[idx] = 1.0;
-            pq.push({ id: idx, dist: 0 });
+            // Find all siblings of selected
+            const px = Math.round(vertices[idx*3]*10000);
+            const py = Math.round(vertices[idx*3+1]*10000);
+            const pz = Math.round(vertices[idx*3+2]*10000);
+            const key = `${px},${py},${pz}`;
+            const siblings = posMap.get(key) || [idx];
+            
+            siblings.forEach(sib => {
+                if (dists[sib] !== 0) { // Avoid duplicates
+                    dists[sib] = 0;
+                    weights[sib] = 1.0;
+                    pq.push({ id: sib, dist: 0 });
+                }
+            });
         });
 
         let iterations = 0;
@@ -570,8 +552,13 @@ export const MeshTopologyUtils = {
             for (let i = 0; i < neighbors.length; i++) {
                 const v = neighbors[i];
                 const vPos = { x: vertices[v*3], y: vertices[v*3+1], z: vertices[v*3+2] };
+                
+                // Calculate geometric distance
                 const edgeLen = Math.sqrt((uPos.x - vPos.x)**2 + (uPos.y - vPos.y)**2 + (uPos.z - vPos.z)**2);
+                
+                // If edgeLen is ~0 (coincident), distance doesn't increase
                 const alt = u.dist + edgeLen;
+                
                 if (alt < dists[v] && alt <= radius) {
                     dists[v] = alt;
                     pq.push({ id: v, dist: alt });
@@ -579,6 +566,7 @@ export const MeshTopologyUtils = {
             }
         }
 
+        // 3. Convert Distance to Weight
         for (let i = 0; i < vertexCount; i++) {
             if (dists[i] <= radius) {
                 if (radius <= 0.0001) {
