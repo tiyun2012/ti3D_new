@@ -15,11 +15,27 @@ export const useBrushInteraction = () => {
 
     const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
     const bKeyRef = useRef(false);
+    const dragHappenedRef = useRef(false); // Track if mouse action occurred during B press
     const brushStartPos = useRef({ x: 0, y: 0, startRadius: 0 });
 
+    // 1. Handle Key States (B Key)
     useEffect(() => {
-        const onDown = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bKeyRef.current = true; };
-        const onUp = (e: KeyboardEvent) => { if(e.key.toLowerCase() === 'b') bKeyRef.current = false; };
+        const onDown = (e: KeyboardEvent) => { 
+            // Only trigger on first press, ignore repeats
+            if(e.key.toLowerCase() === 'b' && !e.repeat) {
+                bKeyRef.current = true; 
+                dragHappenedRef.current = false; // Reset on fresh press
+            }
+        };
+        const onUp = (e: KeyboardEvent) => { 
+            if(e.key.toLowerCase() === 'b') {
+                bKeyRef.current = false; 
+                // If B was pressed and released without a drag action, toggle soft selection
+                if (!dragHappenedRef.current) {
+                    setSoftSelectionEnabled(!softSelectionEnabled);
+                }
+            }
+        };
         
         window.addEventListener('keydown', onDown);
         window.addEventListener('keyup', onUp);
@@ -28,8 +44,9 @@ export const useBrushInteraction = () => {
             window.removeEventListener('keydown', onDown);
             window.removeEventListener('keyup', onUp);
         };
-    }, []);
+    }, [setSoftSelectionEnabled, softSelectionEnabled]);
 
+    // 2. Handle Mouse Interaction (Global)
     useEffect(() => {
         const handleGlobalMouseMove = (e: MouseEvent) => {
             if (isAdjustingBrush) {
@@ -44,10 +61,14 @@ export const useBrushInteraction = () => {
 
         const onWindowMouseDown = (e: MouseEvent) => {
             if (bKeyRef.current && e.button === 0) {
+                // Mark that we used the B key for interaction (prevent toggle on release)
+                dragHappenedRef.current = true;
+
                 // IMPORTANT: Stop propagation to prevent SceneView from handling this click as a selection
                 e.preventDefault(); 
                 e.stopPropagation();
                 
+                // Force enable soft selection when adjusting brush
                 if (!softSelectionEnabled) setSoftSelectionEnabled(true);
                 
                 setIsAdjustingBrush(true);
