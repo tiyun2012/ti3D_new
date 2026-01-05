@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { Icon } from './Icon';
 import { assetManager } from '../services/AssetManager';
@@ -13,9 +12,10 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
     const [file, setFile] = useState<File | null>(null);
     const [importType, setImportType] = useState<'MESH' | 'SKELETAL_MESH'>('MESH');
     const [settings, setSettings] = useState({
-        scale: 1.0, // Default to 1.0 (1:1)
+        scale: 0.01, // Default to 0.01 (Maya/FBX standard to Meter)
         convertAxis: true,
         generateNormals: true,
+        detectQuads: true, // [NEW] Default to enabled
     });
     const [isImporting, setIsImporting] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -33,8 +33,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
             if (name.includes('skel') || name.includes('anim') || name.includes('character')) {
                 setImportType('SKELETAL_MESH');
             }
-            // Auto-detect Blender (typically 1.0) vs Maya (typically 0.01)
-            // For now, let user toggle manually
         }
     };
 
@@ -49,7 +47,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
             
             await new Promise(r => setTimeout(r, 100)); 
             
-            const asset = await assetManager.importFile(file.name, content, importType, settings.scale);
+            // Pass settings.detectQuads to import function
+            const asset = await assetManager.importFile(file.name, content, importType, settings.scale, settings.detectQuads);
             
             engineInstance.registerAssetWithGPU(asset);
             setProgress(100);
@@ -197,6 +196,21 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImportSuc
                             type="checkbox" 
                             checked={settings.generateNormals} 
                             onChange={(e) => setSettings({...settings, generateNormals: e.target.checked})}
+                            className="accent-accent"
+                            disabled={isImporting}
+                        />
+                    </label>
+
+                    {/* NEW: Quad Detection Toggle */}
+                    <label className="flex items-center justify-between cursor-pointer group" title="Attempt to reconstruct quads from triangulated data (e.g. FBX)">
+                        <div className="flex flex-col">
+                            <span className="text-text-secondary group-hover:text-white transition-colors">Preserve / Detect Quads</span>
+                            <span className="text-[9px] text-text-secondary opacity-70">Reconstructs topology</span>
+                        </div>
+                        <input 
+                            type="checkbox" 
+                            checked={settings.detectQuads} 
+                            onChange={(e) => setSettings({...settings, detectQuads: e.target.checked})}
                             className="accent-accent"
                             disabled={isImporting}
                         />

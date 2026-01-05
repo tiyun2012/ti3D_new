@@ -39,16 +39,25 @@ export const SkinningEditor: React.FC = () => {
         if (foundAsset) {
             setAsset(foundAsset);
             setBones(foundAsset.skeleton.bones.map((b, i) => ({ name: b.name, index: i })));
+            
+            // Auto-switch to Heatmap Mode when tool is active
+            engineInstance.setRenderMode(5);
         } else {
             setAsset(null);
             setBones([]);
+            // Revert mode if closed/deselected
+            if (engineInstance.renderMode === 5) engineInstance.setRenderMode(0);
         }
+        
+        return () => {
+             // Cleanup: revert render mode on unmount if it was 5
+             if (engineInstance.renderMode === 5) engineInstance.setRenderMode(0);
+        };
     }, [selectedIds, selectedAssetIds]);
 
     const selectBone = (index: number) => {
         setSelectedBoneIndex(index);
         engineInstance.meshSystem.selectedBoneIndex = index;
-        // Auto-switch render mode to Weights
         engineInstance.setRenderMode(5);
         engineInstance.notifyUI();
     };
@@ -77,6 +86,7 @@ export const SkinningEditor: React.FC = () => {
                 const mx = e.clientX - rect.left;
                 const my = e.clientY - rect.top;
                 
+                // Perform pick
                 const result = engineInstance.pickMeshComponent(entityId, mx, my, rect.width, rect.height);
                 
                 if (result) {
@@ -87,9 +97,15 @@ export const SkinningEditor: React.FC = () => {
                 setIsPainting(false);
             }
         };
+        
+        const handleMouseUp = () => setIsPainting(false);
 
         window.addEventListener('mousemove', handleMouseMove);
-        return () => window.removeEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
     }, [selectedBoneIndex, asset, selectedIds, weight, mode, softSelectionRadius]);
 
     const filteredBones = bones.filter(b => b.name.toLowerCase().includes(search.toLowerCase()));

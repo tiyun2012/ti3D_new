@@ -1,4 +1,5 @@
 
+
 import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh, FolderAsset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
@@ -289,7 +290,7 @@ class AssetManagerService {
         return asset;
     }
 
-    async importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH', importScale: number = 1.0): Promise<Asset> {
+    async importFile(fileName: string, content: string | ArrayBuffer, type: 'MESH' | 'SKELETAL_MESH', importScale: number = 1.0, detectQuads: boolean = true): Promise<Asset> {
         const id = crypto.randomUUID();
         const name = fileName.split('.')[0] || 'Imported_Mesh';
         let geometryData: any = { v: [], n: [], u: [], idx: [], faces: [], triToFace: [] };
@@ -301,7 +302,7 @@ class AssetManagerService {
         if (ext.endsWith('.obj')) {
             geometryData = this.parseOBJ(typeof content === 'string' ? content : new TextDecoder().decode(content), importScale);
         } else if (ext.endsWith('.fbx')) {
-            const fbxData = await this.parseFBX(content, importScale);
+            const fbxData = await this.parseFBX(content, importScale, detectQuads);
             if (fbxData) {
                 geometryData = fbxData.geometry;
                 skeletonData = fbxData.skeleton;
@@ -311,6 +312,34 @@ class AssetManagerService {
         } else {
             console.warn("Unsupported format. Using fallback cylinder.");
             geometryData = ProceduralGeneration.createCylinder(24);
+        }
+
+        const hasFaces = geometryData.faces && geometryData.faces.length > 0;
+        const isAllTriangles = hasFaces && geometryData.faces.every((f: any[]) => f.length === 3);
+
+        if (detectQuads && geometryData.idx.length > 0 && (!hasFaces || isAllTriangles)) {
+             const verts = geometryData.v instanceof Float32Array ? geometryData.v : new Float32Array(geometryData.v);
+             // Use imported normals for better edge detection
+             const norms = geometryData.n instanceof Float32Array ? geometryData.n : new Float32Array(geometryData.n);
+             const topology = this.reconstructQuads(geometryData.idx, verts, norms);
+             
+             if (topology.faces.length < geometryData.idx.length / 3) {
+                 geometryData.faces = topology.faces;
+                 geometryData.triToFace = topology.triToFace;
+             } else if (!hasFaces) {
+                 geometryData.faces = topology.faces;
+                 geometryData.triToFace = topology.triToFace;
+             }
+        } 
+        else if (!hasFaces) {
+             const faces = [];
+             const triToFace = [];
+             for(let i=0; i<geometryData.idx.length; i+=3) {
+                 faces.push([geometryData.idx[i], geometryData.idx[i+1], geometryData.idx[i+2]]);
+                 triToFace.push(i/3);
+             }
+             geometryData.faces = faces;
+             geometryData.triToFace = triToFace;
         }
 
         const v2f = new Map<number, number[]>();
@@ -449,9 +478,8 @@ class AssetManagerService {
         return { v: finalV, n: finalN, u: finalU, idx: finalIdx, faces: logicalFaces, triToFace };
     }
 
-    private async parseFBX(content: ArrayBuffer | string, importScale: number) {
+    private async parseFBX(content: ArrayBuffer | string, importScale: number, detectQuads: boolean) {
         try {
-            // Updated import to esm.sh which handles the Three.js dependency properly for browser environments
             const { FBXLoader } = await import('https://esm.sh/three@0.182.0/examples/jsm/loaders/FBXLoader.js?alias=three:three');
             const loader = new FBXLoader();
             const group = loader.parse(content, '');
@@ -463,15 +491,32 @@ class AssetManagerService {
 
             targetMesh.updateMatrixWorld(true);
 
-            const geo = (targetMesh as any).geometry;
-            const pos = geo.attributes.position.array;
-            const norm = geo.attributes.normal ? geo.attributes.normal.array : null;
-            const uv = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
-            const idx: number[] = geo.index ? Array.from(geo.index.array) : [];
-            
-            const skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
-            const skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
+            let pos, norm, uv, idx, skinIndices, skinWeights;
 
+            if ((targetMesh as any).isSkinnedMesh) {
+                const geo = (targetMesh as any).geometry;
+                pos = geo.attributes.position.array;
+                norm = geo.attributes.normal ? geo.attributes.normal.array : null;
+                uv = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
+                idx = geo.index ? Array.from(geo.index.array) : [];
+                skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
+                skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
+            } else {
+                const bakedGeo = (targetMesh as any).geometry.clone();
+                bakedGeo.applyMatrix4(targetMesh.matrixWorld);
+                pos = bakedGeo.attributes.position.array;
+                norm = bakedGeo.attributes.normal ? bakedGeo.attributes.normal.array : null;
+                uv = bakedGeo.attributes.uv ? bakedGeo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
+                idx = bakedGeo.index ? Array.from(bakedGeo.index.array) : [];
+                skinIndices = null;
+                skinWeights = null;
+            }
+
+            if (idx.length === 0) {
+                const count = pos.length / 3;
+                for(let i=0; i<count; i++) idx.push(i);
+            }
+            
             const v = new Float32Array(pos.length);
             for(let i=0; i<pos.length; i++) v[i] = pos[i] * importScale;
 
@@ -480,26 +525,26 @@ class AssetManagerService {
 
             let skeletonData = null;
             if ((targetMesh as any).isSkinnedMesh) {
-                const skeleton = (targetMesh as any).skeleton;
+                const skinnedMesh = targetMesh as THREE.SkinnedMesh;
+                const skeleton = skinnedMesh.skeleton;
                 const bones: any[] = [];
+                
                 if (skeleton) {
-                    skeleton.bones.forEach((b: THREE.Bone) => {
+                    skeleton.bones.forEach((b: THREE.Bone, i: number) => {
                         b.updateMatrix();
                         const bindPose = new Float32Array(16);
                         b.matrix.toArray(bindPose);
-                        bindPose[12] *= importScale; bindPose[13] *= importScale; bindPose[14] *= importScale;
-                        bones.push({ name: b.name, parentIndex: b.parent && b.parent.isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1, bindPose: bindPose, inverseBindPose: new Float32Array(16) });
+                        if (importScale !== 1.0) { bindPose[12] *= importScale; bindPose[13] *= importScale; bindPose[14] *= importScale; }
+                        const inverseBindPose = new Float32Array(16);
+                        if (skeleton.boneInverses && skeleton.boneInverses[i]) {
+                            skeleton.boneInverses[i].toArray(inverseBindPose);
+                             if (importScale !== 1.0) { inverseBindPose[12] *= importScale; inverseBindPose[13] *= importScale; inverseBindPose[14] *= importScale; }
+                        } else {
+                            const inv = new THREE.Matrix4().fromArray(bindPose).invert(); 
+                            inv.toArray(inverseBindPose);
+                        }
+                        bones.push({ name: b.name, parentIndex: b.parent && (b.parent as any).isBone ? skeleton.bones.indexOf(b.parent as THREE.Bone) : -1, bindPose: bindPose, inverseBindPose: inverseBindPose });
                     });
-                    const globalMatrices = new Float32Array(bones.length * 16);
-                    for (let i = 0; i < bones.length; i++) {
-                        const bone = bones[i];
-                        const parentGlobal = bone.parentIndex !== -1 ? globalMatrices.subarray(bone.parentIndex * 16, (bone.parentIndex + 1) * 16) : null;
-                        const myGlobal = globalMatrices.subarray(i * 16, (i + 1) * 16);
-                        for(let k=0; k<16; k++) myGlobal[k] = bone.bindPose[k];
-                        if (parentGlobal) { const m = new THREE.Matrix4().fromArray(parentGlobal); const l = new THREE.Matrix4().fromArray(bone.bindPose); m.multiply(l); m.toArray(myGlobal); }
-                        const inv = new THREE.Matrix4().fromArray(myGlobal).invert();
-                        inv.toArray(bone.inverseBindPose);
-                    }
                     skeletonData = { bones };
                 }
             }
@@ -519,11 +564,18 @@ class AssetManagerService {
                 });
             }
 
-            const logicalFaces = [];
-            const triToFace = [];
-            for (let i = 0; i < idx.length; i+=3) {
-                logicalFaces.push([idx[i], idx[i+1], idx[i+2]]);
-                triToFace.push(i/3);
+            let logicalFaces: number[][] = [];
+            let triToFace: number[] = [];
+            
+            if (detectQuads) {
+                const recon = this.reconstructQuads(idx, v, n);
+                logicalFaces = recon.faces;
+                triToFace = recon.triToFace;
+            } else {
+                for (let i = 0; i < idx.length; i+=3) {
+                    logicalFaces.push([idx[i], idx[i+1], idx[i+2]]);
+                    triToFace.push(i/3);
+                }
             }
 
             return {
@@ -544,8 +596,151 @@ class AssetManagerService {
         }
     }
 
+    private reconstructQuads(indices: number[], vertices: Float32Array, normals: Float32Array): { faces: number[][], triToFace: number[] } {
+        const faces: number[][] = [];
+        const triToFace: number[] = new Array(indices.length / 3);
+        const usedTriangles = new Set<number>();
+
+        // Spatial Hashing for Topology: Group split vertices (UV seams/Hard edges) by position
+        const vertexPosMap = new Map<number, string>();
+        const getPosHash = (idx: number) => {
+            if (vertexPosMap.has(idx)) return vertexPosMap.get(idx)!;
+            const x = Math.round(vertices[idx*3] * 10000);
+            const y = Math.round(vertices[idx*3+1] * 10000);
+            const z = Math.round(vertices[idx*3+2] * 10000);
+            const key = `${x}_${y}_${z}`;
+            vertexPosMap.set(idx, key);
+            return key;
+        };
+
+        const edgeToTri = new Map<string, number[]>();
+
+        for (let i = 0; i < indices.length; i += 3) {
+            const a = indices[i], b = indices[i+1], c = indices[i+2];
+            const ha = getPosHash(a);
+            const hb = getPosHash(b);
+            const hc = getPosHash(c);
+
+            // Store edge as pair of position hashes to ignore split indices
+            const edges = [
+                [ha, hb].sort().join('|'),
+                [hb, hc].sort().join('|'),
+                [hc, ha].sort().join('|')
+            ];
+            edges.forEach(e => {
+                if (!edgeToTri.has(e)) edgeToTri.set(e, []);
+                edgeToTri.get(e)!.push(i/3);
+            });
+        }
+        
+        // Helper to get geometric normal from positions (fallback if vertex normals invalid)
+        const getGeoNormal = (tIdx: number) => {
+             const i = tIdx * 3;
+             const a = indices[i], b = indices[i+1], c = indices[i+2];
+             const ax = vertices[a*3], ay = vertices[a*3+1], az = vertices[a*3+2];
+             const bx = vertices[b*3], by = vertices[b*3+1], bz = vertices[b*3+2];
+             const cx = vertices[c*3], cy = vertices[c*3+1], cz = vertices[c*3+2];
+             
+             const ux = bx - ax, uy = by - ay, uz = bz - az;
+             const vx = cx - ax, vy = cy - ay, vz = cz - az;
+             
+             const nx = uy * vz - uz * vy;
+             const ny = uz * vx - ux * vz;
+             const nz = ux * vy - uy * vx;
+             const l = Math.sqrt(nx*nx + ny*ny + nz*nz);
+             return l > 0 ? {x:nx/l, y:ny/l, z:nz/l} : {x:0,y:1,z:0};
+        };
+
+        const triCount = indices.length / 3;
+        for (let i = 0; i < triCount; i++) {
+            if (usedTriangles.has(i)) continue;
+
+            const a = indices[i*3], b = indices[i*3+1], c = indices[i*3+2];
+            const ha = getPosHash(a);
+            const hb = getPosHash(b);
+            const hc = getPosHash(c);
+
+            const edges = [
+                [ha, hb].sort().join('|'),
+                [hb, hc].sort().join('|'),
+                [hc, ha].sort().join('|')
+            ];
+
+            let merged = false;
+            
+            // Try to find a quad partner
+            for (const edge of edges) {
+                const neighbors = edgeToTri.get(edge);
+                if (!neighbors) continue;
+                
+                const neighbor = neighbors.find(n => n !== i && !usedTriangles.has(n));
+                if (neighbor !== undefined) {
+                    // Check Angle using actual imported normals or face normals
+                    // Using face normals is safer for detecting geometric flatness
+                    const n1 = getGeoNormal(i);
+                    const n2 = getGeoNormal(neighbor);
+                    const dot = n1.x*n2.x + n1.y*n2.y + n1.z*n2.z;
+                    
+                    // Angle threshold (~25 degrees tolerance for curved quads)
+                    if (dot > 0.9) { 
+                        const t1Indices = [a,b,c];
+                        const t2Indices = [indices[neighbor*3], indices[neighbor*3+1], indices[neighbor*3+2]];
+                        const t1Hashes = [ha, hb, hc];
+                        const t2Hashes = t2Indices.map(getPosHash);
+                        
+                        // Find shared edge vertices in topological sense
+                        const sharedHashes = t1Hashes.filter(h => t2Hashes.includes(h));
+                        
+                        if (sharedHashes.length === 2) {
+                            // Reconstruct quad winding
+                            // Find the unique vertex in T1 (not in shared)
+                            const u1LocalIdx = t1Hashes.findIndex(h => !sharedHashes.includes(h));
+                            
+                            // Reorder T1 to be [Unique, SharedA, SharedB]
+                            // The Quad will be [Unique1, SharedA, Unique2, SharedB] or similar based on winding
+                            
+                            // T1: U1 -> S1 -> S2 (CCW)
+                            const vU1 = t1Indices[u1LocalIdx];
+                            const vS1 = t1Indices[(u1LocalIdx + 1) % 3];
+                            const vS2 = t1Indices[(u1LocalIdx + 2) % 3];
+                            
+                            // T2 must share S1 and S2. 
+                            // In a valid manifold mesh, T2's edge will be S2 -> S1 (opposite winding)
+                            // T2: S2 -> S1 -> U2
+                            
+                            const u2LocalIdx = t2Hashes.findIndex(h => !sharedHashes.includes(h));
+                            const vU2 = t2Indices[u2LocalIdx];
+                            
+                            // Form Quad: U1 -> S1 -> U2 -> S2
+                            // Note: We use the indices from T1 and T2 directly to preserve UVs/Normals
+                            
+                            faces.push([vU1, vS1, vU2, vS2]);
+                            triToFace[i] = faces.length - 1;
+                            triToFace[neighbor] = faces.length - 1;
+                            usedTriangles.add(i);
+                            usedTriangles.add(neighbor);
+                            merged = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!merged) {
+                faces.push([a, b, c]);
+                triToFace[i] = faces.length - 1;
+                usedTriangles.add(i);
+            }
+        }
+        return { faces, triToFace };
+    }
+
     private generateMissingNormals(v: number[], n: number[], idx: number[]) {
-        if (v.length > 0) {
+        // Only generate if normals array is empty or zeroed (simple check)
+        let hasNormals = false;
+        for(let k=0; k<n.length; k++) if(n[k] !== 0) { hasNormals = true; break; }
+        
+        if (!hasNormals && v.length > 0) {
             for (let i = 0; i < idx.length; i += 3) {
                 const i1 = idx[i] * 3, i2 = idx[i+1] * 3, i3 = idx[i+2] * 3;
                 const v1 = [v[i2] - v[i1], v[i2+1] - v[i1+1], v[i2+2] - v[i1+2]];

@@ -59,6 +59,10 @@ export class Engine {
     
     // Cached weights for the current selection
     softSelectionWeights: Map<number, Float32Array> = new Map();
+    
+    // Map of Mesh Entity ID -> Array of Bone Entity IDs
+    // Used to map the ECS skeleton back to the Mesh for skinning
+    skeletonMap: Map<string, string[]> = new Map();
 
     // --- DEFORMATION SNAPSHOT STATE ---
     private vertexSnapshot: Float32Array | null = null;
@@ -112,16 +116,11 @@ export class Engine {
             scene: this.sceneGraph
         });
 
-        // Initialize Event Listeners
         this.initEventListeners();
     }
 
     private initEventListeners() {
         eventBus.on('ASSET_CREATED', (payload) => {
-             // If a mesh is created (e.g. imported), we might need to register it with GPU if it's used immediately
-             // Typically assets are registered on use or batch loaded.
-             // For drag-and-drop, the component does registerAssetWithGPU.
-             // Here we can just log or prep.
              const asset = assetManager.getAsset(payload.id);
              if (asset && (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH')) {
                  this.registerAssetWithGPU(asset);
@@ -131,7 +130,6 @@ export class Engine {
         eventBus.on('ASSET_UPDATED', (payload) => {
             const asset = assetManager.getAsset(payload.id);
             if (asset && (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH')) {
-                // When mesh data updates (e.g. Skin Weights painted), we must notify system
                 this.notifyMeshChanged(payload.id);
             } else if (asset && asset.type === 'MATERIAL') {
                 this.compileGraph(asset.data.nodes, asset.data.connections, asset.id);
@@ -183,7 +181,6 @@ export class Engine {
             const asset = assetManager.getAsset(assetId) as StaticMeshAsset;
             if (asset) {
                 this.updateMeshBounds(asset); // Rebuilds AABB and clears BVH
-                // Force update topology if needed for picking
             }
 
             // 3. Re-upload to GPU
@@ -211,11 +208,7 @@ export class Engine {
         assetManager.getAssetsByType('SKELETAL_MESH').forEach(asset => this.registerAssetWithGPU(asset));
         
         this.recompileAllMaterials();
-        
-        // Create default scene only if empty
-        if (this.ecs.count === 0) {
-            this.createDefaultScene();
-        }
+        if (this.ecs.count === 0) this.createDefaultScene();
     }
 
     setGridConfig(config: GridConfiguration) {
@@ -268,7 +261,6 @@ export class Engine {
     createEntityFromAsset(assetId: string, pos: {x:number, y:number, z:number}) {
         let asset = assetManager.getAsset(assetId);
         
-        // Robust Fallback for primitive names (SM_Cube, etc) used in Default Scene
         if (!asset && assetId.startsWith('SM_')) {
             const primName = assetId.replace('SM_', '');
             const meshes = assetManager.getAssetsByType('MESH');
@@ -286,31 +278,47 @@ export class Engine {
         if (idx !== undefined) {
             this.ecs.store.setPosition(idx, pos.x, pos.y, pos.z);
             
-            // Handle different asset types
-            if (asset.type === 'MESH' || asset.type === 'SKELETAL_MESH') {
+            if (asset.type === 'MESH') {
                 this.ecs.addComponent(id, ComponentType.MESH);
                 this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
-                // Assign standard material if none
-                if (this.ecs.store.materialIndex[idx] === 0) {
-                     this.ecs.store.materialIndex[idx] = 1; 
-                }
+                if (this.ecs.store.materialIndex[idx] === 0) this.ecs.store.materialIndex[idx] = 1; 
             } 
-            else if (asset.type === 'MATERIAL') {
-                // Dragging a Material creates a Sphere with that material
+            else if (asset.type === 'SKELETAL_MESH') {
                 this.ecs.addComponent(id, ComponentType.MESH);
-                const sphere = assetManager.getAssetsByType('MESH').find(a => a.name === 'SM_Sphere');
-                this.ecs.store.meshType[idx] = sphere ? assetManager.getMeshID(sphere.id) : 2; // Default to Sphere ID
-                this.ecs.store.materialIndex[idx] = assetManager.getMaterialID(asset.id);
-                this.ecs.store.names[idx] = asset.name; // Rename entity
-            }
-            else if (asset.type === 'TEXTURE') {
-                // Dragging a Texture creates a Plane with that texture
-                this.ecs.addComponent(id, ComponentType.MESH);
-                const plane = assetManager.getAssetsByType('MESH').find(a => a.name === 'SM_Plane');
-                this.ecs.store.meshType[idx] = plane ? assetManager.getMeshID(plane.id) : 3; // Default to Plane ID
-                this.ecs.store.materialIndex[idx] = 1; // Standard Material
-                this.ecs.store.textureIndex[idx] = (asset as any).layerIndex || 0;
-                this.ecs.store.names[idx] = asset.name;
+                this.ecs.store.meshType[idx] = assetManager.getMeshID(asset.id);
+                if (this.ecs.store.materialIndex[idx] === 0) this.ecs.store.materialIndex[idx] = 1; 
+                
+                // --- SKELETON SPAWNING ---
+                const skelAsset = asset as SkeletalMeshAsset;
+                const bones = skelAsset.skeleton.bones;
+                const boneEntityIds: string[] = new Array(bones.length);
+
+                bones.forEach((bone, bIdx) => {
+                    const boneId = this.ecs.createEntity(bone.name);
+                    const bEcsIdx = this.ecs.idToIndex.get(boneId)!;
+                    
+                    // Set Bind Pose Transform (Local relative to parent)
+                    // Note: bindPose is global in our structure, we might need conversion if parenting in SceneGraph.
+                    // However, we attach them in scene graph.
+                    // For now, let's just initialize identity or extract from bindPose if possible.
+                    // We rely on AnimationSystem to drive them.
+                    
+                    if (bone.parentIndex !== -1) {
+                        const parentId = boneEntityIds[bone.parentIndex];
+                        if (parentId) this.sceneGraph.attach(boneId, parentId);
+                    } else {
+                        // Root bone attaches to Mesh Entity
+                        this.sceneGraph.attach(boneId, id);
+                    }
+                    
+                    boneEntityIds[bIdx] = boneId;
+                    this.sceneGraph.registerEntity(boneId);
+                    // Add VirtualPivot to visualize joints
+                    this.ecs.addComponent(boneId, ComponentType.VIRTUAL_PIVOT);
+                    this.ecs.store.vpLength[bEcsIdx] = 0.2;
+                });
+                
+                this.skeletonMap.set(id, boneEntityIds);
             }
             
             this.sceneGraph.registerEntity(id);
@@ -322,6 +330,12 @@ export class Engine {
 
     deleteEntity(id: string, sceneGraph: SceneGraph) {
         this.pushUndoState();
+        // If deleting a mesh, cleanup skeleton map
+        if (this.skeletonMap.has(id)) {
+            const bones = this.skeletonMap.get(id)!;
+            bones.forEach(bId => this.ecs.deleteEntity(bId, sceneGraph));
+            this.skeletonMap.delete(id);
+        }
         this.ecs.deleteEntity(id, sceneGraph);
         this.notifyUI();
     }
@@ -387,7 +401,6 @@ export class Engine {
     }
 
     private createDefaultScene() {
-        // Ensure we have assets available
         const standardMat = assetManager.getAssetsByType('MATERIAL').find(a => a.name === 'Standard');
         
         // 1. Holographic Cube
@@ -400,8 +413,6 @@ export class Engine {
                 this.ecs.store.effectIndex[idx] = 101; 
                 this.ecs.store.names[idx] = "Holo Cube";
             }
-        } else {
-            consoleService.warn("Default Cube or Standard Material not found during init.");
         }
 
         // 2. Normal Sphere
@@ -557,12 +568,16 @@ export class Engine {
                 jointWeights[i*4+slot] = MathUtils.lerp(currentW, avgWeight, strength * 0.5);
             }
 
-            // Normalize weights
+            // Normalize weights - CRITICAL for preventing collapsing meshes
             let sum = 0;
             for(let k=0; k<4; k++) sum += jointWeights[i*4+k];
             if (sum > 0) {
                 const scale = 1.0 / sum;
                 for(let k=0; k<4; k++) jointWeights[i*4+k] *= scale;
+            } else {
+                // Fallback if all weights removed: assign to root or restore previous?
+                // For now, assign 100% to first bone (usually root)
+                jointWeights[i*4] = 1.0;
             }
             
             modified = true;

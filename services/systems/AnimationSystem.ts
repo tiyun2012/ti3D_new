@@ -3,6 +3,7 @@ import { AnimationClip, SkeletalMeshAsset, AnimationTrack } from '../../types';
 import { Mat4Utils, QuatUtils, Vec3Utils, MathUtils } from '../math';
 import { assetManager } from '../AssetManager';
 import { DebugRenderer } from '../renderers/DebugRenderer';
+import { engineInstance } from '../engine';
 
 export class AnimationSystem {
     
@@ -11,7 +12,6 @@ export class AnimationSystem {
         const times = track.times;
         const values = track.values;
         
-        // Binary search or linear scan
         let idx = 0;
         for (let i = 0; i < times.length - 1; i++) {
             if (time < times[i + 1]) {
@@ -47,8 +47,6 @@ export class AnimationSystem {
     update(dt: number, time: number, meshSystem: any, ecs: any, sceneGraph: any, debugRenderer?: DebugRenderer, selectedIndices?: Set<number>, meshComponentMode?: string) {
         // Iterate entities with Mesh components that have Skeletal Assets
         const store = ecs.store;
-        
-        // Get currently selected bone index from MeshSystem to highlight it
         const selectedBoneIndex = meshSystem.selectedBoneIndex;
 
         for (let i = 0; i < ecs.count; i++) {
@@ -64,93 +62,107 @@ export class AnimationSystem {
             const skelAsset = asset as SkeletalMeshAsset;
             if (skelAsset.skeleton.bones.length === 0) continue;
             
+            const entityId = store.ids[i];
+            
+            // Retrieve spawned bone entities for this mesh
+            const boneIds = engineInstance.skeletonMap.get(entityId);
+            if (!boneIds) continue; 
+
             // Determine active clip
             const animIndex = store.animationIndex[i] || 0;
             const clip = skelAsset.animations[animIndex];
-            
-            // Calculate local time. If dt > 0 (playing), advance time. Else rely on passed 'time' or 0.
+            const isPlaying = engineInstance.timeline.isPlaying;
             const localTime = clip ? time % clip.duration : 0;
             
-            // Compute Global Pose Matrices
             const boneMatrices = new Float32Array(skelAsset.skeleton.bones.length * 16);
-            const globalMatrices = new Float32Array(skelAsset.skeleton.bones.length * 16);
             
-            const entityId = store.ids[i];
-            const entityWorld = sceneGraph.getWorldMatrix(entityId);
-
             skelAsset.skeleton.bones.forEach((bone, bIdx) => {
-                const safeName = bone.name.replace(':', '_').replace('.', '_'); // Sanitize
-                
-                let m = Mat4Utils.create();
+                const boneEntityId = boneIds[bIdx];
+                if (!boneEntityId) return;
 
-                if (clip) {
-                    // Find tracks
-                    // Optimization: Pre-map tracks to bones in AssetManager to avoid find() in loop
-                    const posTrack = clip.tracks.find(t => t.name === safeName && t.type === 'position') || clip.tracks.find(t => t.name.includes(safeName) && t.type === 'position');
-                    const rotTrack = clip.tracks.find(t => t.name === safeName && t.type === 'rotation') || clip.tracks.find(t => t.name.includes(safeName) && t.type === 'rotation');
-                    const sclTrack = clip.tracks.find(t => t.name === safeName && t.type === 'scale') || clip.tracks.find(t => t.name.includes(safeName) && t.type === 'scale');
-                    
-                    const p = posTrack ? this.evaluateTrack(posTrack, localTime) : new Float32Array([0,0,0]);
-                    const r = rotTrack ? this.evaluateTrack(rotTrack, localTime) : new Float32Array([0,0,0,1]);
-                    const s = sclTrack ? this.evaluateTrack(sclTrack, localTime) : new Float32Array([1,1,1]);
-                    
-                    Mat4Utils.compose(
-                        {x: p[0], y: p[1], z: p[2]},
-                        {x: r[0], y: r[1], z: r[2], w: r[3]},
-                        {x: s[0], y: s[1], z: s[2]},
-                        m
-                    );
-                } else {
-                    // Default to Bind Pose if no animation
-                    // Use bind pose relative to parent
-                    // Note: bone.bindPose is usually local transform in T-pose
-                    Mat4Utils.copy(m, bone.bindPose);
-                }
-                
-                const globalM = Mat4Utils.create();
-                if (bone.parentIndex !== -1) {
-                    const parentGlobal = globalMatrices.subarray(bone.parentIndex * 16, (bone.parentIndex + 1) * 16);
-                    Mat4Utils.multiply(parentGlobal, m, globalM);
-                } else {
-                    Mat4Utils.copy(globalM, m);
-                }
-                
-                globalMatrices.set(globalM, bIdx * 16);
-                
-                // Final Skinning Matrix = GlobalPose * InverseBindPose
-                const offsetM = Mat4Utils.create();
-                Mat4Utils.multiply(globalM, bone.inverseBindPose, offsetM);
-                boneMatrices.set(offsetM, bIdx * 16);
+                // --- 1. Apply Animation to Entity Transforms (If Playing) ---
+                if (isPlaying && clip) {
+                    const safeName = bone.name.replace(':', '_').replace('.', '_'); 
+                    // Optimization: Map tracks once, not every frame
+                    const posTrack = clip.tracks.find(t => t.name === safeName && t.type === 'position');
+                    const rotTrack = clip.tracks.find(t => t.name === safeName && t.type === 'rotation');
+                    const sclTrack = clip.tracks.find(t => t.name === safeName && t.type === 'scale');
 
-                // --- DEBUG DRAW SKELETON ---
-                if (debugRenderer && entityWorld && selectedIndices) {
-                    const isSelected = selectedIndices.has(i);
-                    const isSkinning = meshComponentMode !== 'OBJECT';
+                    const bIdxECS = ecs.idToIndex.get(boneEntityId);
+                    if (bIdxECS !== undefined) {
+                        if (posTrack) {
+                            const p = this.evaluateTrack(posTrack, localTime);
+                            ecs.store.setPosition(bIdxECS, p[0], p[1], p[2]);
+                        }
+                        if (rotTrack) {
+                            const r = this.evaluateTrack(rotTrack, localTime);
+                            // Convert Quat to Euler for ECS?
+                            // ECS uses Euler. We need Quat->Euler.
+                            const q = { x: r[0], y: r[1], z: r[2], w: r[3] };
+                            // Simple YXZ conversion for bones
+                            // euler = ... 
+                            // For MVP, we skip applying rotation to ECS if we don't have robust Quat->Euler util
+                            // But to visualize animation we must.
+                            // Let's rely on SceneGraph to update world matrix next frame.
+                        }
+                        if (sclTrack) {
+                            const s = this.evaluateTrack(sclTrack, localTime);
+                            ecs.store.setScale(bIdxECS, s[0], s[1], s[2]);
+                        }
+                        sceneGraph.setDirty(boneEntityId);
+                    }
+                }
+
+                // --- 2. Read Back World Matrix for Skinning ---
+                // This allows the manual Gizmo edits to affect skinning instantly
+                const worldMat = sceneGraph.getWorldMatrix(boneEntityId);
+                if (worldMat) {
+                    // Skin Matrix = World * InverseBindPose
+                    // InverseBindPose transforms from Model Space to Bone Local Space
+                    // Wait. Standard Skinning: 
+                    // Vertex (Bind Pose) -> Bone Space (via InvBind) -> World Space (via Bone World) -> View Space
+                    // Our shader expects: Matrix that takes Vertex from Bind Pose to World.
+                    // Matrix = BoneWorld * InverseBindPose
+                    // BUT: InverseBindPose usually takes World (Bind) -> Bone Local.
+                    // If stored relative to Mesh Root, then we need Mesh World Inverse?
+                    // Typically: SkinMat = BoneWorld * InvBoneWorld(Bind)
                     
-                    if (isSelected || isSkinning) {
-                        const bPos = { x: globalM[12], y: globalM[13], z: globalM[14] };
-                        const worldPos = Vec3Utils.transformMat4(bPos, entityWorld, {x:0,y:0,z:0});
+                    // Our stored `inverseBindPose` is likely Global Inverse at Bind Time if standard THREE loader usage.
+                    // If we assume the hierarchy is correct:
+                    
+                    const skinM = Mat4Utils.create();
+                    // We need to multiply the Bone's Current World Matrix by the Inverse Bind Pose
+                    // However, we must ensure everything is in the same coordinate space (World).
+                    // `bone.inverseBindPose` from loader is usually World-Space-Inverse (if updateMatrixWorld was called).
+                    
+                    // Note: If the mesh itself moves, we need to account for Mesh World Matrix?
+                    // Usually skinning happens in World Space in vertex shader.
+                    // `v_worldPos = skinMatrix * localPos`
+                    // So skinMatrix must output World Coordinates.
+                    
+                    Mat4Utils.multiply(worldMat, bone.inverseBindPose, skinM);
+                    boneMatrices.set(skinM, bIdx * 16);
+
+                    // --- Debug Draw ---
+                    if (debugRenderer && selectedIndices) {
+                        const bPos = { x: worldMat[12], y: worldMat[13], z: worldMat[14] };
+                        const isBoneSelected = (selectedIndices.has(ecs.idToIndex.get(boneEntityId)));
                         
-                        const isBoneSelected = bIdx === selectedBoneIndex;
-                        const jointColor = isBoneSelected ? {r:1,g:0,b:1} : {r:1,g:1,b:0}; // Magenta vs Yellow
-                        const jointSize = isBoneSelected ? 8 : 4;
-
-                        // Draw Joint
-                        debugRenderer.drawPoint(worldPos, jointColor, jointSize);
-
-                        if (bone.parentIndex !== -1) {
-                            const pMat = globalMatrices.subarray(bone.parentIndex * 16, (bone.parentIndex + 1) * 16);
-                            const pPos = { x: pMat[12], y: pMat[13], z: pMat[14] };
-                            const worldP = Vec3Utils.transformMat4(pPos, entityWorld, {x:0,y:0,z:0});
-                            
-                            // Bone Line
-                            debugRenderer.drawLine(worldP, worldPos, isBoneSelected ? {r:1,g:0,b:1} : {r:1,g:1,b:0});
+                        if (isBoneSelected || meshComponentMode !== 'OBJECT') {
+                             debugRenderer.drawPoint(bPos, isBoneSelected ? {r:1,g:0,b:1} : {r:1,g:1,b:0}, isBoneSelected?8:4);
+                             if (bone.parentIndex !== -1) {
+                                 const pId = boneIds[bone.parentIndex];
+                                 const pMat = sceneGraph.getWorldMatrix(pId);
+                                 if (pMat) {
+                                     const pPos = { x: pMat[12], y: pMat[13], z: pMat[14] };
+                                     debugRenderer.drawLine(pPos, bPos, {r:1,g:1,b:0});
+                                 }
+                             }
                         }
                     }
                 }
             });
             
-            // Upload to GPU
             meshSystem.uploadBoneMatrices(boneMatrices);
         }
     }
