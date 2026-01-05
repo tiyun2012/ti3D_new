@@ -1,3 +1,4 @@
+
 import { StaticMeshAsset, SkeletalMeshAsset, MaterialAsset, PhysicsMaterialAsset, ScriptAsset, RigAsset, TextureAsset, GraphNode, GraphConnection, Asset, LogicalMesh, FolderAsset } from '../types';
 import { MaterialTemplate, MATERIAL_TEMPLATES } from './MaterialTemplates';
 import { MESH_TYPES } from './constants';
@@ -337,9 +338,9 @@ class AssetManagerService {
              const verts = geometryData.v instanceof Float32Array ? geometryData.v : new Float32Array(geometryData.v);
              const norms = geometryData.n instanceof Float32Array ? geometryData.n : new Float32Array(geometryData.n);
              
-             // [CHANGED] Robust topology reconstruction based on feedback
+             // Robust topology reconstruction
              const topology = this.reconstructQuads(geometryData.idx, verts, norms, { 
-                 planarThreshold: 0.7, // Relaxed for FBX
+                 planarThreshold: 0.7, 
                  angleTolerance: 0.25,
                  maxEdgeLengthRatio: 3.0
              }); 
@@ -359,7 +360,7 @@ class AssetManagerService {
              }
         } 
         
-        // Final fallback: If no faces exist (e.g. detectQuads=false), build simple triangle topology
+        // Final fallback: If no faces exist
         if (!geometryData.faces || geometryData.faces.length === 0) {
              const faces = [];
              const triToFace = [];
@@ -508,8 +509,10 @@ class AssetManagerService {
 
     private async parseFBX(content: ArrayBuffer | string, importScale: number, detectQuads: boolean) {
         try {
+            // Using compatible version of FBXLoader from esm.sh to match package.json (approx 0.174)
+            // Note: 0.174 doesn't exist on esm.sh for examples sometimes, fallback to closest
             // @ts-ignore
-            const { FBXLoader } = await import('https://esm.sh/three@0.182.0/examples/jsm/loaders/FBXLoader.js?alias=three:three');
+            const { FBXLoader } = await import('https://esm.sh/three@0.174.0/examples/jsm/loaders/FBXLoader.js?alias=three:three');
             const loader = new FBXLoader();
             const group = loader.parse(content, '');
             
@@ -527,7 +530,6 @@ class AssetManagerService {
                 pos = geo.attributes.position.array;
                 norm = geo.attributes.normal ? geo.attributes.normal.array : null;
                 uv = geo.attributes.uv ? geo.attributes.uv.array : new Float32Array((pos.length / 3) * 2);
-                // Fix: Cast explicitly to avoid type error
                 idx = geo.index ? Array.from(geo.index.array as ArrayLike<number>) as number[] : [];
                 skinIndices = geo.attributes.skinIndex ? geo.attributes.skinIndex.array : null;
                 skinWeights = geo.attributes.skinWeight ? geo.attributes.skinWeight.array : null;
@@ -637,7 +639,6 @@ class AssetManagerService {
 
         for (let i = 0; i < vertices.length / 3; i++) {
             const x = vertices[i * 3], y = vertices[i * 3 + 1], z = vertices[i * 3 + 2];
-            // High precision rounding
             const key = `${Math.round(x / epsilon)},${Math.round(y / epsilon)},${Math.round(z / epsilon)}`;
             if (!map.has(key)) {
                 map.set(key, next++);
@@ -660,9 +661,6 @@ private reconstructQuads(
     options?: Partial<ReconstructionOptions>
 ): { faces: number[][], triToFace: number[] } {
 
-    // ------------------------------------------------------------
-    // Early exit
-    // ------------------------------------------------------------
     if (indices.length < 12) {
         const faces: number[][] = [];
         const triToFace: number[] = [];
@@ -685,14 +683,8 @@ private reconstructQuads(
     const triToFace = new Array(triCount).fill(-1);
     const faces: number[][] = [];
 
-    // ------------------------------------------------------------
-    // Weld positions (topology only)
-    // ------------------------------------------------------------
     const { weldedIndices } = this.weldByPosition(vertices, indices);
 
-    // ------------------------------------------------------------
-    // Math helpers
-    // ------------------------------------------------------------
     const getVec = (i: number) => ({
         x: vertices[i * 3],
         y: vertices[i * 3 + 1],
@@ -723,9 +715,6 @@ private reconstructQuads(
     const orthogonality = (a: any, b: any) =>
         1.0 - Math.abs(dot(normalize(a), normalize(b)));
 
-    // ------------------------------------------------------------
-    // Triangle normals (geometric)
-    // ------------------------------------------------------------
     const triNormals = new Float32Array(triCount * 3);
 
     for (let t = 0; t < triCount; t++) {
@@ -744,9 +733,6 @@ private reconstructQuads(
         triNormals[t * 3 + 2] = n.z;
     }
 
-    // ------------------------------------------------------------
-    // Build edge map (welded)
-    // ------------------------------------------------------------
     const edgeMap = new Map<string, number[]>();
 
     for (let t = 0; t < triCount; t++) {
@@ -767,9 +753,6 @@ private reconstructQuads(
         }
     }
 
-    // ------------------------------------------------------------
-    // Candidate generation
-    // ------------------------------------------------------------
     interface Candidate {
         t1: number;
         t2: number;
@@ -856,9 +839,6 @@ private reconstructQuads(
         candidates.push({ t1, t2, quad, score });
     }
 
-    // ------------------------------------------------------------
-    // STRIP-BIASED RESOLUTION (Maya-style)
-    // ------------------------------------------------------------
     while (true) {
         let best: Candidate | null = null;
         let bestScore = -Infinity;
@@ -889,9 +869,6 @@ private reconstructQuads(
         used[best.t2] = 1;
     }
 
-    // ------------------------------------------------------------
-    // Remaining triangles
-    // ------------------------------------------------------------
     for (let t = 0; t < triCount; t++) {
         if (!used[t]) {
             faces.push([

@@ -5,19 +5,20 @@ import { QuatUtils, Vec3Utils } from '../math';
 export class AnimationEvaluator {
     
     /**
-     * Optimized evaluation using Binary Search for keyframes
+     * Optimized evaluation using Binary Search for keyframes.
+     * This is O(log n) instead of O(n), critical for long clips.
      */
     static evaluateTrack(track: AnimationTrack, time: number): Float32Array {
         const times = track.times;
         const values = track.values;
         const count = times.length;
 
-        // 1. Handle edge cases
+        // 1. Handle edge cases (empty or out of bounds)
         if (count === 0) return new Float32Array(track.type === 'rotation' ? [0,0,0,1] : [0,0,0]);
         if (time <= times[0]) return this.getValue(track, 0);
         if (time >= times[count - 1]) return this.getValue(track, count - 1);
 
-        // 2. Binary Search for the keyframe index (O(log n))
+        // 2. Binary Search for the keyframe index
         let low = 0;
         let high = count - 1;
         let idx = 0;
@@ -31,42 +32,14 @@ export class AnimationEvaluator {
                 high = mid - 1;
             }
         }
-        
-        // idx is the insertion point or exact match from the loop.
-        // We want the frame *before* or *at* the time.
-        // The implementation logic suggests idx tracks the upper bound in standard bisect_right logic if condition is <=
-        // Let's rely on standard binary search behavior finding the element.
-        // If times[mid] <= time, we moved low up. The last valid idx where times[idx] <= time is what we want.
-        // Refined logic:
-        // We want `i` such that `times[i] <= time < times[i+1]`
-        
-        // Since we did `low = mid + 1` when `<=`, idx (which was set to mid) is a candidate.
-        // The loop finishes when low > high.
-        // Let's refine the search for clarity:
-        
-        low = 0; 
-        high = count - 1;
-        
-        while (low <= high) {
-            const mid = (low + high) >>> 1;
-            if (times[mid] <= time) {
-                idx = mid;
-                low = mid + 1;
-            } else {
-                high = mid - 1;
-            }
-        }
-        // `idx` holds the index of the largest time value <= `time`
+        // idx is now the frame *after* or *at* time, we need the one before
+        // The binary search logic ensures we find the upper bound, so we adjust:
+        idx = Math.max(0, idx - 1);
 
         // 3. Interpolate
         const t1 = times[idx];
-        const nextIdx = Math.min(idx + 1, count - 1);
-        const t2 = times[nextIdx];
-        
-        let factor = 0;
-        if (t2 > t1) {
-            factor = (time - t1) / (t2 - t1);
-        }
+        const t2 = times[idx + 1] || t1; // Safety check
+        const factor = (time - t1) / (t2 - t1);
         const t = Math.max(0, Math.min(1, isNaN(factor) ? 0 : factor));
 
         if (track.type === 'rotation') {

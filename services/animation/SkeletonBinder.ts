@@ -1,30 +1,34 @@
 
-import { SkeletalMeshAsset, AnimationClip } from '../../types';
+import { AnimationClip } from '../../types';
 
 interface BoundTrack {
     trackIndex: number; // Index in the clip.tracks array
-    ecsIndex: number;   // Direct index in your SoA storage
+    ecsIndex: number;   // Direct index in ECS (SoA)
     type: 'position' | 'rotation' | 'scale';
 }
 
 export class SkeletonBinder {
-    // Cache: Map<MeshEntityID_ClipName, BoundTrack[]>
+    // Cache: Map<UniqueKey, BoundTrack[]>
     private bindings = new Map<string, BoundTrack[]>();
 
+    /**
+     * Returns a cached binding list for a specific entity and clip.
+     * If not found, it computes it (Binding Phase).
+     */
     getBindings(
         meshEntityId: string, 
         clip: AnimationClip, 
         boneIds: string[], 
         ecs: any
     ): BoundTrack[] {
-        // Create a unique key for this combination
+        // Unique key for this Entity + Clip combination
         const key = `${meshEntityId}_${clip.name}`;
         
         if (this.bindings.has(key)) {
             return this.bindings.get(key)!;
         }
 
-        // --- BINDING PROCESS (Run once per clip switch) ---
+        // --- BINDING PHASE (Runs once) ---
         const newBindings: BoundTrack[] = [];
         const boneMap = new Map<string, number>();
 
@@ -32,10 +36,11 @@ export class SkeletonBinder {
         boneIds.forEach(id => {
             const idx = ecs.idToIndex.get(id);
             if (idx !== undefined) {
-                const name = ecs.store.names[idx]; // Assuming you store names
-                if(name) boneMap.set(name, idx);
+                // Try exact name
+                const name = ecs.store.names[idx];
+                if (name) boneMap.set(name, idx);
                 
-                // Fallback: Also map by sanitized name if your asset names differ
+                // Try sanitized name (Mixamo often converts spaces to _)
                 const safeName = name.replace(':', '_').replace('.', '_');
                 boneMap.set(safeName, idx);
             }
@@ -44,6 +49,8 @@ export class SkeletonBinder {
         // 2. Link Tracks to ECS Indices
         clip.tracks.forEach((track, trackIdx) => {
             const ecsIdx = boneMap.get(track.name);
+            
+            // Only bind if the target bone actually exists in this skeleton
             if (ecsIdx !== undefined) {
                 newBindings.push({
                     trackIndex: trackIdx,
@@ -57,8 +64,10 @@ export class SkeletonBinder {
         return newBindings;
     }
 
+    /**
+     * Call this when an entity is destroyed to free memory
+     */
     clear(meshEntityId: string) {
-        // Call this when entity is destroyed
         for (const key of this.bindings.keys()) {
             if (key.startsWith(meshEntityId)) {
                 this.bindings.delete(key);
