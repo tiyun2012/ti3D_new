@@ -22,6 +22,9 @@ export class RigVM {
     program: RigInstruction[];
     constants: Float32Array; 
     private _identityWrap = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+    
+    // Scratch space for intermediate math (Allocated once to avoid GC)
+    private _scratchMat = new Float32Array(16);
 
     constructor(pose: RigPose, program: RigInstruction[], constants: Float32Array) {
         this.pose = pose;
@@ -34,7 +37,9 @@ export class RigVM {
         const consts = this.constants;
         const instrs = this.program;
         const len = instrs.length;
-        const scratchMat = new Float32Array(16);
+        
+        // Reuse class property
+        const scratchMat = this._scratchMat;
 
         for (let pc = 0; pc < len; pc++) {
             const cmd = instrs[pc];
