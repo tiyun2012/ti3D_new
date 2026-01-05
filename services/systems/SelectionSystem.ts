@@ -289,6 +289,7 @@ export class SelectionSystem {
         if (mode === 'EDGE') {
             const edges = Array.from(this.subSelection.edgeIds);
             if (edges.length === 0) return;
+            // Get the last selected edge to define context
             const lastEdge = edges[edges.length - 1];
             const [v1, v2] = lastEdge.split('-').map(Number);
             const loop = MeshTopologyUtils.getEdgeLoop(topo, v1, v2);
@@ -306,11 +307,14 @@ export class SelectionSystem {
             const v1 = verts[verts.length - 2];
             const v2 = verts[verts.length - 1];
             const key = [v1, v2].sort((a,b)=>a-b).join('-');
+            
+            // Validate connectivity
             if (topo.graph && topo.graph.edgeKeyToHalfEdge.has(key)) {
                 const loop = MeshTopologyUtils.getVertexLoop(topo, v1, v2);
                 loop.forEach(v => this.subSelection.vertexIds.add(v));
             } else {
-                consoleService.warn('Selected vertices are not connected');
+                // Fallback: Just walk neighbors? Or warn.
+                consoleService.warn('Selected vertices are not connected by an edge');
             }
         } 
         else if (mode === 'FACE') {
@@ -322,11 +326,12 @@ export class SelectionSystem {
             const f1 = faces[faces.length - 2];
             const f2 = faces[faces.length - 1];
             
+            // Check if adjacent
             const verts1 = topo.faces[f1];
             const verts2 = topo.faces[f2];
             const shared = verts1.filter(v => verts2.includes(v));
             
-            if (shared.length === 2) {
+            if (shared.length >= 2) { // Adjacent
                 const loop = MeshTopologyUtils.getFaceLoop(topo, shared[0], shared[1]);
                 loop.forEach(f => this.subSelection.faceIds.add(f));
             } else {

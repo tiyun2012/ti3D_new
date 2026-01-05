@@ -92,7 +92,6 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
         selectedIds,
         onSelect,
         setTool,
-        setMeshComponentMode,
         handleFocus,
         handleModeSelect
     });

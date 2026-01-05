@@ -2,14 +2,13 @@
 import { useState, useCallback } from 'react';
 import { engineInstance } from '../services/engine';
 import { SceneGraph } from '../services/SceneGraph';
-import { ToolType, MeshComponentMode } from '../types';
+import { ToolType } from '../types';
 
 interface UsePieMenuProps {
     sceneGraph: SceneGraph;
     selectedIds: string[];
     onSelect: (ids: string[]) => void;
     setTool: (tool: ToolType) => void;
-    setMeshComponentMode: (mode: MeshComponentMode) => void;
     handleFocus: () => void;
     handleModeSelect: (modeId: number) => void;
 }
@@ -19,7 +18,6 @@ export const usePieMenuInteraction = ({
     selectedIds,
     onSelect,
     setTool,
-    setMeshComponentMode,
     handleFocus,
     handleModeSelect
 }: UsePieMenuProps) => {
@@ -60,7 +58,7 @@ export const usePieMenuInteraction = ({
         if (action === 'connect') engineInstance.connectComponents();
         if (action === 'delete_face') engineInstance.deleteSelectedFaces();
 
-        // --- PROTECTED SELECTION LOOPS ---
+        // Selection Loops (Delegated to SelectionSystem)
         if (action === 'loop_vert') engineInstance.selectionSystem.selectLoop('VERTEX');
         if (action === 'loop_edge') engineInstance.selectionSystem.selectLoop('EDGE');
         if (action === 'loop_face') engineInstance.selectionSystem.selectLoop('FACE');
@@ -70,7 +68,7 @@ export const usePieMenuInteraction = ({
 
     return {
         pieMenuState,
-        setPieMenuState, // Expose setter if needed for manual close/overrides
+        setPieMenuState,
         openPieMenu,
         closePieMenu,
         handlePieAction
