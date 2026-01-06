@@ -203,6 +203,8 @@ export const SceneView: React.FC<SceneViewProps> = ({ entities, sceneGraph, onSe
             }
 
             engineInstance.tick(dt);
+            gizmoSystem.render(); // Explicitly render gizmos after scene
+            
             frameId = requestAnimationFrame(loop);
         };
         frameId = requestAnimationFrame(loop);
