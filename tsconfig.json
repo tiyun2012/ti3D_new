@@ -29,5 +29,6 @@
     /* Linter Compliance Fixes */
     "strict": true,
     "forceConsistentCasingInFileNames": true
-  }
+  },
+  "exclude": ["drafts/**"]
 }

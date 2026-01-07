@@ -94,6 +94,7 @@ export interface InspectorProps {
 // A System handles logic updates (e.g., Physics, Animation)
 export interface IGameSystem {
     id: string;
+    order?: number; // Added order property for system execution sorting
     init?: (ctx: ModuleContext) => void;
     update?: (dt: number, ctx: ModuleContext) => void;
     render?: (gl: WebGL2RenderingContext, viewProj: Float32Array, ctx: ModuleContext) => void;
@@ -207,6 +208,9 @@ export interface LogicalMesh {
     // Connectivity maps for fast lookups
     vertexToFaces: Map<number, number[]>;
     
+    // Coincident vertices (same position, different normal/uv) used for topological traversal across hard edges
+    siblings?: Map<number, number[]>; 
+
     // Advanced Topology Graph (Lazy loaded or computed on import)
     graph?: MeshTopology;
     
@@ -226,6 +230,19 @@ export interface AnimationClip {
     name: string;
     duration: number;
     tracks: AnimationTrack[];
+}
+// --- SKELETAL TYPES ---
+export interface BoneData {
+    name: string;
+    parentIndex: number;
+    bindPose: Float32Array;
+    inverseBindPose: Float32Array;
+    // Visual properties for the Editor (not used in game runtime)
+    visual?: {
+        shape: 'Sphere' | 'Box' | 'Pyramid';
+        size: number;
+        color: Vector3;
+    };
 }
 
 // Asset Types
@@ -271,7 +288,8 @@ export interface SkeletalMeshAsset extends BaseAsset {
         aabb?: { min: Vector3; max: Vector3 };
     };
     skeleton: {
-        bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array; inverseBindPose: Float32Array }>;
+        // bones: Array<{ name: string; parentIndex: number; bindPose: Float32Array; inverseBindPose: Float32Array }>;
+        bones: BoneData[];
     };
     animations: AnimationClip[];
     topology?: LogicalMesh;
