@@ -97,6 +97,7 @@ const MeshModeSelector: React.FC<{ object: Entity }> = ({ object }) => {
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialObject, selectionCount = 0, type: initialType = 'ENTITY', isClone = false }) => {
   const [isLocked, setIsLocked] = useState(isClone);
   const [snapshot, setSnapshot] = useState<{ object: any, type: any } | null>(null);
+  const { skeletonViz, setSkeletonViz } = useContext(EditorContext)!;
   const [name, setName] = useState('');
   const [refresh, setRefresh] = useState(0); 
   const [showAddComponent, setShowAddComponent] = useState(false);
@@ -328,6 +329,61 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                         <DraggableNumber label="Bounciness" value={Number((asset as PhysicsMaterialAsset).data.bounciness)} onChange={v => { assetManager.updatePhysicsMaterial(asset.id, {bounciness:v}); setRefresh(r=>r+1); }} step={0.05} />
                     </>
                 )}
+
+{(asset.type === 'SKELETON' || asset.type === 'SKELETAL_MESH') && (
+    <>
+        <div className="flex items-center gap-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider pt-2 border-t border-white/5">
+            <Icon name="Bone" size={12} /> Skeleton Display
+        </div>
+        <div className="text-xs text-text-secondary">
+            Bones: {((asset as any).skeleton?.bones?.length ?? 0)}
+            {asset.type === 'SKELETAL_MESH' && (asset as any).skeletonAssetId ? (
+                <span className="ml-2 opacity-80">• Linked Skeleton: {(asset as any).skeletonAssetId}</span>
+            ) : null}
+        </div>
+
+        <label className="flex items-center justify-between text-xs cursor-pointer">
+            <span className="text-text-primary">Enabled</span>
+            <input
+                type="checkbox"
+                checked={skeletonViz.enabled}
+                onChange={e => setSkeletonViz({ ...skeletonViz, enabled: e.target.checked })}
+            />
+        </label>
+
+        <div className="grid grid-cols-2 gap-2">
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                    type="checkbox"
+                    checked={skeletonViz.drawJoints}
+                    onChange={e => setSkeletonViz({ ...skeletonViz, drawJoints: e.target.checked })}
+                />
+                <span className="text-text-primary">Joints</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                    type="checkbox"
+                    checked={skeletonViz.drawBones}
+                    onChange={e => setSkeletonViz({ ...skeletonViz, drawBones: e.target.checked })}
+                />
+                <span className="text-text-primary">Bones</span>
+            </label>
+        </div>
+
+        <DraggableNumber
+            label="Joint Radius (px)"
+            value={skeletonViz.jointRadius}
+            onChange={v => setSkeletonViz({ ...skeletonViz, jointRadius: Math.max(2, Math.min(50, v)) })}
+            step={1}
+        />
+        <DraggableNumber
+            label="Root Scale"
+            value={skeletonViz.rootScale}
+            onChange={v => setSkeletonViz({ ...skeletonViz, rootScale: Math.max(1, Math.min(4, v)) })}
+            step={0.05}
+        />
+    </>
+)}
             </div>
         </div>
       );

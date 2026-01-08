@@ -246,7 +246,7 @@ export interface BoneData {
 }
 
 // Asset Types
-export type AssetType = 'FOLDER' | 'MESH' | 'SKELETAL_MESH' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT' | 'RIG';
+export type AssetType = 'FOLDER' | 'MESH' | 'SKELETAL_MESH' | 'SKELETON' | 'MATERIAL' | 'PHYSICS_MATERIAL' | 'TEXTURE' | 'SCRIPT' | 'RIG';
 
 export interface BaseAsset {
     id: string;
@@ -277,6 +277,8 @@ export interface StaticMeshAsset extends BaseAsset {
 export interface SkeletalMeshAsset extends BaseAsset {
     type: 'SKELETAL_MESH';
     thumbnail?: string;
+    /** Optional link to a standalone Skeleton asset created during import */
+    skeletonAssetId?: string;
     geometry: {
         vertices: Float32Array;
         normals: Float32Array;
@@ -293,6 +295,17 @@ export interface SkeletalMeshAsset extends BaseAsset {
     };
     animations: AnimationClip[];
     topology?: LogicalMesh;
+}
+
+
+
+export interface SkeletonAsset extends BaseAsset {
+    type: 'SKELETON';
+    thumbnail?: string;
+    skeleton: {
+        bones: BoneData[];
+    };
+    animations: AnimationClip[];
 }
 
 export interface MaterialAsset extends BaseAsset {
@@ -336,4 +349,4 @@ export interface TextureAsset extends BaseAsset {
     layerIndex: number; 
 }
 
-export type Asset = FolderAsset | StaticMeshAsset | SkeletalMeshAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset | RigAsset | TextureAsset;
+export type Asset = FolderAsset | StaticMeshAsset | SkeletalMeshAsset | SkeletonAsset | MaterialAsset | PhysicsMaterialAsset | ScriptAsset | RigAsset | TextureAsset;

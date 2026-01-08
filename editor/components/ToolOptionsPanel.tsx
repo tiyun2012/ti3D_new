@@ -47,7 +47,8 @@ export const ToolOptionsPanel: React.FC = () => {
         softSelectionMode, setSoftSelectionMode,
         softSelectionFalloff, setSoftSelectionFalloff,
         softSelectionHeatmapVisible, setSoftSelectionHeatmapVisible,
-        snapSettings, setSnapSettings
+        snapSettings, setSnapSettings,
+        skeletonViz, setSkeletonViz
     } = useContext(EditorContext)!;
 
     // Helper to safely set space if current space isn't in new options
@@ -290,6 +291,72 @@ export const ToolOptionsPanel: React.FC = () => {
                         </div>
                     </div>
                 )}
+
+{/* Skeleton Display */}
+<div className="space-y-2 pt-2 border-t border-white/5">
+    <div className="flex items-center gap-2 text-[10px] font-bold text-text-secondary uppercase tracking-wider">
+        <Icon name="Bone" size={12} /> Skeleton Display
+    </div>
+    <div className="bg-black/20 p-2 rounded border border-white/5 space-y-2">
+        <label className="flex items-center justify-between cursor-pointer group">
+            <span className="text-xs text-text-primary group-hover:text-white">Enable</span>
+            <input 
+                type="checkbox" 
+                checked={skeletonViz.enabled} 
+                onChange={e => setSkeletonViz({ ...skeletonViz, enabled: e.target.checked })} 
+            />
+        </label>
+
+        <div className="grid grid-cols-2 gap-2">
+            <label className="flex items-center gap-2 text-xs cursor-pointer group">
+                <input 
+                    type="checkbox" 
+                    checked={skeletonViz.drawJoints} 
+                    onChange={e => setSkeletonViz({ ...skeletonViz, drawJoints: e.target.checked })} 
+                />
+                <span className="text-text-primary group-hover:text-white">Joints</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs cursor-pointer group">
+                <input 
+                    type="checkbox" 
+                    checked={skeletonViz.drawBones} 
+                    onChange={e => setSkeletonViz({ ...skeletonViz, drawBones: e.target.checked })} 
+                />
+                <span className="text-text-primary group-hover:text-white">Bones</span>
+            </label>
+        </div>
+
+        <div className="space-y-1">
+            <div className="flex justify-between text-[10px] text-text-secondary">
+                <span>Joint Radius</span>
+                <span>{Math.round(skeletonViz.jointRadius)}px</span>
+            </div>
+            <input 
+                type="range" 
+                min="2" max="50" step="1" 
+                value={skeletonViz.jointRadius} 
+                onChange={e => setSkeletonViz({ ...skeletonViz, jointRadius: parseFloat(e.target.value) })} 
+                className="w-full"
+            />
+        </div>
+
+        <div className="space-y-1">
+            <div className="flex justify-between text-[10px] text-text-secondary">
+                <span>Root Scale</span>
+                <span>{skeletonViz.rootScale.toFixed(2)}x</span>
+            </div>
+            <input 
+                type="range" 
+                min="1" max="4" step="0.05" 
+                value={skeletonViz.rootScale} 
+                onChange={e => setSkeletonViz({ ...skeletonViz, rootScale: parseFloat(e.target.value) })} 
+                className="w-full"
+            />
+        </div>
+    </div>
+</div>
+
+
             </div>
         </div>
     );

@@ -35,6 +35,24 @@ export const DEFAULT_SNAP_CONFIG: SnapSettings = {
     scale: 0.1
 };
 
+
+export interface SkeletonVizSettings {
+  enabled: boolean;
+  drawJoints: boolean;
+  drawBones: boolean;
+  jointRadius: number; // px
+  rootScale: number;
+}
+
+export const DEFAULT_SKELETON_VIZ: SkeletonVizSettings = {
+  enabled: true,
+  drawJoints: true,
+  drawBones: true,
+  jointRadius: 10,
+  rootScale: 1.6
+};
+
+
 export interface EditorContextType {
   entities: Entity[];
   sceneGraph: SceneGraph;
@@ -94,6 +112,10 @@ export interface EditorContextType {
 
   snapSettings: SnapSettings;
   setSnapSettings: (settings: SnapSettings) => void;
+
+  // Skeleton visualization
+  skeletonViz: SkeletonVizSettings;
+  setSkeletonViz: (settings: SkeletonVizSettings) => void;
 }
 
 export const EditorContext = React.createContext<EditorContextType | null>(null);

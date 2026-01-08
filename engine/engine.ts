@@ -7,7 +7,7 @@ import { HistorySystem } from './systems/HistorySystem';
 import { WebGLRenderer, PostProcessConfig } from './renderers/WebGLRenderer';
 import { DebugRenderer } from './renderers/DebugRenderer';
 import { assetManager } from './AssetManager';
-import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff, SkeletalMeshAsset } from '@/types';
+import { PerformanceMetrics, GraphNode, GraphConnection, ComponentType, TimelineState, MeshComponentMode, StaticMeshAsset, Asset, SimulationMode, Vector3, SoftSelectionFalloff, SkeletalMeshAsset, SkeletonAsset } from '@/types';
 import { Mat4Utils, RayUtils, Vec3Utils, Ray, MathUtils, AABBUtils } from './math';
 import { compileShader } from './ShaderCompiler';
 import { GridConfiguration, UIConfiguration, DEFAULT_UI_CONFIG } from '@/editor/state/EditorContext';
@@ -61,6 +61,9 @@ export class Engine {
     
     // Map of Mesh Entity ID -> Array of Bone Entity IDs
     skeletonMap: Map<string, string[]> = new Map();
+
+    /** Map of Skeleton Root Entity ID -> Skeleton Asset ID (for rig-only placed assets). */
+    private skeletonEntityAssetMap: Map<string, string> = new Map();
 
     // --- DEFORMATION SNAPSHOT STATE ---
     private vertexSnapshot: Float32Array | null = null;
@@ -154,8 +157,89 @@ export class Engine {
     
     get hoveredVertex() { return this.selectionSystem.hoveredVertex; }
     
-    setSelected(ids: string[]) { this.selectionSystem.setSelected(ids); }
-    
+    setSelected(ids: string[]) {
+        this.selectionSystem.setSelected(ids);
+        this.updateSkeletonToolActive(ids);
+    }
+
+    private updateSkeletonToolActive(ids: string[]) {
+        if (!ids || ids.length === 0) {
+            skeletonTool.setActive(null, null);
+            return;
+        }
+
+        // 0) If we selected a rig-only Skeleton root entity, activate it immediately.
+        for (const id of ids) {
+            const skelAssetId = this.skeletonEntityAssetMap.get(id);
+            if (skelAssetId) {
+                skeletonTool.setActive(skelAssetId, id);
+                return;
+            }
+        }
+
+        let targetMeshId: string | null = null;
+
+        // 1) If we selected a mesh entity directly, use it
+        for (const id of ids) {
+            const idx = this.ecs.idToIndex.get(id);
+            if (idx === undefined) continue;
+            if (this.ecs.store.componentMask[idx] & COMPONENT_MASKS.MESH) {
+                const meshIntId = this.ecs.store.meshType[idx];
+                const meshAssetId = assetManager.meshIntToUuid.get(meshIntId);
+                const meshAsset = meshAssetId ? assetManager.getAsset(meshAssetId) : null;
+
+                if (meshAsset && meshAsset.type === 'SKELETAL_MESH') {
+                    targetMeshId = id;
+                    break;
+                }
+            }
+        }
+
+        // 2) If not, check if we selected a bone (using skeletonMap)
+        if (!targetMeshId) {
+            for (const id of ids) {
+                for (const [rootId, boneIds] of this.skeletonMap.entries()) {
+                    if (boneIds.includes(id)) {
+                        targetMeshId = rootId;
+                        break;
+                    }
+                }
+                if (targetMeshId) break;
+            }
+        }
+
+        if (!targetMeshId) {
+            skeletonTool.setActive(null, null);
+            return;
+        }
+
+        // 3) If the resolved root is a Skeleton entity, activate it.
+        const resolvedSkeletonAssetId = this.skeletonEntityAssetMap.get(targetMeshId);
+        if (resolvedSkeletonAssetId) {
+            skeletonTool.setActive(resolvedSkeletonAssetId, targetMeshId);
+            return;
+        }
+
+        // 4) Otherwise, treat the root as a skeletal mesh entity.
+        const meshIdx = this.ecs.idToIndex.get(targetMeshId);
+        if (meshIdx === undefined) {
+            skeletonTool.setActive(null, null);
+            return;
+        }
+
+        const meshIntId = this.ecs.store.meshType[meshIdx];
+        const meshAssetId = assetManager.meshIntToUuid.get(meshIntId);
+        const meshAsset = meshAssetId ? assetManager.getAsset(meshAssetId) : null;
+
+        if (meshAsset && meshAsset.type === 'SKELETAL_MESH') {
+            // Prefer the standalone Skeleton asset if available; fall back to the mesh's embedded skeleton.
+            const skeletonAssetId = (meshAsset as any).skeletonAssetId || meshAssetId!;
+            skeletonTool.setActive(skeletonAssetId, targetMeshId);
+        } else {
+            skeletonTool.setActive(null, null);
+        }
+    }
+
     selectEntityAt(mx: number, my: number, w: number, h: number) {
         return this.selectionSystem.selectEntityAt(mx, my, w, h);
     }
@@ -401,6 +485,37 @@ initGL(canvas: HTMLCanvasElement) {
                 
                 this.skeletonMap.set(id, boneEntityIds);
             }
+
+            else if (asset.type === 'SKELETON') {
+                // Rig-only skeleton: create a root entity and bone hierarchy for selection,
+                // and keep a mapping to the Skeleton asset for debug drawing.
+                const skelAsset = asset as SkeletonAsset;
+                const bones = skelAsset.skeleton?.bones || [];
+                const boneEntityIds: string[] = new Array(bones.length);
+
+                bones.forEach((bone, bIdx) => {
+                    const boneId = this.ecs.createEntity(bone.name || `Bone_${bIdx}`);
+                    const bEcsIdx = this.ecs.idToIndex.get(boneId)!;
+
+                    if (bone.parentIndex !== -1) {
+                        const parentId = boneEntityIds[bone.parentIndex];
+                        if (parentId) this.sceneGraph.attach(boneId, parentId);
+                    } else {
+                        // Root bone attaches to Skeleton root entity
+                        this.sceneGraph.attach(boneId, id);
+                    }
+
+                    boneEntityIds[bIdx] = boneId;
+                    this.sceneGraph.registerEntity(boneId);
+
+                    // Use VirtualPivot so joints can be selected/visualized similar to skeletal meshes
+                    this.ecs.addComponent(boneId, ComponentType.VIRTUAL_PIVOT);
+                    this.ecs.store.vpLength[bEcsIdx] = 0.2;
+                });
+
+                this.skeletonMap.set(id, boneEntityIds);
+                this.skeletonEntityAssetMap.set(id, skelAsset.id);
+            }
             
             this.sceneGraph.registerEntity(id);
             this.notifyUI();
@@ -411,6 +526,10 @@ initGL(canvas: HTMLCanvasElement) {
 
     deleteEntity(id: string, sceneGraph: SceneGraph) {
         this.pushUndoState();
+        // If deleting a rig-only skeleton root, clear its asset mapping
+        if (this.skeletonEntityAssetMap.has(id)) {
+            this.skeletonEntityAssetMap.delete(id);
+        }
         // If deleting a mesh, cleanup skeleton map
         if (this.skeletonMap.has(id)) {
             const bones = this.skeletonMap.get(id)!;

@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { engineInstance, SoftSelectionMode } from '@/engine/engine';
+import { skeletonTool } from '@/engine/tools/SkeletonTool';
 import { Entity, ToolType, TransformSpace, SelectionType, GraphNode, GraphConnection, MeshComponentMode, SimulationMode, SoftSelectionFalloff } from '@/types';
-import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG } from '@/editor/state/EditorContext';
+import { EditorContext, EditorContextType, DEFAULT_UI_CONFIG, UIConfiguration, GridConfiguration, DEFAULT_GRID_CONFIG, SnapSettings, DEFAULT_SNAP_CONFIG, DEFAULT_SKELETON_VIZ, SkeletonVizSettings } from '@/editor/state/EditorContext';
 import { assetManager } from '@/engine/AssetManager';
 import { consoleService } from '@/engine/Console';
 
@@ -356,8 +357,14 @@ const App: React.FC = () => {
     const [uiConfig, setUiConfig] = useState<UIConfiguration>(DEFAULT_UI_CONFIG);
     const [gridConfig, setGridConfig] = useState<GridConfiguration>(DEFAULT_GRID_CONFIG);
     const [snapSettings, setSnapSettings] = useState<SnapSettings>(DEFAULT_SNAP_CONFIG);
+    const [skeletonViz, setSkeletonViz] = useState<SkeletonVizSettings>(DEFAULT_SKELETON_VIZ);
 
     const onNodeDataChangeRef = useRef<((nodeId: string, key: string, value: any) => void) | null>(null);
+
+    // Sync Skeleton visualization settings to the engine debug tool
+    useEffect(() => {
+        skeletonTool.setOptions(skeletonViz);
+    }, [skeletonViz]);
 
     useEffect(() => {
         const update = () => {
@@ -380,7 +387,8 @@ const App: React.FC = () => {
     // Wrappers for smart selection and mode switching
     const handleSetSelectedIds = useCallback((ids: string[]) => {
         setSelectedIds(ids);
-        engineInstance.selectionSystem.setSelected(ids);
+        // Use the engine delegate so selection side-effects (e.g. skeleton debug tool) stay in sync.
+        engineInstance.setSelected(ids);
         
         if (ids.length > 0) setInspectedNode(null);
 
@@ -453,11 +461,15 @@ const App: React.FC = () => {
         gridConfig,
         setGridConfig,
         snapSettings,
-        setSnapSettings
+        setSnapSettings,
+
+        // Skeleton visualization (shared between Tool Options + Inspector)
+        skeletonViz,
+        setSkeletonViz
     }), [
         entities, selectedIds, selectedAssetIds, inspectedNode, activeGraphConnections, 
         selectionType, meshComponentMode, tool, transformSpace, uiConfig, gridConfig, 
-        snapSettings, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius, softSelectionMode,
+        snapSettings, skeletonViz, engineInstance.isPlaying, simulationMode, softSelectionEnabled, softSelectionRadius, softSelectionMode,
         softSelectionFalloff, softSelectionHeatmapVisible, handleSetSelectedIds, handleSetMeshComponentMode
     ]);
 

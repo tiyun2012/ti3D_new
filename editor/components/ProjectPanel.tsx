@@ -11,7 +11,6 @@ import { NodeGraph } from './NodeGraph';
 import { ImportWizard } from './ImportWizard';
 import { consoleService } from '@/engine/Console';
 import { Asset, AssetType } from '@/types';
-import { skeletonTool } from '@/engine/tools/SkeletonTool';
 type ViewMode = 'GRID' | 'LIST';
 
 // Helper to get subfolders (extracted for usage in component)
@@ -155,7 +154,7 @@ const FolderTreeItem: React.FC<{
 };
 
 export const ProjectPanel: React.FC = () => {
-    const { setSelectedAssetIds, selectedAssetIds, setSelectionType } = useContext(EditorContext)!;
+    const { setSelectedIds, setSelectedAssetIds, selectedAssetIds, setSelectionType } = useContext(EditorContext)!;
     const wm = useContext(WindowManagerContext);
     
     // --- State ---
@@ -255,22 +254,37 @@ export const ProjectPanel: React.FC = () => {
         setRefresh(r => r + 1);
     };
 
+    // Convenience action used by the top toolbar button.
+    // Keeps JSX from referencing an undefined identifier (which would crash render).
+    const handleCreateSkeleton = () => {
+        handleCreateAsset('SKELETON');
+    };
+
     const handleCreateAsset = (type: AssetType, templateIndex?: number) => {
         const name = `New ${type}`; // Simple name gen
+        let created: Asset | null = null;
         switch (type) {
-            case 'MATERIAL': assetManager.createMaterial(name, templateIndex !== undefined ? MATERIAL_TEMPLATES[templateIndex] : undefined, currentPath); break;
-            case 'SCRIPT': assetManager.createScript(name, currentPath); break;
-            case 'RIG': assetManager.createRig(name, templateIndex !== undefined ? RIG_TEMPLATES[templateIndex] : undefined, currentPath); break;
-            case 'PHYSICS_MATERIAL': assetManager.createPhysicsMaterial(name, undefined, currentPath); break;
-            case 'SKELETAL_MESH': assetManager.createSkeleton(name, currentPath); break;
+            case 'MATERIAL':
+                created = assetManager.createMaterial(name, templateIndex !== undefined ? MATERIAL_TEMPLATES[templateIndex] : undefined, currentPath);
+                break;
+            case 'SCRIPT':
+                created = assetManager.createScript(name, currentPath);
+                break;
+            case 'RIG':
+                created = assetManager.createRig(name, templateIndex !== undefined ? RIG_TEMPLATES[templateIndex] : undefined, currentPath);
+                break;
+            case 'PHYSICS_MATERIAL':
+                created = assetManager.createPhysicsMaterial(name, undefined, currentPath);
+                break;
+            case 'SKELETON':
+                created = assetManager.createSkeleton(name, currentPath);
+                break;
         }
         setRefresh(r => r + 1);
-    };
-    const handleCreateSkeleton = () => {
-        const asset = assetManager.createSkeleton('New_Skeleton', currentPath);
-        setRefresh(r => r + 1);
-        setSelectedAssetIds([asset.id]);
-        skeletonTool.setActiveAsset(asset.id);
+        if (created) {
+            setSelectedAssetIds([created.id]);
+            setSelectionType('ASSET');
+        }
     };
 
     const handleOpenAsset = (asset: Asset) => {
@@ -296,6 +310,7 @@ export const ProjectPanel: React.FC = () => {
             case 'MATERIAL': return 'bg-emerald-500';
             case 'MESH': return 'bg-cyan-500';
             case 'SKELETAL_MESH': return 'bg-purple-500';
+            case 'SKELETON': return 'bg-fuchsia-500';
             case 'TEXTURE': return 'bg-rose-500';
             case 'SCRIPT': return 'bg-blue-500';
             case 'RIG': return 'bg-orange-500';
@@ -310,6 +325,7 @@ export const ProjectPanel: React.FC = () => {
             case 'MATERIAL': return 'Palette';
             case 'MESH': return 'Box';
             case 'SKELETAL_MESH': return 'PersonStanding';
+            case 'SKELETON': return 'Bone';
             case 'TEXTURE': return 'Image';
             case 'SCRIPT': return 'FileCode';
             case 'RIG': return 'GitBranch';
@@ -549,12 +565,38 @@ export const ProjectPanel: React.FC = () => {
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('SCRIPT'); setContextMenu(null); }}>Script</div>
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('RIG'); setContextMenu(null); }}>Rig</div>
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('PHYSICS_MATERIAL'); setContextMenu(null); }}>Physics Material</div>
-                            <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('SKELETAL_MESH'); setContextMenu(null); }}>Skeleton</div>
+                            <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer" onClick={() => { handleCreateAsset('SKELETON'); setContextMenu(null); }}>Skeleton</div>
                         </>
                     )}
 
                     {(contextMenu.type === 'ASSET' || contextMenu.type === 'FOLDER') && (
                         <>
+                            {contextMenu.type === 'ASSET' && (() => {
+                                const a = contextMenu.assetId ? assetManager.getAsset(contextMenu.assetId) : null;
+                                const canPlace = a && (a.type === 'MESH' || a.type === 'SKELETAL_MESH' || a.type === 'SKELETON');
+                                if (!canPlace) return null;
+                                return (
+                                    <>
+                                        <div
+                                            className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2"
+                                            onClick={() => {
+                                                if (contextMenu.assetId) {
+                                                    const newId = engineInstance.createEntityFromAsset(contextMenu.assetId, { x: 0, y: 0, z: 0 });
+                                                    if (newId) {
+                                                        setSelectedAssetIds([]);
+                                                        setSelectionType('ENTITY');
+                                                        setSelectedIds([newId]);
+                                                    }
+                                                }
+                                                setContextMenu(null);
+                                            }}
+                                        >
+                                            <Icon name="PlusSquare" size={14} /> Place in Scene
+                                        </div>
+                                        <div className="border-t border-white/10 my-1"></div>
+                                    </>
+                                );
+                            })()}
                             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2" onClick={() => { 
                                 if (contextMenu.assetId) {
                                     handleRenameStart(contextMenu.assetId, assetManager.getAsset(contextMenu.assetId)?.name || '');
