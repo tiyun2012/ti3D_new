@@ -1,5 +1,8 @@
-import type { EngineContext } from './EngineModule';
+
+import type { EngineContext } from './EngineContext';
 import { eventBus } from '@/engine/EventBus';
+import { assetManager } from "@/engine/AssetManager";
+import { engineInstance } from "@/engine/engine";
 
 /**
  * Bridge context used by new feature modules.
@@ -7,6 +10,8 @@ import { eventBus } from '@/engine/EventBus';
  */
 export function createEngineContext(): EngineContext {
   return {
+    engine: engineInstance,
+    assets: assetManager,
     events: eventBus,
     commands: {},
   };

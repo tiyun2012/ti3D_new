@@ -40,6 +40,7 @@ export interface SkeletonVizSettings {
   enabled: boolean;
   drawJoints: boolean;
   drawBones: boolean;
+  drawAxes: boolean; // New option
   jointRadius: number; // px
   rootScale: number;
 }
@@ -48,6 +49,7 @@ export const DEFAULT_SKELETON_VIZ: SkeletonVizSettings = {
   enabled: true,
   drawJoints: true,
   drawBones: true,
+  drawAxes: false,
   jointRadius: 10,
   rootScale: 1.6
 };

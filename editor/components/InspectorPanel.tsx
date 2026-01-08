@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { Entity, Asset, GraphNode, ComponentType, SelectionType, StaticMeshAsset, MeshComponentMode, PhysicsMaterialAsset } from '@/types';
 import { engineInstance } from '@/engine/engine';
@@ -367,6 +368,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
                     onChange={e => setSkeletonViz({ ...skeletonViz, drawBones: e.target.checked })}
                 />
                 <span className="text-text-primary">Bones</span>
+            </label>
+             <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                    type="checkbox"
+                    checked={skeletonViz.drawAxes}
+                    onChange={e => setSkeletonViz({ ...skeletonViz, drawAxes: e.target.checked })}
+                />
+                <span className="text-text-primary">Axes</span>
             </label>
         </div>
 

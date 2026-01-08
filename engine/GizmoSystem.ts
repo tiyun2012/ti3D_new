@@ -1,3 +1,4 @@
+
 import { engineInstance } from './engine';
 import { Mat4Utils, Vec3Utils } from './math';
 import { Vector3, ToolType } from '@/types';
@@ -215,7 +216,7 @@ export class GizmoSystem {
             } else {
                 const target = Vec3Utils.subtract(constrainedHit, this.clickOffset, {x:0,y:0,z:0});
                 this.setWorldPosition(entityId, target);
-                engineInstance.syncTransforms(false);
+                engineInstance.syncTransforms();
             }
         }
     }

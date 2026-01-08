@@ -324,6 +324,14 @@ export const ToolOptionsPanel: React.FC = () => {
                 />
                 <span className="text-text-primary group-hover:text-white">Bones</span>
             </label>
+            <label className="flex items-center gap-2 text-xs cursor-pointer group">
+                <input 
+                    type="checkbox" 
+                    checked={skeletonViz.drawAxes} 
+                    onChange={e => setSkeletonViz({ ...skeletonViz, drawAxes: e.target.checked })} 
+                />
+                <span className="text-text-primary group-hover:text-white">Axes</span>
+            </label>
         </div>
 
         <div className="space-y-1">

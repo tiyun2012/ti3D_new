@@ -1,3 +1,4 @@
+
 import type { EngineAPI } from './EngineAPI';
 import { eventBus } from '@/engine/EventBus';
 import { engineInstance } from '@/engine/engine';
@@ -34,7 +35,13 @@ export function createEngineAPI(): EngineAPI {
     },
 
     getSelectedIds() {
-      return [...engineInstance.selectionSystem.selectedIds];
+      const indices = engineInstance.selectionSystem.selectedIndices;
+      const ids: string[] = [];
+      indices.forEach(idx => {
+          const id = engineInstance.ecs.store.ids[idx];
+          if (id) ids.push(id);
+      });
+      return ids;
     },
   };
 }

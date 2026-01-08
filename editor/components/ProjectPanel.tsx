@@ -254,12 +254,6 @@ export const ProjectPanel: React.FC = () => {
         setRefresh(r => r + 1);
     };
 
-    // Convenience action used by the top toolbar button.
-    // Keeps JSX from referencing an undefined identifier (which would crash render).
-    const handleCreateSkeleton = () => {
-        handleCreateAsset('SKELETON');
-    };
-
     const handleCreateAsset = (type: AssetType, templateIndex?: number) => {
         const name = `New ${type}`; // Simple name gen
         let created: Asset | null = null;
@@ -446,12 +440,6 @@ export const ProjectPanel: React.FC = () => {
                             />
 
                         </div>
-                            <button
-                            onClick={handleCreateSkeleton}
-                            className="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold px-3 py-1 rounded transition-colors flex items-center gap-1"
-                        >
-                            <Icon name="Plus" size={12} /> <span className="hidden sm:inline">New Skeleton</span>
-                        </button>
                         <button onClick={openImportWizard} className="bg-accent hover:bg-accent-hover text-white text-[10px] font-bold px-3 py-1 rounded transition-colors flex items-center gap-1">
                             <Icon name="Import" size={12} /> <span className="hidden sm:inline">Import</span>
                         </button>
