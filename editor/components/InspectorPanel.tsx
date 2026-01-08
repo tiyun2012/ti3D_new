@@ -1,11 +1,14 @@
 
 import React, { useState, useRef, useEffect, useContext } from 'react';
-import { Entity, Asset, GraphNode, ComponentType, SelectionType, StaticMeshAsset, MeshComponentMode, PhysicsMaterialAsset } from '@/types';
+import { Entity, Asset, GraphNode, ComponentType, SelectionType, StaticMeshAsset, MeshComponentMode, PhysicsMaterialAsset, InspectorProps, TransformSpace, EngineModule } from '@/types';
 import { engineInstance } from '@/engine/engine';
 import { assetManager } from '@/engine/AssetManager';
 import { Icon } from './Icon';
 import { EditorContext } from '@/editor/state/EditorContext';
 import { moduleManager } from '@/engine/ModuleManager';
+import { Select } from './ui/Select';
+import { effectRegistry } from '@/engine/EffectRegistry';
+import { ROTATION_ORDERS } from '@/engine/constants';
 
 interface InspectorPanelProps {
   object: Entity | Asset | GraphNode | null;
@@ -42,6 +45,97 @@ const Vector3Input: React.FC<{ label: string; value: {x:number, y:number, z:numb
         </div>
     </div>
 );
+
+const TransformInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
+    const editorCtx = useContext(EditorContext);
+    return (
+        <div className="space-y-3">
+            <Vector3Input label="Position" value={component.position} onChange={v => { onStartUpdate(); onUpdate('position', v); onCommit(); }} />
+            
+            <div className="flex flex-col gap-1 mb-2">
+                 <div className="flex justify-between items-center">
+                    <div className="text-[9px] uppercase text-text-secondary font-bold tracking-wider ml-1 opacity-70">Rotation</div>
+                    <div className="flex gap-2">
+                        <div className="flex items-center gap-1 min-w-[70px]">
+                            <Select value={editorCtx?.transformSpace || 'Gimbal'} options={['Gimbal', 'Local', 'World'].map(v => ({ label: v, value: v }))} onChange={(v) => editorCtx?.setTransformSpace(v as TransformSpace)} />
+                        </div>
+                        {/* 
+                        <div className="flex items-center gap-1 min-w-[50px]">
+                            <Select value={component.rotationOrder} options={ROTATION_ORDERS.map(o => ({ label: o, value: o }))} onChange={(v) => { onStartUpdate(); onUpdate('rotationOrder', v); onCommit(); }} />
+                        </div>
+                        */}
+                    </div>
+                 </div>
+                <div className="grid grid-cols-3 gap-1">
+                  <DraggableNumber label="X" value={component.rotation.x} onChange={(v) => { onStartUpdate(); onUpdate('rotation', {...component.rotation, x: v}); onCommit(); }} color="text-red-500" />
+                  <DraggableNumber label="Y" value={component.rotation.y} onChange={(v) => { onStartUpdate(); onUpdate('rotation', {...component.rotation, y: v}); onCommit(); }} color="text-green-500" />
+                  <DraggableNumber label="Z" value={component.rotation.z} onChange={(v) => { onStartUpdate(); onUpdate('rotation', {...component.rotation, z: v}); onCommit(); }} color="text-blue-500" />
+                </div>
+            </div>
+
+            <Vector3Input label="Scale" value={component.scale} onChange={v => { onStartUpdate(); onUpdate('scale', v); onCommit(); }} />
+        </div>
+    );
+};
+
+export const TransformModule: EngineModule = {
+    id: ComponentType.TRANSFORM,
+    name: 'Transform',
+    icon: 'Move',
+    order: 0,
+    InspectorComponent: TransformInspector
+};
+
+const MeshInspector: React.FC<InspectorProps> = ({ component, onUpdate, onStartUpdate, onCommit }) => {
+    const materials = assetManager.getAssetsByType('MATERIAL');
+    const rigs = assetManager.getAssetsByType('RIG');
+    const effects = effectRegistry.getOptions(); 
+    
+    return (
+        <div className="space-y-2">
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Mesh Filter</span>
+                <div className="flex-1">
+                   <Select icon="Box" value={component.meshType} options={['Cube', 'Sphere', 'Plane', 'Custom'].map(v => ({ label: v, value: v }))} onChange={(v) => { onStartUpdate(); onUpdate('meshType', v); onCommit(); }} />
+                </div>
+             </div>
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Material</span>
+                <div className="flex-1">
+                   <Select icon="Palette" value={component.materialId || ""} options={[{ label: 'Default', value: "" }, ...materials.map(m => ({ label: m.name, value: m.id }))]} onChange={(v) => { onStartUpdate(); onUpdate('materialId', v); onCommit(); }} />
+                </div>
+             </div>
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Rig Graph</span>
+                <div className="flex-1">
+                   <Select icon="GitBranch" value={component.rigId || ""} options={[{ label: 'None', value: "" }, ...rigs.map(r => ({ label: r.name, value: r.id }))]} onChange={(v) => { onStartUpdate(); onUpdate('rigId', v); onCommit(); }} />
+                </div>
+             </div>
+             
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Animation Clip</span>
+                <div className="flex-1">
+                   <DraggableNumber label="#" value={component.animationIndex || 0} onChange={(v) => { onStartUpdate(); onUpdate('animationIndex', Math.floor(v)); onCommit(); }} step={1} />
+                </div>
+             </div>
+
+             <div className="flex items-center gap-2">
+                <span className="w-24 text-text-secondary text-[10px]">Post Effect</span>
+                <div className="flex-1">
+                   <Select icon="Sparkles" value={component.effectIndex || 0} options={effects} onChange={(v) => { onStartUpdate(); onUpdate('effectIndex', v); onCommit(); }} />
+                </div>
+             </div>
+             <div className="border-t border-white/5 my-1"></div>
+             <div className="flex items-center gap-2">
+                 <span className="w-24 text-text-secondary text-[10px]">Shadows</span>
+                 <div className="flex gap-2">
+                    <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Cast</label>
+                    <label className="flex items-center gap-1"><input type="checkbox" defaultChecked /> Receive</label>
+                 </div>
+             </div>
+        </div>
+    );
+};
 
 const ComponentCard: React.FC<{ 
   component: any; 
@@ -95,6 +189,38 @@ const MeshModeSelector: React.FC<{ object: Entity }> = ({ object }) => {
     );
 };
 
+// --- Helper to determine icon/color based on Entity components ---
+const getEntityInfo = (entity: Entity) => {
+    // 1. Check for Skeleton (Rig)
+    if (engineInstance.skeletonEntityAssetMap.has(entity.id)) {
+        return { icon: 'Bone', color: 'bg-pink-600', label: 'Skeleton' };
+    }
+
+    // 2. Check Components
+    if (entity.components[ComponentType.LIGHT]) return { icon: 'Sun', color: 'bg-yellow-500', label: 'Light' };
+    if (entity.components[ComponentType.PARTICLE_SYSTEM]) return { icon: 'Sparkles', color: 'bg-orange-500', label: 'Particle System' };
+    
+    if (entity.components[ComponentType.MESH]) {
+         const idx = engineInstance.ecs.idToIndex.get(entity.id);
+         if (idx !== undefined) {
+             const meshIntId = engineInstance.ecs.store.meshType[idx];
+             const uuid = assetManager.meshIntToUuid.get(meshIntId);
+             if (uuid) {
+                 const asset = assetManager.getAsset(uuid);
+                 if (asset && asset.type === 'SKELETAL_MESH') {
+                     return { icon: 'PersonStanding', color: 'bg-purple-600', label: 'Skeletal Mesh' };
+                 }
+             }
+         }
+         return { icon: 'Box', color: 'bg-blue-600', label: 'Static Mesh' };
+    }
+
+    if (entity.components[ComponentType.VIRTUAL_PIVOT]) return { icon: 'Maximize', color: 'bg-emerald-600', label: 'Helper' };
+    if (entity.name.includes('Camera')) return { icon: 'Video', color: 'bg-red-500', label: 'Camera' };
+
+    return { icon: 'Cuboid', color: 'bg-gray-600', label: 'Entity' };
+};
+
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialObject, selectionCount = 0, type: initialType = 'ENTITY', isClone = false }) => {
   const [isLocked, setIsLocked] = useState(isClone);
   const [snapshot, setSnapshot] = useState<{ object: any, type: any } | null>(null);
@@ -116,6 +242,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
   };
 
   const entity = getEntity();
+  const entityInfo = entity ? getEntityInfo(entity) : { icon: 'Box', color: 'bg-blue-500', label: 'Object' };
 
   useEffect(() => {
     if (!isLocked) {
@@ -178,10 +305,15 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ object: initialO
         <div className="h-full bg-panel flex flex-col font-sans border-l border-black/20" onClick={() => setShowAddComponent(false)}>
           <div className="p-4 border-b border-black/20 bg-panel-header">
              <div className="flex items-center gap-3 mb-3">
-                 <div className="w-8 h-8 bg-blue-500 rounded flex items-center justify-center text-white shadow-sm shrink-0"><Icon name="Box" size={16} /></div>
+                 <div className={`w-8 h-8 ${entityInfo.color} rounded flex items-center justify-center text-white shadow-sm shrink-0`} title={entityInfo.label}>
+                    <Icon name={entityInfo.icon as any} size={16} />
+                 </div>
                  <div className="flex-1 min-w-0">
                      <input type="text" value={name} onChange={e => setName(e.target.value)} onBlur={() => { if(activeObject.name!==name) { engineInstance.pushUndoState(); activeObject.name = name; engineInstance.notifyUI(); } }} className="w-full bg-transparent text-sm font-bold text-white outline-none border-b border-transparent focus:border-accent transition-colors truncate" />
-                     <div className="text-[10px] text-text-secondary font-mono mt-0.5 truncate select-all opacity-50">{entity!.id}</div>
+                     <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[9px] text-accent font-bold uppercase tracking-wider bg-accent/10 px-1.5 rounded">{entityInfo.label}</span>
+                        <div className="text-[10px] text-text-secondary font-mono truncate select-all opacity-50">{entity!.id.substring(0,8)}...</div>
+                     </div>
                  </div>
                  <input type="checkbox" checked={entity!.isActive} onChange={(e) => { engineInstance.pushUndoState(); entity!.isActive = e.target.checked; engineInstance.notifyUI(); }} className="cursor-pointer" title="Active" />
                  {renderHeaderControls()}
