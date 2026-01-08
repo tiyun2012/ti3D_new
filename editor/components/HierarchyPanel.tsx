@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Entity, ComponentType } from '@/types';
 import { SceneGraph } from '@/engine/SceneGraph';
@@ -27,14 +28,32 @@ const HierarchyItem: React.FC<{
   onSelect: (ids: string[]) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   depth: number;
-}> = ({ entityId, entityMap, sceneGraph, selectedIds, onSelect, onContextMenu, depth }) => {
+  renamingId: string | null;
+  onRenameStart: (id: string, name: string) => void;
+  renameValue: string;
+  setRenameValue: (val: string) => void;
+  onRenameSubmit: () => void;
+}> = ({ 
+    entityId, entityMap, sceneGraph, selectedIds, onSelect, onContextMenu, depth,
+    renamingId, onRenameStart, renameValue, setRenameValue, onRenameSubmit
+}) => {
   const [expanded, setExpanded] = useState(true);
+  const inputRef = useRef<HTMLInputElement>(null);
   const entity = entityMap.get(entityId);
+  
   if (!entity) return null;
 
   const childrenIds = sceneGraph.getChildren(entityId);
   const hasChildren = childrenIds.length > 0;
   const isSelected = selectedIds.includes(entity.id);
+  const isRenaming = renamingId === entity.id;
+
+  useEffect(() => {
+    if (isRenaming && inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.select();
+    }
+  }, [isRenaming]);
 
   const handleClick = (e: React.MouseEvent) => {
       if (e.ctrlKey || e.metaKey) {
@@ -75,10 +94,10 @@ const HierarchyItem: React.FC<{
         onDragStart={handleDragStart}
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleDrop}
-        className={`group flex items-center gap-1.5 py-1 pr-2 cursor-pointer text-xs select-none transition-colors border-l-2
+        className={`group flex items-center gap-1.5 py-1 pr-2 cursor-pointer text-xs select-none transition-colors border-l-2 border-transparent
             ${isSelected 
-                ? 'bg-accent/20 border-accent text-white' 
-                : 'border-transparent hover:bg-white/5 text-text-primary hover:text-white'}
+                ? 'text-accent font-bold' 
+                : 'text-text-secondary hover:text-white'}
         `}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
@@ -86,7 +105,7 @@ const HierarchyItem: React.FC<{
           onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
           className={`w-4 h-4 flex items-center justify-center rounded hover:bg-white/10 ${hasChildren ? 'visible' : 'invisible'}`}
         >
-           <Icon name={expanded ? 'ChevronDown' : 'ChevronRight'} size={10} className="text-text-secondary" />
+           <Icon name={expanded ? 'ChevronDown' : 'ChevronRight'} size={10} className={isSelected ? "text-accent" : "text-text-secondary"} />
         </div>
 
         <Icon 
@@ -94,7 +113,32 @@ const HierarchyItem: React.FC<{
             size={12} 
             className={isSelected ? 'text-accent' : (entity.components[ComponentType.LIGHT] ? 'text-yellow-500' : 'text-blue-400')} 
         />
-        <span className="flex-1 truncate">{entity.name}</span>
+        
+        {isRenaming ? (
+            <input 
+                ref={inputRef}
+                className="flex-1 bg-black/50 border border-accent text-white text-xs px-1 rounded outline-none min-w-0"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter') onRenameSubmit();
+                    if (e.key === 'Escape') onRenameStart('', ''); // Cancel
+                    e.stopPropagation();
+                }}
+                onBlur={onRenameSubmit}
+                onClick={(e) => e.stopPropagation()}
+            />
+        ) : (
+            <span 
+                className="flex-1 truncate"
+                onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    onRenameStart(entity.id, entity.name);
+                }}
+            >
+                {entity.name}
+            </span>
+        )}
       </div>
 
       {hasChildren && expanded && (
@@ -109,6 +153,11 @@ const HierarchyItem: React.FC<{
               onSelect={onSelect}
               onContextMenu={onContextMenu}
               depth={depth + 1}
+              renamingId={renamingId}
+              onRenameStart={onRenameStart}
+              renameValue={renameValue}
+              setRenameValue={setRenameValue}
+              onRenameSubmit={onRenameSubmit}
             />
           ))}
         </div>
@@ -124,6 +173,8 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
   const entityMap = useMemo(() => new Map(entities.map(entity => [entity.id, entity])), [entities]);
   const [searchTerm, setSearchTerm] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, id: string, visible: boolean } | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   useEffect(() => {
     const close = () => setContextMenu(null);
@@ -136,6 +187,24 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
     e.stopPropagation();
     setContextMenu({ x: e.clientX, y: e.clientY, id, visible: true });
     if (!selectedIds.includes(id)) onSelect([id]);
+  };
+
+  const handleRenameStart = (id: string, currentName: string) => {
+    setRenamingId(id);
+    setRenameValue(currentName);
+    setContextMenu(null);
+  };
+
+  const handleRenameSubmit = () => {
+    if (renamingId && renameValue.trim()) {
+        const entity = entityMap.get(renamingId);
+        if (entity && entity.name !== renameValue) {
+             engineInstance.pushUndoState();
+             entity.name = renameValue;
+             engineInstance.notifyUI();
+        }
+    }
+    setRenamingId(null);
   };
 
   const deleteEntity = (id: string) => {
@@ -200,6 +269,11 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
                   onSelect={onSelect}
                   onContextMenu={handleContextMenu}
                   depth={0}
+                  renamingId={renamingId}
+                  onRenameStart={handleRenameStart}
+                  renameValue={renameValue}
+                  setRenameValue={setRenameValue}
+                  onRenameSubmit={handleRenameSubmit}
                 />
             ))}
         </div>
@@ -213,7 +287,14 @@ export const HierarchyPanel: React.FC<HierarchyPanelProps> = ({ entities, sceneG
         <div 
             className="fixed bg-[#252525] border border-white/10 shadow-2xl rounded py-1 min-w-[140px] text-xs z-[10000]"
             style={{ left: contextMenu.x, top: contextMenu.y }}
+            onClick={(e) => e.stopPropagation()}
         >
+            <div 
+                className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2"
+                onClick={() => handleRenameStart(contextMenu.id, entityMap.get(contextMenu.id)?.name || '')}
+            >
+                <Icon name="Edit2" size={12} /> Rename
+            </div>
             <div className="px-3 py-1.5 hover:bg-accent hover:text-white cursor-pointer flex items-center gap-2">
                 <Icon name="Copy" size={12} /> Duplicate
             </div>
