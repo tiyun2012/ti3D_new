@@ -1,3 +1,4 @@
+
 // services/engine.ts
 
 import { SoAEntitySystem } from './ecs/EntitySystem';
@@ -63,7 +64,7 @@ export class Engine {
     skeletonMap: Map<string, string[]> = new Map();
 
     /** Map of Skeleton Root Entity ID -> Skeleton Asset ID (for rig-only placed assets). */
-    private skeletonEntityAssetMap: Map<string, string> = new Map();
+    public skeletonEntityAssetMap: Map<string, string> = new Map();
 
     // --- DEFORMATION SNAPSHOT STATE ---
     private vertexSnapshot: Float32Array | null = null;
@@ -164,6 +165,8 @@ export class Engine {
 
     private updateSkeletonToolActive(ids: string[]) {
         if (!ids || ids.length === 0) {
+            // Don't clear active state if we want persistence, 
+            // but for now SkeletonTool will ignore active state and draw all.
             skeletonTool.setActive(null, null);
             return;
         }
@@ -350,7 +353,7 @@ export class Engine {
         this.pendingTextureUploads = [];
     }
 
-initGL(canvas: HTMLCanvasElement) {
+    initGL(canvas: HTMLCanvasElement) {
         this.renderer.init(canvas);
         this.renderer.initGizmo();
         this.debugRenderer.init(this.renderer.gl!);

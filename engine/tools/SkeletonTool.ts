@@ -3,12 +3,13 @@ import { engineInstance } from '../engine';
 import { assetManager } from '../AssetManager';
 import { SkeletonAsset, SkeletalMeshAsset } from '@/types';
 import { Vec3 } from '../math';
+import { DebugRenderer } from '../renderers/DebugRenderer';
 
 export interface SkeletonToolOptions {
     enabled: boolean;
     drawJoints: boolean;
     drawBones: boolean;
-    drawAxes: boolean; // Added
+    drawAxes: boolean; 
 
     /** Joint size in screen pixels (DebugRenderer point size). */
     jointRadius: number;
@@ -39,19 +40,20 @@ const DEFAULT_OPTIONS: SkeletonToolOptions = {
 };
 
 export class SkeletonTool {
-    private activeAssetId: string | null = null;
-    private activeEntityId: string | null = null;
+    // We no longer rely on activeAssetId/activeEntityId for main drawing loop
     private options: SkeletonToolOptions = { ...DEFAULT_OPTIONS };
 
-    /** Preferred API: bind a Skeleton/SkeletalMesh asset to a specific scene entity for world-space drawing. */
+    /** 
+     * Kept for compatibility. The main drawing loop now iterates all skeletons.
+     * We could use this to highlight the 'active' skeleton if needed in future.
+     */
     setActive(assetId: string | null, entityId: string | null) {
-        this.activeAssetId = assetId;
-        this.activeEntityId = entityId;
+        // No-op
     }
 
-    /** Backwards compatible: keeps current entity (if any). */
+    /** Backwards compatible. */
     setActiveAsset(assetId: string | null) {
-        this.setActive(assetId, this.activeEntityId);
+        // No-op
     }
 
     setOptions(partial: Partial<SkeletonToolOptions>) {
@@ -64,15 +66,40 @@ export class SkeletonTool {
 
     update() {
         if (!this.options.enabled) return;
-        if (!this.activeAssetId || !this.activeEntityId) return;
 
-        const asset = assetManager.getAsset(this.activeAssetId) as (SkeletonAsset | SkeletalMeshAsset | undefined);
+        const debug = engineInstance.debugRenderer;
+        if (!debug) return;
+
+        // 1. Draw Standalone Skeletons (Rig-only entities)
+        engineInstance.skeletonEntityAssetMap.forEach((assetId, entityId) => {
+            this.drawSkeleton(assetId, entityId, debug);
+        });
+
+        // 2. Draw Skeletal Meshes
+        // Iterate all entities that have spawned bones (skeletonMap keys)
+        engineInstance.skeletonMap.forEach((_, entityId) => {
+            // Check if it's already handled as a standalone skeleton (avoid double draw)
+            if (engineInstance.skeletonEntityAssetMap.has(entityId)) return;
+
+            const idx = engineInstance.ecs.idToIndex.get(entityId);
+            if (idx !== undefined && engineInstance.ecs.store.isActive[idx]) {
+                const meshIntId = engineInstance.ecs.store.meshType[idx];
+                const assetId = assetManager.meshIntToUuid.get(meshIntId);
+                if (assetId) {
+                    this.drawSkeleton(assetId, entityId, debug);
+                }
+            }
+        });
+    }
+
+    private drawSkeleton(assetId: string, entityId: string, debug: DebugRenderer) {
+        const asset = assetManager.getAsset(assetId) as (SkeletonAsset | SkeletalMeshAsset | undefined);
         if (!asset) return;
 
         const skeleton = (asset as any).skeleton as { bones: any[] } | undefined;
         if (!skeleton || !Array.isArray(skeleton.bones)) return;
 
-        const worldMat = engineInstance.sceneGraph.getWorldMatrix(this.activeEntityId);
+        const worldMat = engineInstance.sceneGraph.getWorldMatrix(entityId);
         if (!worldMat) return;
 
         // Manual matrix multiplication helper for points
@@ -89,7 +116,6 @@ export class SkeletonTool {
             z: worldMat[2] * x + worldMat[6] * y + worldMat[10] * z
         });
 
-        const debug = engineInstance.debugRenderer;
         const bones = skeleton.bones;
 
         for (let i = 0; i < bones.length; i++) {
